@@ -15,7 +15,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 endif()
 
-add_library(minigit_core src/core/version.cpp)
+add_library(minigit_core
+    src/core/version.cpp
+    src/core/bytes.cpp
+    src/core/fs.cpp
+    src/core/object_id.cpp
+    src/core/objects.cpp
+    src/core/object_store.cpp
+    src/core/repository.cpp)
 target_include_directories(minigit_core PUBLIC include)
 target_link_libraries(minigit_core PUBLIC minigit_options PRIVATE OpenSSL::Crypto ZLIB::ZLIB)
 set_target_properties(minigit_core PROPERTIES CXX_EXTENSIONS OFF)
@@ -27,6 +34,13 @@ set_target_properties(minigit PROPERTIES CXX_EXTENSIONS OFF)
 include(CTest)
 if(BUILD_TESTING)
     find_package(Catch2 3 REQUIRED)
+    add_executable(minigit_tests tests/unit/test_objects.cpp tests/unit/test_repository.cpp)
+    target_include_directories(minigit_tests PRIVATE tests/support)
+    target_link_libraries(minigit_tests PRIVATE minigit_core Catch2::Catch2WithMain)
+    include(Catch)
+    catch_discover_tests(minigit_tests TEST_PREFIX "unit.")
     add_test(NAME cli_basics COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/cli_basics.cmake)
+    add_test(NAME objects_cli COMMAND ${CMAKE_COMMAND}
+        -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/objects_cli.cmake)
 endif()

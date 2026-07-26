@@ -2,11 +2,11 @@
 
 MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
 
-Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`，命令范围为 `--help`、`help`、`--version`。`init`、`add`、`commit` 等业务命令仍在规划中。实际完成范围和验证记录见 [进度](docs/progress.md)。
+Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的首个子项加入仓库初始化和内容寻址对象库，验证状态见 [进度](docs/progress.md)。`add`、`commit`、`status`、`log`、`tag` 仍在规划中，Phase 1 尚未整体验收。
 
 ## 构建与运行
 
-需要 CMake 3.20 或更高版本、支持 C++20 的编译器、OpenSSL 3、zlib 和 Catch2 v3。当前 CLI 集成检查通过 CMake 脚本注册到 CTest，后续单元测试使用 Catch2。预设负责配置项目，依赖由环境提供，不在构建过程中隐式安装系统软件。
+需要 CMake 3.20 或更高版本、支持 C++20 的编译器、OpenSSL 3、zlib 和 Catch2 v3。CLI 集成检查通过 CMake 脚本注册到 CTest，核心单元测试使用 Catch2。预设负责配置项目，依赖由环境提供，不在构建过程中隐式安装系统软件。
 
 ```sh
 cmake --preset debug
@@ -17,6 +17,27 @@ ctest --preset debug --output-on-failure
 ```
 
 Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者启用地址和未定义行为检查。详细验证范围见 [进度](docs/progress.md)，其他平台尚未验证。
+
+## 当前 CLI
+
+| 命令 | 行为 |
+| --- | --- |
+| `--help`、`help` | 显示帮助 |
+| `--version` | 显示版本 |
+| `init [directory]` | 在指定目录或当前目录初始化 `.minigit`，重复初始化保留已有数据 |
+| `hash-object [-w] file` | 对普通文件字节计算 blob 摘要；`-w` 将对象写入当前仓库 |
+| `cat-file -t full-id` | 显示对象类型 |
+| `cat-file -p full-id` | 输出 blob 或 commit 内容，tree 按条目显示 |
+
+对象 ID 必须为完整 64 位十六进制文本，尚不支持缩写。不带 `-w` 的摘要计算可以在仓库外执行；写入和读取需要当前目录或祖先存在有效 `.minigit` 仓库。当前文件读取上限为 64 MiB，软链接和非普通文件被拒绝。
+
+构建后可运行 [对象观察实验](examples/experiments/objects.sh)：
+
+```sh
+bash examples/experiments/objects.sh ./build/debug/minigit
+```
+
+脚本创建临时仓库，保存 blob 后修改工作区，再读取并比较旧对象内容，结束时自动清理。该实验不调用系统 Git。测试结果以 [进度](docs/progress.md) 为准。
 
 ## 设计范围
 
@@ -30,7 +51,7 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | Phase 3 | `merge`、`cherry-pick`、`revert`、`stash`；需要继续或中止的操作同时提供相应恢复入口 |
 | Phase 4 | `rebase`、`gc`，完成复杂历史编辑和对象回收 |
 
-表中业务命令均为阶段目标；阶段完成必须有验收证据，不能仅由命令名称存在判定。
+表中列出整个阶段的目标，当前 CLI 表列出本子项实现范围；阶段完成必须有验收证据，不能仅由命令名称存在判定。
 
 ## 阅读路线
 
@@ -40,4 +61,4 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 4. [学习笔记](docs/learning-notes.md)：可执行的观察实验、取舍与常见误区。
 5. [进度](docs/progress.md)：完成状态、验证证据、阶段验收与下一步。
 
-示例中的 MiniGit 业务工作流只有在对应阶段实现并验收后才可执行。需要体验完整 Git 功能时，请使用真实 Git。
+涉及暂存、提交或合并的 MiniGit 工作流只有在对应阶段实现并验收后才可执行。需要体验完整 Git 功能时，请使用真实 Git。

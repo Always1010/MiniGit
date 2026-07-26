@@ -4,15 +4,16 @@
 
 ## 当前状态
 
-Phase 0 构建与 CLI 基础已完成，版本为 `0.1.0`。公开命令为 `--help`、`help`、`--version`，业务命令仍属于后续阶段。
+Phase 0 构建与 CLI 基础已完成，版本为 `0.1.0`。Phase 1 首个子项已验收：`init`、`hash-object`、`cat-file` 和对象库。`add`、`commit`、`status`、`log`、`tag` 尚未实现，Phase 1 尚未整体验收。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 配置完成依赖检测；当前注册一个 CLI 集成用例，EVP 与压缩业务代码尚未实现 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；注册 13 个单元及 2 个 CLI 用例 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
 | 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
-| Phase 1 及后续业务能力 | 计划 | 尚未验收 |
+| Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
+| Phase 1 剩余命令与后续阶段 | 计划 | 尚未实现或验收 |
 
 已执行的 Debug 验证：
 
@@ -22,7 +23,7 @@ cmake --build --preset debug -j 2
 ctest --preset debug -R cli_basics --output-on-failure
 ```
 
-结果为一个 CTest 用例通过，覆盖 `--help`、版本格式和空参数、未知参数、多余参数。`help` 别名已实现，当前用例未单独覆盖。相同基础用例在 `sanitized` 预设下通过，启用 AddressSanitizer 和 UndefinedBehaviorSanitizer。Linux 是当前验证平台，其他平台尚未验证。
+Phase 0 的一个 CTest 用例通过，覆盖 `--help`、版本格式和空参数、未知参数、多余参数；对象库子项又补充了 `help` 别名与标准输出失败检查。相同基础用例在 `sanitized` 预设下通过，启用 AddressSanitizer 和 UndefinedBehaviorSanitizer。Linux 是当前验证平台，其他平台尚未验证。
 
 ## Phase 0：可构建基础
 
@@ -36,6 +37,26 @@ ctest --preset debug -R cli_basics --output-on-failure
 ## Phase 1：本地快照闭环
 
 计划范围为 `init`、`add`、`commit`、`status`、`log` 和轻量 `tag`。可以逐项交付，整阶段不能因 `init` 或对象库单独完成而标为已验收。
+
+当前子项范围：
+
+- `Repository::init/discover/root/metadata`，`.minigit` 版本与哈希配置，指向 main 的未出生 HEAD。
+- `ObjectId`、EVP SHA-256、blob/tree/commit 封装与编解码、zlib 松散对象写入和读取。
+- `RepoLock`、`read_file`、`atomic_write`，普通文件与软链接检查，64 MiB 文件上限。
+- CLI `init [directory]`、`hash-object [-w] file`、`cat-file -t|-p full-id`。
+- 对象 CLI 集成用例与 [对象实验](../examples/experiments/objects.sh)，均已通过。
+
+验证证据：
+
+- Debug 与 sanitized 配置和构建通过，GCC 无警告。
+- `ctest --preset debug --output-on-failure`：最终 15 个用例全部通过（13 个单元、2 个 CLI）。
+- `ctest --preset sanitized --output-on-failure`：15 个用例全部通过，没有 ASan/UBSan 报告；最后目录同步修正后，以 `-R 'Loose blobs|Repository initializes|Repeated init|Relative filesystem|cli_basics|objects_cli'` 复验受影响的 6 个用例，全部通过。
+- `bash examples/experiments/objects.sh ./build/debug/minigit`：保存复用、工作区编辑后读回旧 blob、重复初始化保留对象通过。
+- 六份文档相对链接、实验脚本语法与 `git diff --check` 通过。
+
+关键覆盖包括空与二进制 blob、SHA-256 已知向量、压缩截断及尾部数据、解压大小限制、错误类型／长度／哈希、Tree 顺序和非法名称、Commit 父顺序、多行消息与字段注入、相对路径、软链接及 `link/..`、FIFO、无效仓库、锁竞争和输出失败。
+
+当前限制：使用 Linux/POSIX 接口；没有断电故障注入；单文件替换完成后的同步失败可能留下完整新文件；Commit 编解码只检查身份字段结构，业务身份与时间规范化由后续提交命令实现。
 
 验收条件：
 
@@ -68,4 +89,4 @@ ctest --preset debug -R cli_basics --output-on-failure
 
 ## 下一步
 
-推进 `init` 与对象库的 Phase 1 子项。每次更新本页同时补充已运行的验证命令、结果、能力边界和下一项未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+下一节点为版本化 Index、`add` 与引用管理，再完成 `commit/status/log/tag` 的 Phase 1 闭环。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
