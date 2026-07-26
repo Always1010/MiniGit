@@ -1,0 +1,16 @@
+/AGENTS.md
+/SPEC.md
+/HANDOFF.md
+/.agent-local/
+/history.local.json
+/changes.local.json
+/.env
+/.env.*
+
+# C++ 构建产物与个人构建设置
+/build/
+/CMakeUserPresets.json
+/compile_commands.json
+
+# 本地实验仓库
+/.minigit/
