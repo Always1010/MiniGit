@@ -1,14 +1,14 @@
 # 代码导读
 
-Phase 0 已完成。当前代码只包含构建基础、版本函数和 CLI 帮助及版本处理；下面的业务模块阅读路线是计划。完成和验证状态见 [进度](progress.md)。
+Phase 0 已完成，Phase 1 首个子项加入初始化与对象库。当前可阅读仓库发现、文件安全工具、摘要与对象编解码；Index、业务提交、完整引用管理和后续操作仍为计划。完成和验证状态见 [进度](progress.md)。
 
 ## 从一次命令开始
 
-从 [src/cli/main.cpp](../src/cli/main.cpp) 的 `main` 开始：仅接受一个参数，`--help` 和 `help` 输出帮助，`--version` 调用核心库的版本函数。成功返回 `0`，空参数、未知参数或多余参数写入标准错误并返回 `2`。这些路径不访问工作区，也不创建仓库。
+从 [src/cli/main.cpp](../src/cli/main.cpp) 的 `main` 和 `run` 开始：帮助与版本不访问工作区，`init` 调用仓库初始化，`hash-object` 读取文件并可选写入对象，`cat-file` 发现仓库并读取对象。成功返回 `0`，参数错误返回 `2`，文件、仓库或对象等运行错误返回 `1`，错误统一写入标准错误。
 
 版本函数声明位于 [include/minigit/version.hpp](../include/minigit/version.hpp)，实现在 [src/core/version.cpp](../src/core/version.cpp)，当前返回 `0.1.0`。这个小边界验证了 CLI 与核心库的连接，为后续业务模块提供可构建起点。
 
-构建定义在 [CMakeLists.txt](../CMakeLists.txt)，预设在 [CMakePresets.json](../CMakePresets.json)。`minigit_core` 为 C++20 库，CLI 链接它；OpenSSL 3 和 zlib 已接入，SHA-256 与压缩业务代码尚待实现。Catch2 v3 已进行依赖检测，当前的 CLI 集成测试由 [tests/integration/cli_basics.cmake](../tests/integration/cli_basics.cmake) 通过 CTest 执行。
+构建定义在 [CMakeLists.txt](../CMakeLists.txt)，预设在 [CMakePresets.json](../CMakePresets.json)。`minigit_core` 为 C++20 库，CLI 链接它；SHA-256 使用 OpenSSL 3 EVP，松散对象使用 zlib。CLI 集成测试包括 [cli_basics.cmake](../tests/integration/cli_basics.cmake) 和 [objects_cli.cmake](../tests/integration/objects_cli.cmake)，核心单元测试使用 Catch2 v3。
 
 Debug 工作流：
 
@@ -18,7 +18,22 @@ cmake --build --preset debug
 ctest --preset debug --output-on-failure
 ```
 
-Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助输出、版本格式、空参数、未知参数和多余参数。`help` 别名已实现，但当前测试脚本没有单独执行该别名。具体证据由 [进度](progress.md) 记录。
+Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版本格式、空参数、未知参数和多余参数，并检查输出失败的退出码。具体证据由 [进度](progress.md) 记录。
+
+## 当前对象库阅读路线
+
+1. [bytes.hpp](../include/minigit/bytes.hpp)：`Bytes` 是字节向量，文本转换辅助函数不改变 payload 的二进制含义。
+2. [object_id.hpp](../include/minigit/object_id.hpp) 与 [object_id.cpp](../src/core/object_id.cpp)：`ObjectId::from_hex/from_bytes/hex/bytes` 分离显示与原始摘要，`sha256` 封装 EVP。
+3. [objects.hpp](../include/minigit/objects.hpp) 与 [objects.cpp](../src/core/objects.cpp)：`hash_object` 构造类型、字节长度和 NUL 头；`encode_tree/decode_tree`、`encode_commit/decode_commit` 处理 payload。
+4. [fs.hpp](../include/minigit/fs.hpp) 与 [fs.cpp](../src/core/fs.cpp)：`read_file` 拒绝软链接和特殊文件，`atomic_write` 处理临时文件与同步，`RepoLock` 管理持久锁文件的互斥生命周期。
+5. [repository.hpp](../include/minigit/repository.hpp)：`Repository::init/discover` 提供 `.minigit` 根和元数据路径，不承担全部命令业务。
+6. [object_store.hpp](../include/minigit/object_store.hpp) 与 [object_store.cpp](../src/core/object_store.cpp)：`write` 存储 zlib 对象，`read` 校验封装，`object_path` 将完整摘要映射到两级路径。
+
+沿 CLI 的 `hash-object -w` 阅读可看到：先读文件字节，发现仓库，取得 `RepoLock`，调用 `ObjectStore::write`，打印完整摘要。ObjectStore 不自行取得写锁，调用者必须保证锁生命周期覆盖写入。`cat-file -p` 对 blob 使用原始字节输出，对 tree 解码后逐条显示。
+
+运行 [对象实验](../examples/experiments/objects.sh) 可观察保存前后对象内容不变；实验已通过，验证细节见 [进度](progress.md)。
+
+保护对象格式的测试位于 [test_objects.cpp](../tests/unit/test_objects.cpp)，文件路径、初始化和进程锁测试位于 [test_repository.cpp](../tests/unit/test_repository.cpp)。先阅读损坏对象、相对路径和 `link/..` 的反例，再回到实现检查错误如何被阻止。
 
 ## 业务实现后的阅读顺序
 
@@ -34,7 +49,7 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助输出、版本�
 | 8 | `status`、`log`、轻量 `tag` | 比较哪些状态？历史如何遍历？引用如何校验？ |
 | 9 | Diff、Worktree、Operations | 恢复、覆盖保护和继续/中止怎样跨进程保持？ |
 
-表中名称是架构职责和计划类型，待实现后替换为对应真实源码链接。依赖关系见 [架构](architecture.md)。
+表中前五项已有接口，阅读链接见上一节；Index 及后续项仍为计划。依赖关系见 [架构](architecture.md)。
 
 ## 跟踪一份文件的版本
 

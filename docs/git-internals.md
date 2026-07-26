@@ -1,12 +1,12 @@
 # Git 原理与 MiniGit 的选择
 
-本文介绍 MiniGit 将要实现的模型。实现状态见 [进度](progress.md)，对象格式约束见 [架构](architecture.md)。真实 Git 的行为以本页链接的官方资料为参考，MiniGit 的自有格式不视为兼容性实现。
+本文介绍 MiniGit 的对象库模型及后续快照规划。当前可通过 `hash-object` 和 `cat-file` 观察 blob；tree 和 commit 提供核心编解码接口，暂存与提交命令仍为计划。验收状态见 [进度](progress.md)，对象格式约束见 [架构](architecture.md)。真实 Git 的行为以本页链接的官方资料为参考，MiniGit 的自有格式不视为兼容性实现。
 
 ## 内容寻址与快照
 
 内容寻址把对象完整内容映射为摘要，再用摘要检索对象。blob 保存文件字节，文件名和模式由 tree 保存；commit 连接根 tree、父提交和提交元数据。因而重命名文件通常改变 tree，文件内容不变时 blob 可以复用。真实 Git 的对象模型和松散对象封装见 [Git Objects](https://git-scm.com/book/en/v2/Git-Internals-Git-Objects)。
 
-MiniGit 计划使用以下未压缩字节作为 SHA-256 输入：
+MiniGit 使用以下未压缩字节作为 SHA-256 输入：
 
 ```text
 blob 3\0abc
@@ -16,9 +16,11 @@ blob 3\0abc
 
 文件的相同 payload 会得到相同 blob 摘要。两次提交即使文件内容一致，只要作者、提交者、业务时间、父提交或消息改变，commit 摘要仍可能改变。
 
+当前 `hash-object file` 只计算摘要，不写入磁盘；`hash-object -w file` 通过仓库写锁保存 zlib 松散对象。`cat-file -t` 返回类型，`cat-file -p` 可输出保存的字节。因此修改工作区文件不会修改已保存对象。[对象实验](../examples/experiments/objects.sh) 会运行并检查这个性质。
+
 ## Tree 为什么是二进制结构
 
-MiniGit 的计划条目编码为：
+MiniGit 的 tree 编解码接口采用以下条目编码：
 
 ```text
 mode SP basename NUL <32 bytes object id>
@@ -26,7 +28,9 @@ mode SP basename NUL <32 bytes object id>
 
 模式区分普通文件、可执行文件和目录。文件条目指向 blob，目录条目指向子 tree。文件名没有跨目录部分，因此 `src/main.cpp` 在根 tree 中表现为 `src` 子树，在子树中表现为 `main.cpp` 文件。
 
-名称排序必须固定，否则同一个目录从不同遍历顺序构造，会得到不同 tree 摘要。MiniGit 将采用自己的明确字节排序规则；没有验证真实 Git 的特殊目录排序规则之前，不能将“排序一致”当作格式兼容的证据。
+名称排序必须固定，否则同一个目录从不同遍历顺序构造，会得到不同 tree 摘要。MiniGit 按 basename 的无符号 UTF-8 字节排序，模式只接受 `100644`、`100755`、`40000`；解码拒绝未排序或重复条目。没有验证真实 Git 的特殊目录排序规则之前，不能将“排序一致”当作格式兼容的证据。
+
+当前 `encode_commit` 和 `decode_commit` 在文本中保存 `tree`、重复的 `parent` 行、`author`、`committer`、空行及消息。author/committer 只要求非空单行文本，并未验证身份和时间语法；后续 commit 命令负责提供规范身份与业务时间。提供编解码不代表提交命令或历史引用已完成。
 
 ## 工作区、Index 与 HEAD
 
