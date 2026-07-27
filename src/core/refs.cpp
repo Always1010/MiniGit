@@ -1,7 +1,7 @@
 #include "minigit/refs.hpp"
 #include "minigit/error.hpp"
 #include "minigit/fs.hpp"
-#include "minigit/history.hpp"
+#include "minigit/snapshot.hpp"
 #include "minigit/index.hpp"
 #include <cerrno>
 #include <cstring>

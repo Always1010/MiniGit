@@ -1,14 +1,7 @@
 #pragma once
-#include "minigit/index.hpp"
-#include <map>
+#include "minigit/snapshot.hpp"
 #include <optional>
 namespace minigit {
-struct FileState {
-    std::string mode;
-    ObjectId id;
-    bool operator==(const FileState&) const = default;
-};
-using Snapshot = std::map<std::string, FileState>;
 // Read-only hashing; neither operation writes objects.
 std::optional<FileState> read_worktree_entry(const Repository& repo, std::string_view path);
 Snapshot scan_worktree(const Repository& repo);

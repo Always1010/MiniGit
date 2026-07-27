@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "minigit/status.hpp"
+#include "minigit/format.hpp"
+#include "minigit/worktree.hpp"
 #include "minigit/error.hpp"
 #include "minigit/history.hpp"
 #include "minigit/object_store.hpp"
