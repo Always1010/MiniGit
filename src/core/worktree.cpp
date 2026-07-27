@@ -172,9 +172,13 @@ void add_paths(const Repository& repo, const std::vector<std::filesystem::path>&
     // Normalize every argument before writing objects; failed selections never change the index.
     if (all) selected.insert("");
     for (const auto& argument : input) selected.insert(resolve_input(repo, argument));
-    std::map<std::string, WorkingFile> files;
+    ObjectStore store(repo.metadata() / "objects");
+    Snapshot files;
     auto visitor = [&](const std::string& path, const std::filesystem::file_status& status) {
-        if (!files.contains(path)) files.emplace(path, read_working_file(repo, path, status));
+        if (files.contains(path)) return;
+        // Keep only IDs after each file is stored, rather than retaining all payloads.
+        const auto file = read_working_file(repo, path, status);
+        files.emplace(path, FileState{file.mode, store.write(ObjectType::Blob, file.bytes)});
     };
     for (const auto& path : selected) {
         const auto status = path.empty() ? std::optional(std::filesystem::status(repo.root())) : inspect(repo, path);
@@ -197,8 +201,7 @@ void add_paths(const Repository& repo, const std::vector<std::filesystem::path>&
         }
         return false;
     });
-    ObjectStore store(repo.metadata() / "objects");
-    for (const auto& [path, file] : files) index.push_back({path, file.mode, store.write(ObjectType::Blob, file.bytes), 0});
+    for (const auto& [path, file] : files) index.push_back({path, file.mode, file.id, 0});
     save_index(repo, std::move(index));
 }
 }
