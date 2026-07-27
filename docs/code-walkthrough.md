@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础和 Phase 1 的初始化、对象库、Index、引用、快照及对应命令。分支与工作区操作仍为计划。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的纯差异引擎。差异 CLI、分支与工作区操作仍为计划。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -76,6 +76,14 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 然后阅读 [history.hpp](../include/minigit/history.hpp)、[history.cpp](../src/core/history.cpp) 的提交协调与身份。`create_commit` 的调用链是：获取写锁 → 读取配置身份和 Index → 检查冲突条目 → 构造根 Tree → 校验旧 HEAD → 保存带 parent 的 Commit → 更新引用。失败可能留下未引用对象，但不会发布尚未完整保存的提交。底层编码保留读取教学对象的自由，业务层要求身份和消息有效。
 
 [test_history.cpp](../tests/unit/test_history.cpp) 检查快照、parent 与失败边界；[commits_cli.cmake](../tests/integration/commits_cli.cmake) 在工作区编辑后直接读取已提交 Tree 和 Blob，证明提交来源是 Index；[提交实验](../examples/experiments/commits.sh) 可重复演示同一机制。
+
+## 先阅读纯差异算法
+
+新增差异引擎从 [diff.hpp](../include/minigit/diff.hpp) 进入 [diff.cpp](../src/core/diff.cpp)。`split_lines` 把字节拆成借用视图和末尾 LF 标记，`diff_lines` 去掉共同前后缀、生成精确行 ID，并从 LCS 表回溯成 EditScript。Edit 的坐标同时指向完整旧行和新行序列，不随先前删除或插入改变，便于后续 Merge 统一在 base 坐标下比较。
+
+`make_hunks` 校验区间、顺序和未改动间隔，再把相邻上下文合并；`format_file_diff` 负责缺失文件、模式、摘要、二进制和无末尾换行等显示策略。它不访问仓库，也不把工作区未保存的 ID 当成已存在对象。CLI 接入将独立协调内容来源，进度见 [progress.md](progress.md)。
+
+[test_diff.cpp](../tests/unit/test_diff.cpp) 的关键断言是把编辑实际应用到旧行后得到完整新字节。阅读预算回退、无 LF 和 hunk 零长度反例，有助于区分算法正确性与补丁是否精简。纯算法直接使用 C++ 库测试，不需要构造提交。
 
 ## 三棵树比较
 
