@@ -11,6 +11,7 @@
 #include "minigit/dag.hpp"
 #include "minigit/tags.hpp"
 #include "minigit/format.hpp"
+#include "minigit/inspection.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -25,6 +26,14 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+std::size_t parse_count(std::string_view value, std::string_view description) {
+    std::size_t count = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), count);
+    if (value.empty() || parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
+        throw UsageError(std::string(description) + " must be a nonnegative integer");
+    return count;
+}
+
 int run(const std::vector<std::string_view>& args) {
     if (args.empty()) throw UsageError("invalid arguments; use --help");
     const auto command = args.front();
@@ -38,6 +47,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  config <key> [value]       Read or set local commit identity\n"
                      "  commit -m <message> [--allow-empty]  Commit the index\n"
                      "  status [--porcelain|-s]    Compare HEAD, index and worktree\n"
+                     "  diff [--cached] [-U count] [revision [revision]]  Compare snapshots\n"
                      "  log [--oneline] [-n count] [revision]  Walk commit history\n"
                      "  tag [-f] [name [revision]] | tag -d name  Manage light tags\n"
                      "  --help | --version\n";
@@ -158,6 +168,38 @@ int run(const std::vector<std::string_view>& args) {
             std::cout << entry.staged << entry.unstaged << ' ' << minigit::quote_path(entry.path) << '\n';
         return 0;
     }
+    if (command == "diff") {
+        minigit::DiffOptions request;
+        bool options = true;
+        bool context_set = false;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (options && args[i] == "--") { options = false; continue; }
+            if (options && (args[i] == "--cached" || args[i] == "--staged")) {
+                request.staged = true;
+                continue;
+            }
+            std::optional<std::string_view> context;
+            if (options && (args[i] == "-U" || args[i] == "--unified")) {
+                if (i + 1 >= args.size()) throw UsageError("diff context requires a count");
+                context = args[++i];
+            } else if (options && args[i].starts_with("-U")) context = args[i].substr(2);
+            else if (options && args[i].starts_with("--unified=")) context = args[i].substr(10);
+            if (context) {
+                if (context_set) throw UsageError("diff context may be specified once");
+                request.context = parse_count(*context, "diff context");
+                if (request.context > 100000) throw UsageError("diff context exceeds 100000 lines");
+                context_set = true;
+                continue;
+            }
+            if ((options && args[i].starts_with('-')) || request.revisions.size() == 2)
+                throw UsageError("diff accepts --cached, -U <count> and at most two revisions");
+            request.revisions.emplace_back(args[i]);
+        }
+        if (request.staged && request.revisions.size() > 1)
+            throw UsageError("diff --cached accepts at most one revision");
+        std::cout << minigit::repository_diff(minigit::Repository::discover(), request);
+        return 0;
+    }
     if (command == "log") {
         bool oneline = false;
         bool options = true;
@@ -168,11 +210,7 @@ int run(const std::vector<std::string_view>& args) {
             if (options && args[i] == "--oneline") { oneline = true; continue; }
             if (options && args[i] == "-n" && !maximum && i + 1 < args.size()) {
                 const auto value = args[++i];
-                std::size_t count = 0;
-                const auto parsed = std::from_chars(value.data(), value.data() + value.size(), count);
-                if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
-                    throw UsageError("log count must be a nonnegative integer");
-                maximum = count;
+                maximum = parse_count(value, "log count");
                 continue;
             }
             if ((options && args[i].starts_with('-')) || revision)

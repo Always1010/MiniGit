@@ -2,7 +2,7 @@
 
 MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
 
-Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，纯差异引擎先作为核心库交付，`diff/show` CLI 尚未接入。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
+Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，已形成纯差异引擎及 `diff` 的内容来源协调，`show` 尚未接入。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
 
 ## 构建与运行
 
@@ -33,6 +33,7 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `config user.name [value]`、`config user.email [value]` | 读取或设置仓库本地提交身份 |
 | `commit -m message [--allow-empty]` | 将 Index 保存为 Tree 和 Commit，并移动当前引用 |
 | `status [--porcelain]` | 显示分支及三棵树比较；`--porcelain`、`--short`、`-s` 仅显示状态行 |
+| `diff [--cached] [-U count] [revision [revision]]` | 默认比较 Index→工作区；已暂存、修订→工作区及双修订比较见下文 |
 | `log [--oneline] [-n count] [revision]` | 沿全部 parent 展示去重历史，默认从 HEAD 开始 |
 | `tag`、`tag [-f] name [revision]`、`tag -d name` | 列出、创建／强制移动或删除指向 Commit 的轻量标签 |
 
@@ -58,6 +59,10 @@ minigit commit -m '记录首个快照'
 
 `status` 的状态行采用 `XY path`：X 比较 HEAD 与 Index，Y 比较 Index 与工作区；`A/M/D` 表示新增／修改／删除，`??` 表示未跟踪。`MM note` 表示已暂存的修改之后又有工作区修改。路径含空格或控制字符时使用可读引号和转义；冲突显示 `UU/AA/UD/DU/AU/UA/DD`。当前不推断重命名，路径移动表现为删除和新增。
 
+`diff` 默认只检查 Index 路径，不显示其他未跟踪文件；`--cached`（别名 `--staged`）比较 HEAD→Index，未出生 HEAD 当作空快照，也可指定一个修订代替 HEAD。不带该选项时，一个修订比较其快照与工作区，候选为该快照和当前 Index 的路径并集；两个修订只比较历史快照，不依赖当前 Index。涉及 Index 的比较拒绝未解决冲突。`-U count`、`-Ucount`、`--unified=count`、`--unified count` 设置上下文，默认 3、最多 100000；不支持路径筛选、重命名推断或 `--exit-code`。
+
+差异展示执行位和二进制变化，二进制只显示摘要；文本保留 CRLF 与末尾 LF 区别。大变化超出 LCS 表格预算时整体替换变化区间，每侧文本最多 100000 行，完整输出最多 64 MiB，显示路径最多 4096 字节。它不保存工作区 Blob、Index 或引用，头部使用 `diff --minigit`，不承诺完整 Git 补丁兼容。
+
 `log` 使用子提交先于父提交的拓扑顺序，并对共享祖先去重；同时可输出的节点按完整 ID 排序。显示缩写为 12 位，解析仍要求完整 ID。支持 HEAD、分支、标签或完整引用名称，名称歧义明确失败。`-n` 只限制显示数量，仍读取所选提交的完整可达历史；目前限 100000 个提交、1000000 条父边及 64 MiB 图数据。
 
 构建后可运行 [对象观察实验](examples/experiments/objects.sh)：
@@ -65,9 +70,12 @@ minigit commit -m '记录首个快照'
 ```sh
 bash examples/experiments/objects.sh ./build/debug/minigit
 bash examples/experiments/commits.sh ./build/debug/minigit
+bash examples/experiments/diff.sh ./build/debug/minigit
 ```
 
 [提交实验](examples/experiments/commits.sh) 进一步检查暂存 B、工作区编辑为 C 后仍提交 B，以及下一次提交链接前一个 parent；还核对 status、log 和标签在分支前进后保持原提交。脚本创建临时仓库并在结束时自动清理，不调用系统 Git。测试结果以 [进度](docs/progress.md) 为准。
+
+[差异实验](examples/experiments/diff.sh) 将 HEAD A、Index B、工作区 C 的三种比较实际重放，再提交 B，并验证历史 A→B 与未暂存 B→C。补丁文件放在临时仓库外，脚本结束自动清理。
 
 ## 设计范围
 
