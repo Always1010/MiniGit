@@ -8,7 +8,9 @@
 #include "minigit/worktree.hpp"
 #include "minigit/history.hpp"
 #include "minigit/status.hpp"
+#include "minigit/dag.hpp"
 
+#include <charconv>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -34,6 +36,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  config <key> [value]       Read or set local commit identity\n"
                      "  commit -m <message> [--allow-empty]  Commit the index\n"
                      "  status [--porcelain|-s]    Compare HEAD, index and worktree\n"
+                     "  log [--oneline] [-n count] [revision]  Walk commit history\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -150,6 +153,51 @@ int run(const std::vector<std::string_view>& args) {
         }
         for (const auto& entry : report.entries)
             std::cout << entry.staged << entry.unstaged << ' ' << minigit::quote_path(entry.path) << '\n';
+        return 0;
+    }
+    if (command == "log") {
+        bool oneline = false;
+        bool options = true;
+        std::optional<std::string_view> revision;
+        std::optional<std::size_t> maximum;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (options && args[i] == "--") { options = false; continue; }
+            if (options && args[i] == "--oneline") { oneline = true; continue; }
+            if (options && args[i] == "-n" && !maximum && i + 1 < args.size()) {
+                const auto value = args[++i];
+                std::size_t count = 0;
+                const auto parsed = std::from_chars(value.data(), value.data() + value.size(), count);
+                if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
+                    throw UsageError("log count must be a nonnegative integer");
+                maximum = count;
+                continue;
+            }
+            if ((options && args[i].starts_with('-')) || revision)
+                throw UsageError("log accepts --oneline, -n <count> and one revision");
+            revision = args[i];
+        }
+        const auto entries = minigit::log_history(minigit::Repository::discover(),
+            revision.value_or("HEAD"), maximum);
+        if (entries.empty() && !oneline && maximum != 0) std::cout << "No commits yet\n";
+        for (const auto& entry : entries) {
+            if (oneline) {
+                std::cout << entry.id.hex().substr(0, 12) << ' '
+                          << entry.commit.message.substr(0, entry.commit.message.find('\n')) << '\n';
+                continue;
+            }
+            std::cout << "commit " << entry.id.hex() << '\n';
+            for (const auto& parent : entry.commit.parents) std::cout << "parent " << parent.hex() << '\n';
+            std::cout << "author " << entry.commit.author << '\n'
+                      << "committer " << entry.commit.committer << "\n\n";
+            std::string_view remaining(entry.commit.message);
+            do {
+                const auto newline = remaining.find('\n');
+                std::cout << "    " << remaining.substr(0, newline) << '\n';
+                if (newline == std::string_view::npos) break;
+                remaining.remove_prefix(newline + 1);
+            } while (!remaining.empty());
+            std::cout << '\n';
+        }
         return 0;
     }
     throw UsageError("invalid arguments; use --help");

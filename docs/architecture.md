@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及 Phase 1 已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status 已实现；历史展示及后续业务仍为计划；验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及 Phase 1 已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 已实现；标签命令及后续业务仍为计划；验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -87,7 +87,7 @@ flowchart LR
     H[HEAD] -->|符号指向| R
 ```
 
-[status.hpp](../include/minigit/status.hpp) 的 `collect_status` 在一个写锁下读取一致的 MiniGit 元数据，分别比较 HEAD tree 与 Index、Index 与工作区，并单独枚举未跟踪路径。比较 Blob ID 与模式，模式变化也是修改。冲突路径从 Index 的 stage 集合映射到状态码，不能把冲突条目当成普通 stage 0。状态读取校验所有 Index Blob，不把缺失对象伪装成文件修改；只计算工作区摘要，不保存对象、Index 或引用。`log` 沿 commit 的 parent 遍历，不能根据对象文件的目录顺序推断历史。后续 `diff` 复用快照比较，`merge` 则接收共同祖先、当前快照和待合入快照三个输入。
+[status.hpp](../include/minigit/status.hpp) 的 `collect_status` 在一个写锁下读取一致的 MiniGit 元数据，分别比较 HEAD tree 与 Index、Index 与工作区，并单独枚举未跟踪路径。比较 Blob ID 与模式，模式变化也是修改。冲突路径从 Index 的 stage 集合映射到状态码，不能把冲突条目当成普通 stage 0。状态读取校验所有 Index Blob，不把缺失对象伪装成文件修改；只计算工作区摘要，不保存对象、Index 或引用。[dag.hpp](../include/minigit/dag.hpp) 的 `load_commit_graph` 沿所有 parent 收集闭包，对已发现节点去重，并检查父对象存在且类型为 Commit。`topological_order` 用 Kahn 算法统计每个节点尚未输出的子边，在计数变为零时输出；同时可输出的节点按 ObjectId 字节序排序，不能根据文件目录顺序或作者时间推断历史。`log_history` 获取一个写锁并解析起点，空 HEAD 返回空历史；显示上限只截断结果，遍历仍校验完整闭包。图限制 100000 节点、1000000 父边及 64 MiB 解码数据，避免损坏或极大历史无限制展开。后续 `diff` 复用快照比较，`merge` 则接收共同祖先、当前快照和待合入快照三个输入。
 
 ## 工程取舍
 

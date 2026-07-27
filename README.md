@@ -2,7 +2,7 @@
 
 MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
 
-Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 已加入初始化、对象库、Index、引用与 `add/commit/status`，验证状态见 [进度](docs/progress.md)。`log`、`tag` 尚未交付，Phase 1 尚未整体验收。
+Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 已加入初始化、对象库、Index、引用与 `add/commit/status/log`，验证状态见 [进度](docs/progress.md)。轻量 `tag` 尚未交付，Phase 1 尚未整体验收。
 
 ## 构建与运行
 
@@ -33,6 +33,7 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `config user.name [value]`、`config user.email [value]` | 读取或设置仓库本地提交身份 |
 | `commit -m message [--allow-empty]` | 将 Index 保存为 Tree 和 Commit，并移动当前引用 |
 | `status [--porcelain]` | 显示分支及三棵树比较；`--porcelain`、`--short`、`-s` 仅显示状态行 |
+| `log [--oneline] [-n count] [revision]` | 沿全部 parent 展示去重历史，默认从 HEAD 开始 |
 
 对象 ID 必须为完整 64 位十六进制文本，尚不支持缩写。不带 `-w` 的摘要计算可以在仓库外执行；写入和读取需要当前目录或祖先存在有效 `.minigit` 仓库。当前文件读取上限为 64 MiB，软链接和非普通文件被拒绝。
 
@@ -53,6 +54,8 @@ minigit commit -m '记录首个快照'
 将 `minigit` 换成构建产物的绝对路径，或自行将其加入可执行文件搜索路径。提交时采用运行时 UTC 业务时间，不从本项目的开发提交日期取得时间。默认拒绝空快照首提交及没有快照变化的提交，`--allow-empty` 明确允许；未解决的 Index 冲突仍被拒绝。
 
 `status` 的状态行采用 `XY path`：X 比较 HEAD 与 Index，Y 比较 Index 与工作区；`A/M/D` 表示新增／修改／删除，`??` 表示未跟踪。`MM note` 表示已暂存的修改之后又有工作区修改。路径含空格或控制字符时使用可读引号和转义；冲突显示 `UU/AA/UD/DU/AU/UA/DD`。当前不推断重命名，路径移动表现为删除和新增。
+
+`log` 使用子提交先于父提交的拓扑顺序，并对共享祖先去重；同时可输出的节点按完整 ID 排序。显示缩写为 12 位，解析仍要求完整 ID。支持 HEAD、分支、标签或完整引用名称，名称歧义明确失败。`-n` 只限制显示数量，仍读取所选提交的完整可达历史；目前限 100000 个提交、1000000 条父边及 64 MiB 图数据。
 
 构建后可运行 [对象观察实验](examples/experiments/objects.sh)：
 
