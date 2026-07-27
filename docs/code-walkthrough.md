@@ -47,6 +47,8 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 
 沿 CLI 的 `hash-object -w` 阅读可看到：先读文件字节，发现仓库，取得 `RepoLock`，调用 `ObjectStore::write`，打印完整摘要。ObjectStore 不自行取得写锁，调用者必须保证锁生命周期覆盖写入。`cat-file -p` 对 blob 使用原始字节输出，对 tree 解码后逐条显示。
 
+文件接口的下一条阅读链是 `read_file_data` → 同一 fd 的读取前后 stat → 字节和权限，工作区的 `read_worktree_file` 用这一份数据计算 Blob ID 及 `100644/100755`。恢复需要精确权限时使用 `atomic_write_with_permissions`，顺序为写内容 → fchmod 临时文件 → 核对权限 → 同步 → 替换 → 同步目录。默认元数据写入复用同一内部流程，但不强制覆盖 umask。相关反例仍集中在文件工具与暂存单元测试，不新增另一个文件工具实现。
+
 运行 [对象实验](../examples/experiments/objects.sh) 可观察保存前后对象内容不变；实验已通过，验证细节见 [进度](progress.md)。
 
 保护对象格式的测试位于 [test_objects.cpp](../tests/unit/test_objects.cpp)，文件路径、初始化和进程锁测试位于 [test_repository.cpp](../tests/unit/test_repository.cpp)。先阅读损坏对象、相对路径和 `link/..` 的反例，再回到实现检查错误如何被阻止。

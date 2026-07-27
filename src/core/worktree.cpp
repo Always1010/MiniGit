@@ -6,9 +6,10 @@
 #include <fnmatch.h>
 #include <set>
 #include <sys/stat.h>
+#include <utility>
 namespace minigit {
 namespace {
-struct WorkingFile { std::string mode; Bytes bytes; };
+struct WorkingFile { std::string mode; FileData data; };
 struct IgnoreRule { std::string pattern; bool basename; bool directory; };
 bool below(std::string_view path, std::string_view prefix) {
     return prefix.empty() || path == prefix || (path.starts_with(prefix) && path.size() > prefix.size() && path[prefix.size()] == '/');
@@ -35,8 +36,9 @@ std::optional<std::filesystem::file_status> inspect(const Repository& repo, std:
 }
 WorkingFile read_working_file(const Repository& repo, const std::string& path, const std::filesystem::file_status& status) {
     if (!std::filesystem::is_regular_file(status)) throw Error("工作区条目必须是普通文件: " + path);
-    constexpr auto execute = std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec;
-    return {(status.permissions() & execute) == std::filesystem::perms::none ? "100644" : "100755", read_file(repo.root() / path)};
+    auto data = read_file_data(repo.root() / path);
+    const std::string mode = (data.permissions & 0111) == 0 ? "100644" : "100755";
+    return {mode, std::move(data)};
 }
 std::vector<IgnoreRule> read_ignore(const Repository& repo) {
     const auto status = inspect(repo, ".minigitignore");
@@ -144,12 +146,18 @@ std::string resolve_input(const Repository& repo, const std::filesystem::path& i
     return path;
 }
 }
-std::optional<FileState> read_worktree_entry(const Repository& repo, std::string_view path) {
+std::optional<WorktreeFile> read_worktree_file(const Repository& repo, std::string_view path) {
     validate_repo_path(path);
     const auto status = inspect(repo, path);
     if (!status || std::filesystem::is_directory(*status)) return std::nullopt;
-    const auto file = read_working_file(repo, std::string(path), *status);
-    return FileState{file.mode, hash_object(ObjectType::Blob, file.bytes)};
+    auto file = read_working_file(repo, std::string(path), *status);
+    FileState state{file.mode, hash_object(ObjectType::Blob, file.data.bytes)};
+    return WorktreeFile{std::move(file.data), std::move(state)};
+}
+std::optional<FileState> read_worktree_entry(const Repository& repo, std::string_view path) {
+    auto file = read_worktree_file(repo, path);
+    if (!file) return std::nullopt;
+    return std::move(file->state);
 }
 Snapshot scan_worktree(const Repository& repo) {
     const auto tracked = tracked_paths(load_index(repo));
@@ -157,7 +165,7 @@ Snapshot scan_worktree(const Repository& repo) {
     Snapshot result;
     auto visitor = [&](const std::string& path, const std::filesystem::file_status& status) {
         const auto file = read_working_file(repo, path, status);
-        result.emplace(path, FileState{file.mode, hash_object(ObjectType::Blob, file.bytes)});
+        result.emplace(path, FileState{file.mode, hash_object(ObjectType::Blob, file.data.bytes)});
     };
     walk(repo, "", rules, tracked, visitor);
     return result;
@@ -178,7 +186,7 @@ void add_paths(const Repository& repo, const std::vector<std::filesystem::path>&
         if (files.contains(path)) return;
         // Keep only IDs after each file is stored, rather than retaining all payloads.
         const auto file = read_working_file(repo, path, status);
-        files.emplace(path, FileState{file.mode, store.write(ObjectType::Blob, file.bytes)});
+        files.emplace(path, FileState{file.mode, store.write(ObjectType::Blob, file.data.bytes)});
     };
     for (const auto& path : selected) {
         const auto status = path.empty() ? std::optional(std::filesystem::status(repo.root())) : inspect(repo, path);
