@@ -4,16 +4,17 @@
 
 ## 当前状态
 
-Phase 0 构建与 CLI 基础已完成，版本为 `0.1.0`。Phase 1 的初始化与对象库已验收，Index 和 `add` 已通过模块与 CLI 验证；`commit`、`status`、`log`、`tag` 尚未实现，Phase 1 尚未整体验收。
+Phase 0 构建与 CLI 基础已完成，版本为 `0.1.0`。Phase 1 的初始化与对象库已验收，Index 和 `add` 已通过模块与 CLI 验证；引用、快照构建和 `commit` 已通过模块与 CLI 验证；`status`、`log`、`tag` 尚未实现，Phase 1 尚未整体验收。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 22 个单元及 3 个 CLI 用例 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 34 个单元及 4 个 CLI 用例 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
 | 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
 | Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
 | Phase 1 子项：Index 与 add | 已验收 | Debug 与 sanitized 的 9 个模块用例及 2 个相关 CLI 用例全部通过 |
+| Phase 1 子项：引用、快照、commit 与本地身份 | 已验收 | Debug 与 sanitized 首轮 16 个相关用例通过，引用审查修正后各复验 10 项，提交实验通过 |
 | Phase 1 剩余命令与后续阶段 | 计划 | 尚未实现或验收 |
 
 已执行的 Debug 验证：
@@ -46,6 +47,7 @@ Phase 0 的一个 CTest 用例通过，覆盖 `--help`、版本格式和空参�
 - `RepoLock`、`read_file`、`atomic_write`，普通文件与软链接检查，64 MiB 文件上限。
 - CLI `init [directory]`、`hash-object [-w] file`、`cat-file -t|-p full-id`。
 - 版本化 MGIX Index、按选择范围保存 Blob 的 `add`、暂存删除及文件模式；支持简化 `.minigitignore`，支持冲突阶段的持久化与 add 解决。
+- 版本化本地身份、符号／分离 HEAD、严格引用及预期旧值更新；Snapshot 与分层 Tree 往返；从 Index 构造带运行时 UTC 身份及 parent 的 Commit。
 - 对象 CLI 集成用例与 [对象实验](../examples/experiments/objects.sh)，均已通过。
 
 验证证据：
@@ -58,9 +60,13 @@ Phase 0 的一个 CTest 用例通过，覆盖 `--help`、版本格式和空参�
 
 Index/add 验证：`ctest --preset debug -R 'unit\.(Index|Invalid index|Add|Selected add|Ignore rules|Invalid later add)|staging_cli|cli_basics' --output-on-failure` 和对应 sanitized 命令，各 11 个用例全部通过，无 ASan/UBSan 报告。覆盖损坏索引与校验和、排序和冲突阶段、二进制与空文件、可执行位、暂存后修改、选择性与全仓库删除、子目录参数、忽略与已跟踪例外、软链和原始 `missing/../file` 等无效路径、文件目录转换、失败保持原 Index。
 
+引用／提交验证：Debug 和 sanitized 的 `-R 'unit\.(Commit|References|Snapshots|Identity)|commits_cli|objects_cli|staging_cli|cli_basics'` 首轮各 16 项通过。审查补充嵌套引用目录清理、重试同步和完整快照发布检查后，`-R 'unit\.(References|Commit)|commits_cli'` 最终各 10 项通过，无 ASan/UBSan 报告。`bash examples/experiments/commits.sh ./build/debug/minigit` 通过，脚本语法、六份文档 66 个相对链接与 `git diff --check` 通过。
+
+新增覆盖：首提交与 parent 链、暂存后编辑、二进制／可执行快照、共享子 Tree 展开、深度边界、空提交与分离 HEAD、消息和身份拒绝、未解决冲突、损坏 HEAD、缺失或错误类型 Blob/Tree、CAS 与同名引用歧义、嵌套引用删除及失败重试、失败保持引用和身份文件。未引入 reflog 和多文件事务；尚未校验所有历史祖先，后续历史遍历会明确检测缺失对象。
+
 关键覆盖包括空与二进制 blob、SHA-256 已知向量、压缩截断及尾部数据、解压大小限制、错误类型／长度／哈希、Tree 顺序和非法名称、Commit 父顺序、多行消息与字段注入、相对路径、软链接及 `link/..`、FIFO、无效仓库、锁竞争和输出失败。
 
-当前限制：使用 Linux/POSIX 接口；没有断电故障注入；单文件替换完成后的同步失败可能留下完整新文件；Commit 编解码只检查身份字段结构，业务身份与时间规范化由后续提交命令实现。
+当前限制：使用 Linux/POSIX 接口；没有断电故障注入；单文件替换完成后的同步失败可能留下完整新文件；Commit 编解码只检查身份字段结构，业务 create_commit 已负责显式身份及运行时 UTC 时间；没有命令级断电事务或全祖先损坏审计。
 
 验收条件：
 
@@ -93,4 +99,4 @@ Index/add 验证：`ctest --preset debug -R 'unit\.(Index|Invalid index|Add|Sele
 
 ## 下一步
 
-Index/`add` 已完成，下一步接入引用和 `commit/status/log/tag`，继续 Phase 2 至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+Index/`add` 已完成，引用和 `commit` 已完成，下一步接入 `status/log/tag`，继续 Phase 2 至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。

@@ -1,6 +1,6 @@
 # 学习笔记与观察实验
 
-MiniGit 的目标是让数据模型和行为之间的关系可以亲手观察。当前初始化和对象命令已有对应接口，可以运行下面的 MiniGit 实验；涉及暂存与提交的实验继续使用真实 Git 临时仓库，不能直接替换命令前缀。验收状态见 [进度](progress.md)。
+MiniGit 的目标是让数据模型和行为之间的关系可以亲手观察。当前初始化、对象、暂存和提交已有对应接口，可以运行下面的 MiniGit 实验；真实 Git 对照实验明确保留 Git 命令，尚未实现的差异展示不能直接替换命令前缀。验收状态见 [进度](progress.md)。
 
 ## MiniGit 实验：对象独立于工作区
 
@@ -13,6 +13,16 @@ bash examples/experiments/objects.sh ./build/debug/minigit
 [脚本](../examples/experiments/objects.sh) 将二进制路径转为绝对路径，使用 `mktemp` 创建实验目录，退出时清理。它调用 `init`，写入一份文本，用 `hash-object -w` 保存 blob，并把 CLI 返回的完整对象 ID 保存在变量中。修改工作区后，再用 `cat-file -t` 和 `cat-file -p` 检查类型及旧内容；使用 `cmp` 比较字节，不依赖硬编码摘要，也不调用系统 Git。
 
 预期重新计算修改后文件的摘要会得到另一 ID，旧 ID 仍读出原始内容。脚本额外验证无 `-w` 摘要计算可在仓库外运行，保存同内容两次复用 ID，重复初始化保留对象。这个实验只说明对象保存与读取，不说明 Index、提交或分支已经实现。
+
+## MiniGit 实验：提交 B，继续编辑 C
+
+```sh
+bash examples/experiments/commits.sh ./build/debug/minigit
+```
+
+[实验脚本](../examples/experiments/commits.sh) 先设置本地身份，将 note 从 A 改为 B 并 add，再改为 C，然后 commit。通过 Commit 的 tree 字段和根 Tree 的条目，找到保存 B 的 Blob；工作区仍为 C。再 add 和 commit，检查第二个提交的 parent 等于第一个提交。
+
+为什么提交需要 parent？若只保存根 Tree，可以知道每个版本有哪些文件，但无法回答某版本接续哪个版本，也无法区分两个分支从同一快照分别发展。父关系把快照连接成历史，后续共同祖先与三方合并才能有定义。为什么不把分支名放进 Commit？分支是观察历史的位置，允许移动和重命名；放进不可变对象会让纯粹的分支重命名重写历史。
 
 ## 实验一：内容与名称是两件事
 

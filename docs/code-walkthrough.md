@@ -1,6 +1,6 @@
 # 代码导读
 
-Phase 0 已完成，Phase 1 已加入初始化、对象库、Index 与 `add`。业务提交、完整引用管理和后续操作仍为计划。完成和验证状态见 [进度](progress.md)。
+Phase 0 已完成，Phase 1 已加入初始化、对象库、Index、引用、快照与 `add/commit`。状态、日志、标签命令及后续操作仍为计划。完成和验证状态见 [进度](progress.md)。
 
 ## 从一次命令开始
 
@@ -51,7 +51,15 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 8 | `status`、`log`、轻量 `tag` | 比较哪些状态？历史如何遍历？引用如何校验？ |
 | 9 | Diff、Worktree、Operations | 恢复、覆盖保护和继续/中止怎样跨进程保持？ |
 
-表中前五项已有接口，阅读链接见上一节；Index 及后续项仍为计划。依赖关系见 [架构](architecture.md)。
+表中前七项已有接口，阅读链接见相关章节；状态、历史展示及后续项仍为计划。依赖关系见 [架构](architecture.md)。
+
+## 从 Index 到提交
+
+读取 [refs.hpp](../include/minigit/refs.hpp)、[refs.cpp](../src/core/refs.cpp)，先看 `read_head` 怎样表示未出生分支，再看 `update_ref` 如何检查预期旧值。读取 [history.hpp](../include/minigit/history.hpp)、[history.cpp](../src/core/history.cpp) 的 `write_snapshot/read_snapshot`，观察路径映射如何递归构造 Tree，以及每个 Tree 条目的模式如何约束所引用的对象类型。
+
+`create_commit` 的调用链是：获取写锁 → 读取配置身份和 Index → 检查冲突条目 → 构造根 Tree → 校验旧 HEAD → 保存带 parent 的 Commit → 更新引用。失败可能留下未引用对象，但不会发布尚未完整保存的提交。底层编码保留读取教学对象的自由，业务层要求身份和消息有效。
+
+[test_history.cpp](../tests/unit/test_history.cpp) 检查快照、parent 与失败边界；[commits_cli.cmake](../tests/integration/commits_cli.cmake) 在工作区编辑后直接读取已提交 Tree 和 Blob，证明提交来源是 Index；[提交实验](../examples/experiments/commits.sh) 可重复演示同一机制。
 
 ## 跟踪一份文件的版本
 

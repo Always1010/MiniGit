@@ -6,9 +6,11 @@
 #include "minigit/objects.hpp"
 #include "minigit/repository.hpp"
 #include "minigit/worktree.hpp"
+#include "minigit/history.hpp"
 
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -28,6 +30,8 @@ int run(const std::vector<std::string_view>& args) {
                      "  hash-object [-w] <file>    Hash or store file content\n"
                      "  cat-file -t|-p <object>    Inspect an object\n"
                      "  add [-A] [--] <paths...>  Stage file contents or deletions\n"
+                     "  config <key> [value]       Read or set local commit identity\n"
+                     "  commit -m <message> [--allow-empty]  Commit the index\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -99,6 +103,35 @@ int run(const std::vector<std::string_view>& args) {
         if ((!all && paths.empty()) || (all && !paths.empty()))
             throw UsageError("add requires paths, or -A without paths");
         minigit::add_paths(minigit::Repository::discover(), paths, all);
+        return 0;
+    }
+    if (command == "config") {
+        if (args.size() < 2 || args.size() > 3 ||
+            (args[1] != "user.name" && args[1] != "user.email"))
+            throw UsageError("config requires user.name or user.email and an optional value");
+        const auto repo = minigit::Repository::discover();
+        if (args.size() == 3) minigit::configure_identity(repo, args[1], args[2]);
+        else {
+            const auto value = minigit::identity_value(repo, args[1]);
+            if (!value) throw minigit::Error("identity value is not configured");
+            std::cout << *value << '\n';
+        }
+        return 0;
+    }
+    if (command == "commit") {
+        bool allow_empty = false;
+        std::optional<std::string_view> message;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--allow-empty") { allow_empty = true; continue; }
+            if (args[i] == "-m" && !message && i + 1 < args.size()) {
+                message = args[++i];
+                continue;
+            }
+            throw UsageError("commit requires -m <message> and optional --allow-empty");
+        }
+        if (!message) throw UsageError("commit requires -m <message>");
+        const auto id = minigit::create_commit(minigit::Repository::discover(), *message, allow_empty);
+        std::cout << id.hex() << ' ' << message->substr(0, message->find('\n')) << '\n';
         return 0;
     }
     throw UsageError("invalid arguments; use --help");
