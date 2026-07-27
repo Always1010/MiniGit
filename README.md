@@ -2,7 +2,7 @@
 
 MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
 
-Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 已加入初始化、对象库、Index、引用与 `add/commit/status/log`，验证状态见 [进度](docs/progress.md)。轻量 `tag` 尚未交付，Phase 1 尚未整体验收。
+Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；详细范围见 [进度](docs/progress.md)。后续按 Phase 2 至 Phase 4 推进分支、工作区更新、合并和历史重写。
 
 ## 构建与运行
 
@@ -34,10 +34,13 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `commit -m message [--allow-empty]` | 将 Index 保存为 Tree 和 Commit，并移动当前引用 |
 | `status [--porcelain]` | 显示分支及三棵树比较；`--porcelain`、`--short`、`-s` 仅显示状态行 |
 | `log [--oneline] [-n count] [revision]` | 沿全部 parent 展示去重历史，默认从 HEAD 开始 |
+| `tag`、`tag [-f] name [revision]`、`tag -d name` | 列出、创建／强制移动或删除指向 Commit 的轻量标签 |
 
 对象 ID 必须为完整 64 位十六进制文本，尚不支持缩写。不带 `-w` 的摘要计算可以在仓库外执行；写入和读取需要当前目录或祖先存在有效 `.minigit` 仓库。当前文件读取上限为 64 MiB，软链接和非普通文件被拒绝。
 
 `add` 立即保存文件字节并更新 `.minigit/index`，之后继续编辑工作区不会改变暂存内容。仓库根的 `.minigitignore` 支持注释、普通路径、目录尾斜杠和 `*`、`?` 模式；无斜杠规则匹配任意层的名称，路径规则相对于根目录。不支持 `!` 和 `**`，遇到这些语法明确报错。忽略规则不移除已跟踪路径，明确添加被忽略的新文件会失败。
+
+轻量标签只是 `refs/tags/name` 中保存的提交 ID，后续 commit 不会移动它。重复名称默认失败，只有 `-f` 明确移动；尚未提交的 HEAD 不能创建默认标签。标签名称遵循引用路径约束，保留 HEAD、refs/ 前缀及完整十六进制 ID，以免与修订解析歧义。当前不支持附注标签或指向 Blob 的标签。
 
 首次提交前设置显式身份。身份单独保存在 `.minigit/identity`，不改写仓库格式标识：
 
@@ -64,7 +67,7 @@ bash examples/experiments/objects.sh ./build/debug/minigit
 bash examples/experiments/commits.sh ./build/debug/minigit
 ```
 
-[提交实验](examples/experiments/commits.sh) 进一步检查暂存 B、工作区编辑为 C 后仍提交 B，以及下一次提交链接前一个 parent。脚本创建临时仓库并在结束时自动清理，不调用系统 Git。测试结果以 [进度](docs/progress.md) 为准。
+[提交实验](examples/experiments/commits.sh) 进一步检查暂存 B、工作区编辑为 C 后仍提交 B，以及下一次提交链接前一个 parent；还核对 status、log 和标签在分支前进后保持原提交。脚本创建临时仓库并在结束时自动清理，不调用系统 Git。测试结果以 [进度](docs/progress.md) 为准。
 
 ## 设计范围
 
@@ -88,4 +91,4 @@ bash examples/experiments/commits.sh ./build/debug/minigit
 4. [学习笔记](docs/learning-notes.md)：可执行的观察实验、取舍与常见误区。
 5. [进度](docs/progress.md)：完成状态、验证证据、阶段验收与下一步。
 
-涉及暂存、提交或合并的 MiniGit 工作流只有在对应阶段实现并验收后才可执行。需要体验完整 Git 功能时，请使用真实 Git。
+Phase 1 的暂存、提交与历史实验可直接运行。分支、工作区恢复、合并及历史重写随后续阶段交付，当前状态统一由进度文档记录。

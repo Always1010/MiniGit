@@ -1,6 +1,22 @@
 # 代码导读
 
-Phase 0 已完成，Phase 1 已加入初始化、对象库、Index、引用、快照与 `add/commit/status/log`。标签命令及后续操作仍为计划。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础和 Phase 1 的初始化、对象库、Index、引用、快照及对应命令。分支与工作区操作仍为计划。完成和验证状态见 [进度](progress.md)。
+
+## 工程目录
+
+```text
+CMakeLists.txt / CMakePresets.json  构建与验证预设
+include/minigit/                   核心模型与公开函数接口
+src/core/                          对象、暂存、快照、引用与历史实现
+src/cli/main.cpp                   参数解析与结果显示
+tests/unit/                        Catch2 模块与数据不变量测试
+tests/integration/                 CMake 临时仓库命令串
+tests/support/                     临时目录清理辅助
+examples/experiments/               可独立重放的学习实验
+docs/                              架构、原理、导读、笔记与验收
+```
+
+核心逻辑直接链接为 `minigit_core`，测试可绕过 CLI 调用接口；CLI 测试再检查真实进程与磁盘结果。命令协调目前使用明确的自由函数，随历史操作复杂度增加再调整文件边界。
 
 ## 从一次命令开始
 
@@ -39,7 +55,7 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 
 暂存模块从 [index.hpp](../include/minigit/index.hpp)、[index.cpp](../src/core/index.cpp) 阅读校验与编解码，再到 [worktree.hpp](../include/minigit/worktree.hpp)、[worktree.cpp](../src/core/worktree.cpp) 的 `add_paths`。调用链是参数选择 → 路径验证 → 读取选择范围 → 写入 Blob → 移除旧条目或冲突阶段 → 保存完整 Index。单元测试 [test_staging.cpp](../tests/unit/test_staging.cpp) 直接读回 Blob，检查暂存后编辑、删除和目录类型转换，避免仅凭 CLI 成功判断暂存语义。
 
-| 顺序 | 计划模块或类型 | 阅读时要回答的问题 |
+| 顺序 | 模块或类型 | 阅读时要回答的问题 |
 | --- | --- | --- |
 | 1 | 错误类型与文件工具 | 错误是否带上下文？读取失败与格式损坏能否区分？ |
 | 2 | `ObjectId` | 如何区分固定 32 字节和 64 位显示字符串？非法输入在哪里拒绝？ |
@@ -49,9 +65,9 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 6 | Index 与 `add` | 暂存的是哪个版本？路径越界和软链接如何拒绝？ |
 | 7 | Refs / HEAD 与 `commit` | 空历史怎样表示？引用何时更新？中途失败留下什么？ |
 | 8 | `status`、`log`、轻量 `tag` | 比较哪些状态？历史如何遍历？引用如何校验？ |
-| 9 | Diff、Worktree、Operations | 恢复、覆盖保护和继续/中止怎样跨进程保持？ |
+| 9 | Diff、Worktree、Operations（计划） | 恢复、覆盖保护和继续/中止怎样跨进程保持？ |
 
-表中前七项已有接口，阅读链接见相关章节；标签命令及后续项仍为计划。依赖关系见 [架构](architecture.md)。
+表中前八项已有接口，阅读链接见相关章节；后续分支及工作区操作仍为计划。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -72,6 +88,10 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 [dag.cpp](../src/core/dag.cpp) 的 `load_commit_graph` 收集所有可达 Commit，使用发现集合避免共享祖先重复入队。`topological_order` 为每条 parent 边统计尚未输出的子提交数，用有序集合维护就绪节点；输出一个提交后降低其父节点的计数，只有所有子边已输出，父节点才就绪。
 
 [test_dag.cpp](../tests/unit/test_dag.cpp) 手工保存线性、多父及共享祖先对象，验证去重和拓扑约束，同时覆盖缺失父对象、错误类型及纯算法输入的环。[log_cli.cmake](../tests/integration/log_cli.cmake) 检查实际命令的顺序、身份、消息、起点与显示限制。输入时间不决定顺序，因而历史关系不会被时钟偏差改变。
+
+## 轻量标签为何不需要新对象
+
+[tags.cpp](../src/core/tags.cpp) 的 `create_tag` 获取写锁、校验名称、解析修订、检查已有标签并调用 `update_ref`。`list_tags` 与 `delete_tag` 复用同一引用存储；[test_tags.cpp](../tests/unit/test_tags.cpp) 检查对象库不增加、HEAD/Index 保持原值、标签固定目标及失败保护。[tags_cli.cmake](../tests/integration/tags_cli.cmake) 将 tag 与 log 组合，证明新 commit 前进分支，旧标签仍展示原历史。
 
 ## 跟踪一份文件的版本
 

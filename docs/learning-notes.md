@@ -20,7 +20,7 @@ bash examples/experiments/objects.sh ./build/debug/minigit
 bash examples/experiments/commits.sh ./build/debug/minigit
 ```
 
-[实验脚本](../examples/experiments/commits.sh) 先设置本地身份，将 note 从 A 改为 B 并 add，再改为 C，然后 commit。通过 Commit 的 tree 字段和根 Tree 的条目，找到保存 B 的 Blob；工作区仍为 C。再 add 和 commit，检查第二个提交的 parent 等于第一个提交。
+[实验脚本](../examples/experiments/commits.sh) 先设置本地身份，将 note 从 A 改为 B 并 add，再改为 C，然后 commit。通过 Commit 的 tree 字段和根 Tree 的条目，找到保存 B 的 Blob；工作区仍为 C。再 add 和 commit，检查第二个提交的 parent 等于第一个提交。实验还创建 saved-B 轻量标签，再提交 C，验证 status 干净而 `log saved-B` 仍从保存 B 的提交开始，最后删除标签。
 
 为什么提交需要 parent？若只保存根 Tree，可以知道每个版本有哪些文件，但无法回答某版本接续哪个版本，也无法区分两个分支从同一快照分别发展。父关系把快照连接成历史，后续共同祖先与三方合并才能有定义。为什么不把分支名放进 Commit？分支是观察历史的位置，允许移动和重命名；放进不可变对象会让纯粹的分支重命名重写历史。
 
