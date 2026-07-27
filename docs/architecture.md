@@ -37,6 +37,10 @@ flowchart TD
 
 当前 [ObjectStore](../include/minigit/object_store.hpp) 提供 `write`、`read` 和 `object_path`。[Repository](../include/minigit/repository.hpp) 提供 `init`、`discover`、`root`、`metadata`；它不代替 CLI 命令协调。文件工具提供 `RepoLock`、`atomic_write`、`read_file`，详见 [fs.hpp](../include/minigit/fs.hpp)。
 
+共享文件接口 `FileData` 同时保存字节与完整权限位 `07777`；`read_file_data` 从同一打开的普通文件获取读取前后 stat，检查大小、权限及纳秒级修改／状态时间没有变化，最后核对字节数。它返回已打开文件的稳定观测，不能保证当前路径没有被外部编辑器替换。`read_file` 复用这条读取链，仅返回字节。
+
+`atomic_write_with_permissions` 在内容写完后为临时文件设置并核对明确权限，再同步与替换，使新内容和权限一起发布；旧 `atomic_write` 继续采用创建模式 `0644` 并受 umask 影响。`WorktreeFile` 组合 FileData 与由它计算的 FileState，`read_worktree_file` 复用路径分类：缺失、目录或普通文件祖先造成的 ENOTDIR 返回空，软链及特殊类型明确失败。读取不保存对象；add 和 scan 仍逐文件处理。
+
 Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/Tree 转换，不依赖引用或命令。Refs 调用它校验发布目标；History 负责身份、HEAD 与提交协调。`head_snapshot` 保留在 History，因为它需要解析可变 HEAD。路径转义位于 [format.hpp](../include/minigit/format.hpp)，CLI 直接使用，Diff 无需依赖状态查询模块。
 
 ## 持久化边界

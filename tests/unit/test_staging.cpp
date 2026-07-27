@@ -28,6 +28,33 @@ private:
     std::filesystem::path previous_;
 };
 }
+TEST_CASE("Worktree file reads retain bytes permissions and matching state without publishing objects", "[staging][worktree]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    const Bytes binary{0, 255, 10};
+    atomic_write_with_permissions(repo.root() / "file", binary, 0640);
+    const auto plain = read_worktree_file(repo, "file");
+    REQUIRE(plain.has_value());
+    REQUIRE(plain->data.bytes == binary);
+    REQUIRE(plain->data.permissions == 0640);
+    REQUIRE((plain->state == FileState{"100644", hash_object(ObjectType::Blob, binary)}));
+    REQUIRE(read_worktree_entry(repo, "file") == plain->state);
+    atomic_write_with_permissions(repo.root() / "file", to_bytes("new"), 0710);
+    const auto executable = read_worktree_file(repo, "file");
+    REQUIRE(executable->data.permissions == 0710);
+    REQUIRE((executable->state == FileState{"100755", hash_object(ObjectType::Blob, to_bytes("new"))}));
+    REQUIRE(plain->data.bytes == binary);
+    REQUIRE_FALSE(read_worktree_file(repo, "missing").has_value());
+    REQUIRE_FALSE(read_worktree_file(repo, "file/child").has_value());
+    std::filesystem::create_directory(repo.root() / "directory");
+    REQUIRE_FALSE(read_worktree_file(repo, "directory").has_value());
+    std::filesystem::create_symlink(repo.root() / "file", repo.root() / "link");
+    REQUIRE_THROWS_AS(read_worktree_file(repo, "link"), Error);
+    REQUIRE_THROWS_AS(read_worktree_file(repo, "../file"), Error);
+    REQUIRE_THROWS_AS(read_worktree_file(repo, ".minigit/HEAD"), Error);
+    REQUIRE(std::filesystem::is_empty(repo.metadata() / "objects"));
+    REQUIRE_FALSE(std::filesystem::exists(repo.metadata() / "index"));
+}
 TEST_CASE("Index round trips sorted UTF-8 paths and conflict stages", "[staging]") {
     test::TempDirectory temp;
     const auto repo = Repository::init(temp.path());

@@ -96,14 +96,18 @@ TEST_CASE("Metadata and filesystem operations reject symlinks", "[repository][fi
         auto link = temp.path() / "link";
         std::filesystem::create_symlink(outside / "data", link);
         REQUIRE_THROWS_AS(read_file(link), Error);
+        REQUIRE_THROWS_AS(read_file_data(link), Error);
         REQUIRE_THROWS_AS(atomic_write(link, to_bytes("overwrite")), Error);
+        REQUIRE_THROWS_AS(atomic_write_with_permissions(link, to_bytes("overwrite"), 0755), Error);
         REQUIRE(to_string(read_file(outside / "data")) == "preserve");
     }
     SECTION("parent symlink") {
         auto link = temp.path() / "link";
         std::filesystem::create_directory_symlink(outside, link);
         REQUIRE_THROWS_AS(read_file(link / "data"), Error);
+        REQUIRE_THROWS_AS(read_file_data(link / "data"), Error);
         REQUIRE_THROWS_AS(atomic_write(link / "data", to_bytes("overwrite")), Error);
+        REQUIRE_THROWS_AS(atomic_write_with_permissions(link / "data", to_bytes("overwrite"), 0755), Error);
     }
     SECTION("dot-dot cannot conceal a traversed symlink") {
         std::filesystem::create_directory(outside / "deep");
@@ -113,7 +117,9 @@ TEST_CASE("Metadata and filesystem operations reject symlinks", "[repository][fi
         std::filesystem::create_directory_symlink(outside / "deep", link);
         const auto traversal = link / "..";
         REQUIRE_THROWS_AS(read_file(traversal / "file"), Error);
+        REQUIRE_THROWS_AS(read_file_data(traversal / "file"), Error);
         REQUIRE_THROWS_AS(atomic_write(traversal / "file", to_bytes("overwrite")), Error);
+        REQUIRE_THROWS_AS(atomic_write_with_permissions(traversal / "file", to_bytes("overwrite"), 0755), Error);
         REQUIRE_THROWS_AS(Repository::init(traversal), Error);
         REQUIRE_THROWS_AS(Repository::discover(traversal), Error);
         REQUIRE(to_string(read_file(temp.path() / "file")) == "lexical target");
@@ -128,7 +134,9 @@ TEST_CASE("Metadata and filesystem operations reject symlinks", "[repository][fi
         auto fifo = temp.path() / "fifo";
         REQUIRE(::mkfifo(fifo.c_str(), 0600) == 0);
         REQUIRE_THROWS_AS(read_file(fifo), Error);
+        REQUIRE_THROWS_AS(read_file_data(fifo), Error);
         REQUIRE_THROWS_AS(atomic_write(fifo, to_bytes("data")), Error);
+        REQUIRE_THROWS_AS(atomic_write_with_permissions(fifo, to_bytes("data"), 0755), Error);
     }
 }
 TEST_CASE("Atomic writes preserve old contents on validation failure", "[filesystem]") {
@@ -140,6 +148,45 @@ TEST_CASE("Atomic writes preserve old contents on validation failure", "[filesys
     atomic_write(target, to_bytes("replacement"));
     REQUIRE(to_string(read_file(target)) == "replacement");
     REQUIRE(std::distance(std::filesystem::directory_iterator(temp.path()), std::filesystem::directory_iterator{}) == 1);
+}
+TEST_CASE("File data captures exact permissions and explicit atomic writes preserve requested modes", "[filesystem]") {
+    test::TempDirectory temp;
+    struct RestoreMask {
+        mode_t previous = ::umask(0077);
+        ~RestoreMask() { ::umask(previous); }
+    } mask;
+    const auto target = temp.path() / "file";
+    const Bytes binary{0, 10, 255, 1};
+    atomic_write(target, binary);
+    const auto original = read_file_data(target);
+    REQUIRE(original.bytes == binary);
+    REQUIRE(original.permissions == 0600);
+    REQUIRE(read_file(target) == original.bytes);
+    SECTION("explicit permissions override restrictive umask with content") {
+        atomic_write_with_permissions(target, to_bytes("replacement"), 0755);
+        const auto replaced = read_file_data(target);
+        REQUIRE(to_string(replaced.bytes) == "replacement");
+        REQUIRE(replaced.permissions == 0755);
+        atomic_write_with_permissions(target, {}, 0644);
+        const auto empty = read_file_data(target);
+        REQUIRE(empty.bytes.empty());
+        REQUIRE(empty.permissions == 0644);
+        atomic_write_with_permissions(target, binary, 0740);
+        REQUIRE(read_file_data(target).permissions == 0740);
+        REQUIRE(read_file_data(target).bytes == binary);
+    }
+    SECTION("default writes continue to respect umask") {
+        atomic_write_with_permissions(target, binary, 0755);
+        atomic_write(target, to_bytes("default"));
+        REQUIRE(read_file_data(target).permissions == 0600);
+        REQUIRE(to_string(read_file(target)) == "default");
+    }
+    SECTION("invalid mode preserves contents permissions and directory entries") {
+        REQUIRE_THROWS_AS(atomic_write_with_permissions(target, to_bytes("bad"), 010000), Error);
+        REQUIRE(read_file_data(target).bytes == original.bytes);
+        REQUIRE(read_file_data(target).permissions == original.permissions);
+        REQUIRE(std::distance(std::filesystem::directory_iterator(temp.path()), std::filesystem::directory_iterator{}) == 1);
+    }
 }
 TEST_CASE("Permanent repository lock serializes separate processes", "[repository][lock]") {
     test::TempDirectory temp;

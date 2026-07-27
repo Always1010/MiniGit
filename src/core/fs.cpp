@@ -5,9 +5,11 @@
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <optional>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utility>
 namespace minigit {
 namespace {
 [[noreturn]] void fail(std::string_view action) { throw Error(std::string(action) + ": " + std::strerror(errno)); }
@@ -81,7 +83,7 @@ void sync_directory(const std::filesystem::path& path) {
     if (::fsync(fd.value) != 0) fail("同步目录失败");
 }
 }
-Bytes read_file(const std::filesystem::path& path) {
+FileData read_file_data(const std::filesystem::path& path) {
     Fd parent(open_directory(path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path()));
     Fd fd(::openat(parent.value, path.filename().c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK));
     if (fd.value < 0) fail("读取文件失败（禁止软链接）");
@@ -101,9 +103,24 @@ Bytes read_file(const std::filesystem::path& path) {
         if (count > max_file_size - result.size()) throw Error("文件超过 64 MiB 限制");
         result.insert(result.end(), buffer.begin(), buffer.begin() + n);
     }
-    return result;
+    struct stat after{};
+    if (::fstat(fd.value, &after) != 0) fail("读取后检查文件失败");
+    if (state.st_dev != after.st_dev || state.st_ino != after.st_ino || state.st_size != after.st_size ||
+        state.st_mode != after.st_mode ||
+        state.st_mtim.tv_sec != after.st_mtim.tv_sec || state.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+        state.st_ctim.tv_sec != after.st_ctim.tv_sec || state.st_ctim.tv_nsec != after.st_ctim.tv_nsec ||
+        result.size() != static_cast<std::uintmax_t>(state.st_size))
+        throw Error("读取期间文件内容或权限发生变化");
+    return {std::move(result), static_cast<std::uint32_t>(state.st_mode & 07777)};
 }
-void atomic_write(const std::filesystem::path& path, std::span<const std::uint8_t> bytes) {
+Bytes read_file(const std::filesystem::path& path) {
+    auto data = read_file_data(path);
+    return std::move(data.bytes);
+}
+namespace {
+void atomic_write_impl(const std::filesystem::path& path, std::span<const std::uint8_t> bytes,
+                       std::optional<std::uint32_t> permissions) {
+    if (permissions && *permissions > 07777) throw Error("文件权限超过 07777 范围");
     if (bytes.size() > max_file_size) throw Error("文件超过 64 MiB 限制");
     Fd parent(open_directory(path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path()));
     const auto name = path.filename();
@@ -128,6 +145,13 @@ void atomic_write(const std::filesystem::path& path, std::span<const std::uint8_
             if (n == 0) throw Error("写入未取得进展");
             offset += static_cast<std::size_t>(n);
         }
+        if (permissions) {
+            if (::fchmod(fd.value, static_cast<mode_t>(*permissions)) != 0) fail("设置文件权限失败");
+            struct stat state{};
+            if (::fstat(fd.value, &state) != 0) fail("检查文件权限失败");
+            if (static_cast<std::uint32_t>(state.st_mode & 07777) != *permissions)
+                throw Error("文件权限未被精确应用");
+        }
         if (::fsync(fd.value) != 0) fail("同步文件失败");
         int closing = fd.value;
         fd.value = -1;
@@ -139,6 +163,14 @@ void atomic_write(const std::filesystem::path& path, std::span<const std::uint8_
         ::unlinkat(parent.value, temporary.c_str(), 0);
         throw;
     }
+}
+}
+void atomic_write(const std::filesystem::path& path, std::span<const std::uint8_t> bytes) {
+    atomic_write_impl(path, bytes, std::nullopt);
+}
+void atomic_write_with_permissions(const std::filesystem::path& path, std::span<const std::uint8_t> bytes,
+                                   std::uint32_t permissions) {
+    atomic_write_impl(path, bytes, permissions);
 }
 RepoLock::RepoLock(const std::filesystem::path& metadata_directory) {
     Fd parent(open_directory(metadata_directory));
