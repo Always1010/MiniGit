@@ -73,6 +73,8 @@ Phase 2 应增加锁冲突、临时文件残留、工作区覆盖风险和失败
 
 ## 常见误区
 
+MiniGit 可运行暂存观察实验：先运行 `init`，写入 `staged` 并 `add note.txt`，以 `hash-object note.txt` 取得 ID，再将工作区改为 `working`。`cat-file -p <刚得到的ID>` 仍返回 `staged`，说明 Index 指向的内容已经保存。随后删除文件并 `add note.txt` 会移除暂存条目；`add -A` 处理整个仓库，而不是当前子目录。
+
 - blob 包含内容，路径来自 tree；没有文件名并不妨碍文件版本复用。
 - commit 保存快照入口和父关系，不能仅把它理解为补丁集合。
 - 相同文件快照不保证相同 commit，元数据与父关系也参与摘要。
