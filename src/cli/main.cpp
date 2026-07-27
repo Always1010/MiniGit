@@ -10,6 +10,7 @@
 #include "minigit/status.hpp"
 #include "minigit/dag.hpp"
 #include "minigit/tags.hpp"
+#include "minigit/format.hpp"
 
 #include <charconv>
 #include <filesystem>

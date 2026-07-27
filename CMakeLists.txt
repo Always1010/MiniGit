@@ -26,7 +26,9 @@ add_library(minigit_core
     src/core/index.cpp
     src/core/worktree.cpp
     src/core/refs.cpp
+    src/core/snapshot.cpp
     src/core/history.cpp
+    src/core/format.cpp
     src/core/status.cpp
     src/core/dag.cpp
     src/core/tags.cpp)

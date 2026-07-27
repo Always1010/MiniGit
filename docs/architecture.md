@@ -13,13 +13,19 @@ flowchart TD
     Commands --> Worktree[Worktree 路径检查与文件读写]
     Commands --> Index[Index 版本化暂存区]
     Commands --> Refs[Refs 与 HEAD]
-    Commands --> History[History 提交图遍历]
+    Commands --> History[History 提交协调与身份]
+    Commands --> DAG[DAG 提交图遍历]
+    Commands --> Snapshot[Snapshot 路径映射与 Tree 转换]
     Commands --> Diff[Diff 快照比较]
     Commands --> Operations[Operations 可恢复操作状态]
     Commands --> Objects[ObjectStore 内容寻址对象库]
     Operations --> Merge[Merge 三方合并]
     Merge --> Diff
-    History --> Objects
+    History --> Refs
+    History --> Snapshot
+    DAG --> Snapshot
+    Refs --> Snapshot
+    Snapshot --> Objects
     Index --> Objects
     Refs --> Objects
     Objects --> Codec[Blob / Tree / Commit 编解码]
@@ -30,6 +36,8 @@ flowchart TD
 核心类型 [ObjectId](../include/minigit/object_id.hpp) 以固定 32 字节保存摘要，`from_bytes` 与 `bytes` 处理内部表示，`from_hex` 与 `hex` 处理 64 位十六进制文本。文本格式与内部字节表示明确分离，防止将十六进制文本误写入 tree 的二进制摘要字段。
 
 当前 [ObjectStore](../include/minigit/object_store.hpp) 提供 `write`、`read` 和 `object_path`。[Repository](../include/minigit/repository.hpp) 提供 `init`、`discover`、`root`、`metadata`；它不代替 CLI 命令协调。文件工具提供 `RepoLock`、`atomic_write`、`read_file`，详见 [fs.hpp](../include/minigit/fs.hpp)。
+
+Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/Tree 转换，不依赖引用或命令。Refs 调用它校验发布目标；History 负责身份、HEAD 与提交协调。`head_snapshot` 保留在 History，因为它需要解析可变 HEAD。路径转义位于 [format.hpp](../include/minigit/format.hpp)，CLI 直接使用，Diff 无需依赖状态查询模块。
 
 ## 持久化边界
 
@@ -65,7 +73,7 @@ Index 已由 [index.hpp](../include/minigit/index.hpp) 定义为条目列表，`
 
 [refs.hpp](../include/minigit/refs.hpp) 定义 `Head`，同时保留符号分支名称及可选提交 ID，空 ID 表示未出生分支。引用文件保存完整 ID；`read_ref` 将文件缺失与损坏区分，`update_ref` 校验调用方预期旧值及目标 Commit 的完整可读取快照，再以原子替换发布新值。删除嵌套引用时只清理命名空间内的空父目录，保留 heads/tags；重试的幂等更新也补目录同步。`resolve_commit` 解析 HEAD、完整 ID、分支与标签，遇到同名分支及标签明确拒绝歧义。
 
-[history.hpp](../include/minigit/history.hpp) 的 `Snapshot` 将目录树展开为路径映射；`write_snapshot` 校验 Blob 并递归构造子 Tree，`read_snapshot` 按模式校验每个对象类型。展开限制为 128 层 Tree、100000 Tree 条目（包含文件与目录）及 64 MiB 展开路径／Tree 数据，以免小型复用图展开为无限制内存。`create_commit` 在一个写锁下读取 Index、生成根 Tree、记录旧 HEAD parent、写入 Commit，最后移动分支或分离 HEAD。身份文件单独使用显式版本和 name/email 字段。
+[snapshot.hpp](../include/minigit/snapshot.hpp) 的 `Snapshot` 将目录树展开为路径映射；`write_snapshot` 校验 Blob 并递归构造子 Tree，`read_snapshot` 按模式校验每个对象类型。展开限制为 128 层 Tree、100000 Tree 条目（包含文件与目录）及 64 MiB 展开路径／Tree 数据，以免小型复用图展开为无限制内存。[history.hpp](../include/minigit/history.hpp) 的 `create_commit` 在一个写锁下读取 Index、生成根 Tree、记录旧 HEAD parent、写入 Commit，最后移动分支或分离 HEAD。身份文件单独使用显式版本和 name/email 字段。
 
 [tags.hpp](../include/minigit/tags.hpp) 将轻量标签命令组合到已验证的引用机制：`create_tag` 解析目标并使用预期旧值更新，`delete_tag` 复用安全目录清理，`list_tags` 先验证所有目标，再返回按名称排序的映射。三项操作各持有一个写锁；标签不保存新对象，也不改变 HEAD 或 Index。首版只允许指向具有有效快照的 Commit。
 

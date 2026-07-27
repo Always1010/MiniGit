@@ -71,9 +71,9 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 
 ## 从 Index 到提交
 
-读取 [refs.hpp](../include/minigit/refs.hpp)、[refs.cpp](../src/core/refs.cpp)，先看 `read_head` 怎样表示未出生分支，再看 `update_ref` 如何检查预期旧值。读取 [history.hpp](../include/minigit/history.hpp)、[history.cpp](../src/core/history.cpp) 的 `write_snapshot/read_snapshot`，观察路径映射如何递归构造 Tree，以及每个 Tree 条目的模式如何约束所引用的对象类型。
+读取 [refs.hpp](../include/minigit/refs.hpp)、[refs.cpp](../src/core/refs.cpp)，先看 `read_head` 怎样表示未出生分支，再看 `update_ref` 如何检查预期旧值。读取 [snapshot.hpp](../include/minigit/snapshot.hpp)、[snapshot.cpp](../src/core/snapshot.cpp) 的 `write_snapshot/read_snapshot`，观察路径映射如何递归构造 Tree，以及每个 Tree 条目的模式如何约束所引用的对象类型。
 
-`create_commit` 的调用链是：获取写锁 → 读取配置身份和 Index → 检查冲突条目 → 构造根 Tree → 校验旧 HEAD → 保存带 parent 的 Commit → 更新引用。失败可能留下未引用对象，但不会发布尚未完整保存的提交。底层编码保留读取教学对象的自由，业务层要求身份和消息有效。
+然后阅读 [history.hpp](../include/minigit/history.hpp)、[history.cpp](../src/core/history.cpp) 的提交协调与身份。`create_commit` 的调用链是：获取写锁 → 读取配置身份和 Index → 检查冲突条目 → 构造根 Tree → 校验旧 HEAD → 保存带 parent 的 Commit → 更新引用。失败可能留下未引用对象，但不会发布尚未完整保存的提交。底层编码保留读取教学对象的自由，业务层要求身份和消息有效。
 
 [test_history.cpp](../tests/unit/test_history.cpp) 检查快照、parent 与失败边界；[commits_cli.cmake](../tests/integration/commits_cli.cmake) 在工作区编辑后直接读取已提交 Tree 和 Blob，证明提交来源是 Index；[提交实验](../examples/experiments/commits.sh) 可重复演示同一机制。
 
@@ -81,7 +81,9 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 
 从 [status.cpp](../src/core/status.cpp) 的 `collect_status` 阅读：加载 HEAD 快照及 Index，验证引用的 Blob，再扫描工作区。正常条目分别比较 HEAD→Index 和 Index→工作区；冲突路径读取 stage 集合，未跟踪路径另行枚举。先生成完整 `StatusReport`，再由 CLI 输出，读取失败不会留下半份状态报告。
 
-[test_status.cpp](../tests/unit/test_status.cpp) 检查 `MM`、模式变化、删除、忽略例外、冲突和损坏；[status_cli.cmake](../tests/integration/status_cli.cmake) 通过命令串观察 `?? → A → AM → 未暂存修改 → MM → 删除`。`quote_path` 将空格、换行及控制字节转义，避免一个文件名伪装成多行报告。
+[test_status.cpp](../tests/unit/test_status.cpp) 检查 `MM`、模式变化、删除、忽略例外、冲突和损坏；[status_cli.cmake](../tests/integration/status_cli.cmake) 通过命令串观察 `?? → A → AM → 未暂存修改 → MM → 删除`。[format.cpp](../src/core/format.cpp) 的 `quote_path` 将空格、换行及控制字节转义，避免一个文件名伪装成多行报告。
+
+Snapshot 持有路径、模式和对象 ID 的通用模型；Working Tree 负责文件选择与读取；History 负责可变 HEAD 语义与提交。将这三项分开，使引用验证与 Diff 复用快照转换时无需拉入命令层逻辑。
 
 ## 从一条父链到 DAG
 
