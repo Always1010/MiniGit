@@ -56,6 +56,8 @@ MiniGit 首次提交没有 parent，后续提交记录提交前的 HEAD。父关
 
 MiniGit 的 log 已遍历完整 parent 图，不能只沿第一父链。一份合并历史若 D 的父为 B、C，而 B、C 的父都为 A，需输出 D、B/C、A，且 A 只出现一次。具体 B/C 顺序采用对象 ID 排序，但 A 必须在 B 和 C 之后，这就是拓扑约束。作者时间由用户及运行环境决定，不能代替父关系。
 
+轻量标签不需要额外对象：MiniGit 的 `tag saved-B` 将当前提交 ID 写入标签引用，随后提交 C 只移动分支。`log saved-B` 仍从原提交开始。附注标签则需要 Tag 对象保存身份、消息及目标；首版范围限定轻量标签，所以 ObjectType 保持 Blob/Tree/Commit 三类。
+
 规划中的 merge 为两个分支找到共同祖先，比较 base、ours、theirs，得到结果 tree；产生新合并提交时记录两个 parent。cherry-pick 把一个提交相对其父提交的改变应用到当前历史，revert 则应用逆向改变。冲突状态需要持久化，才能在解决后继续或中止，不能只留下冲突标记而丢失操作上下文。
 
 引用移动不等于删除对象。reflog 记录移动的线索，gc 根据根集合分析可达性，再遵守保留规则回收不可达对象。真实 Git 还有 packfile 和增量对象，见 [gitformat-pack](https://git-scm.com/docs/gitformat-pack)。MiniGit 首先使用松散对象，gc 的具体策略在 Phase 4 实现时定义。

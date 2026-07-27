@@ -9,6 +9,7 @@
 #include "minigit/history.hpp"
 #include "minigit/status.hpp"
 #include "minigit/dag.hpp"
+#include "minigit/tags.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -37,6 +38,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  commit -m <message> [--allow-empty]  Commit the index\n"
                      "  status [--porcelain|-s]    Compare HEAD, index and worktree\n"
                      "  log [--oneline] [-n count] [revision]  Walk commit history\n"
+                     "  tag [-f] [name [revision]] | tag -d name  Manage light tags\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -198,6 +200,31 @@ int run(const std::vector<std::string_view>& args) {
             } while (!remaining.empty());
             std::cout << '\n';
         }
+        return 0;
+    }
+    if (command == "tag") {
+        bool force = false;
+        bool remove = false;
+        bool options = true;
+        std::vector<std::string_view> values;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (options && args[i] == "--") { options = false; continue; }
+            if (options && args[i] == "-f") { force = true; continue; }
+            if (options && args[i] == "-d") { remove = true; continue; }
+            if (options && args[i].starts_with('-')) throw UsageError("unknown tag option");
+            values.push_back(args[i]);
+        }
+        if (values.size() > 2 || (remove && (force || values.size() != 1)) ||
+            (force && values.empty()))
+            throw UsageError("tag accepts [-f] <name> [revision], -d <name>, or no arguments");
+        const auto repo = minigit::Repository::discover();
+        if (remove) minigit::delete_tag(repo, values[0]);
+        else if (values.empty()) {
+            for (const auto& [name, id] : minigit::list_tags(repo)) {
+                (void)id;
+                std::cout << minigit::quote_path(name) << '\n';
+            }
+        } else minigit::create_tag(repo, values[0], values.size() == 2 ? values[1] : "HEAD", force);
         return 0;
     }
     throw UsageError("invalid arguments; use --help");

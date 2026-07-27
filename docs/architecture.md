@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及 Phase 1 已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 已实现；标签命令及后续业务仍为计划；验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及 Phase 1 已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；分支、差异及后续操作仍为计划；验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -35,7 +35,21 @@ flowchart TD
 
 仓库元数据存放在 `.minigit` 专用目录。当前初始化写入 `config`，内容为 `format=1` 和 `hash=sha256` 两行；`HEAD` 为 `ref: refs/heads/main`，此时 main 尚无首个提交。松散对象路径为 `objects/<摘要前两位>/<剩余六十二位>`。初始化先在临时目录构造元数据，再发布为 `.minigit`，有效仓库重复初始化保留已有内容。
 
-Index、引用、快照与提交已实现；操作状态仍为计划。各项职责与阶段如下：
+当前持久化布局如下，操作日志与多文件事务在 Phase 2 增加：
+
+```text
+.minigit/
+  config                 format=1 / hash=sha256
+  HEAD                   ref: refs/heads/main 或完整提交 ID
+  identity               version=1 与显式本地 name/email
+  index                  MGIX v1 暂存区及校验和
+  write.lock             持久锁文件；解锁不删除
+  objects/ab/<62位ID>     zlib 松散对象
+  refs/heads/<分支>       完整提交 ID 与换行
+  refs/tags/<标签>        完整提交 ID 与换行
+```
+
+identity、index 和具体引用在首次使用时创建。Index、引用、快照与提交已实现；操作状态仍为计划。各项职责与阶段如下：
 
 | 数据 | 责任 | 更新特征 |
 | --- | --- | --- |
@@ -52,6 +66,8 @@ Index 已由 [index.hpp](../include/minigit/index.hpp) 定义为条目列表，`
 [refs.hpp](../include/minigit/refs.hpp) 定义 `Head`，同时保留符号分支名称及可选提交 ID，空 ID 表示未出生分支。引用文件保存完整 ID；`read_ref` 将文件缺失与损坏区分，`update_ref` 校验调用方预期旧值及目标 Commit 的完整可读取快照，再以原子替换发布新值。删除嵌套引用时只清理命名空间内的空父目录，保留 heads/tags；重试的幂等更新也补目录同步。`resolve_commit` 解析 HEAD、完整 ID、分支与标签，遇到同名分支及标签明确拒绝歧义。
 
 [history.hpp](../include/minigit/history.hpp) 的 `Snapshot` 将目录树展开为路径映射；`write_snapshot` 校验 Blob 并递归构造子 Tree，`read_snapshot` 按模式校验每个对象类型。展开限制为 128 层 Tree、100000 Tree 条目（包含文件与目录）及 64 MiB 展开路径／Tree 数据，以免小型复用图展开为无限制内存。`create_commit` 在一个写锁下读取 Index、生成根 Tree、记录旧 HEAD parent、写入 Commit，最后移动分支或分离 HEAD。身份文件单独使用显式版本和 name/email 字段。
+
+[tags.hpp](../include/minigit/tags.hpp) 将轻量标签命令组合到已验证的引用机制：`create_tag` 解析目标并使用预期旧值更新，`delete_tag` 复用安全目录清理，`list_tags` 先验证所有目标，再返回按名称排序的映射。三项操作各持有一个写锁；标签不保存新对象，也不改变 HEAD 或 Index。首版只允许指向具有有效快照的 Commit。
 
 对象写入成功只表示内容已保存，后续引用更新成功才表示提交进入可见历史。Phase 1 即引入写锁、临时文件和元数据原子替换。`ObjectStore::write` 要求调用者持有 `RepoLock`，不会自行重复加锁；锁使用持久 `write.lock` 文件并阻塞获取，不通过删除锁文件表示解锁。`atomic_write` 使用临时文件、同步和原子替换。Phase 2 扩展工作区、Index、引用等多文件更新的事务与恢复机制，单文件原子替换不能自动保证全部状态的整体原子性。
 
