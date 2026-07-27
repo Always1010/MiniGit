@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及 Phase 1 已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit 已实现；状态和历史展示及后续业务仍为计划；验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及 Phase 1 已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status 已实现；历史展示及后续业务仍为计划；验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -87,7 +87,7 @@ flowchart LR
     H[HEAD] -->|符号指向| R
 ```
 
-`status` 分别比较 HEAD tree 与 Index、Index 与工作区，并单独枚举未跟踪路径。`log` 沿 commit 的 parent 遍历，不能根据对象文件的目录顺序推断历史。后续 `diff` 复用快照比较，`merge` 则接收共同祖先、当前快照和待合入快照三个输入。
+[status.hpp](../include/minigit/status.hpp) 的 `collect_status` 在一个写锁下读取一致的 MiniGit 元数据，分别比较 HEAD tree 与 Index、Index 与工作区，并单独枚举未跟踪路径。比较 Blob ID 与模式，模式变化也是修改。冲突路径从 Index 的 stage 集合映射到状态码，不能把冲突条目当成普通 stage 0。状态读取校验所有 Index Blob，不把缺失对象伪装成文件修改；只计算工作区摘要，不保存对象、Index 或引用。`log` 沿 commit 的 parent 遍历，不能根据对象文件的目录顺序推断历史。后续 `diff` 复用快照比较，`merge` 则接收共同祖先、当前快照和待合入快照三个输入。
 
 ## 工程取舍
 

@@ -55,6 +55,8 @@ git show :a.txt
 
 预期 `git show :a.txt` 显示 `staged`，工作区仍为 `working`。这展示了为什么一次 status 可以同时报告同一个路径已暂存和未暂存。MiniGit Phase 1 对应验收用例应直接读出 commit 中的 blob，证明提交使用暂存版本。
 
+MiniGit 已可直接观察相同关系：提交 A，编辑为 B 并 add，再编辑为 C，执行 `minigit status --porcelain` 得到 `MM a.txt`。此时 commit 保存 B，状态转为 ` M a.txt`；再次 add 会暂存 C。完整命令串由 [状态集成测试](../tests/integration/status_cli.cmake) 自动重放。
+
 ## 实验三：从 blob 拼出快照
 
 真实 Git 可通过底层命令观察手工构造 tree 与 commit 的过程，具体步骤见 [Git Objects](https://git-scm.com/book/en/v2/Git-Internals-Git-Objects)。阅读 MiniGit 的 tree 编码时，先写出两个普通文件和一个子目录的条目，再逐字段检查模式、名称、NUL 与二进制摘要。

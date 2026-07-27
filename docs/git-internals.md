@@ -1,6 +1,6 @@
 # Git 原理与 MiniGit 的选择
 
-本文介绍 MiniGit 的对象库与快照实现。可通过 `hash-object` 和 `cat-file` 观察对象，`add` 保存暂存内容，`commit` 将 Index 组织为 Tree 并链接 parent。验收状态见 [进度](progress.md)，对象格式约束见 [架构](architecture.md)。真实 Git 的行为以本页链接的官方资料为参考，MiniGit 的自有格式不视为兼容性实现。
+本文介绍 MiniGit 的对象库与快照实现。可通过 `hash-object` 和 `cat-file` 观察对象，`add` 保存暂存内容，`commit` 将 Index 组织为 Tree 并链接 parent，`status` 比较三棵树。验收状态见 [进度](progress.md)，对象格式约束见 [架构](architecture.md)。真实 Git 的行为以本页链接的官方资料为参考，MiniGit 的自有格式不视为兼容性实现。
 
 ## 内容寻址与快照
 
@@ -45,6 +45,8 @@ mode SP basename NUL <32 bytes object id>
 因此 `add` 后继续编辑，再执行 `commit`，应提交暂存的版本。Index 不是“被跟踪文件名的清单”，而是一次待提交快照的持久化表示。真实 Git index 还含冲突阶段、统计信息及扩展等结构，详见 [gitformat-index](https://git-scm.com/docs/gitformat-index)；MiniGit 使用单独版本化的自有格式。
 
 MiniGit 的 `add` 已体现这种分离：工作区字节先成为不可变 Blob，Index 记录其 ID。删除文件通过移除 Index 条目表示，不需要为“已删除”再创建对象。可执行位由 Index 与 Tree 保存，属于快照的一部分，即使内容摘要相同，模式变化也必须进入下一次提交。
+
+如果 HEAD 保存 A、Index 保存 B、工作区保存 C，MiniGit status 输出 `MM`，两列对应不同状态边界。只比较 HEAD 与工作区会丢失 B，无法解释下一次 commit 将保存什么。只比较文件修改时间也不可靠：内容寻址直接比较内容 ID，同时单独比较可执行模式。
 
 ## 引用、提交图与恢复
 

@@ -7,6 +7,7 @@
 #include "minigit/repository.hpp"
 #include "minigit/worktree.hpp"
 #include "minigit/history.hpp"
+#include "minigit/status.hpp"
 
 #include <filesystem>
 #include <iostream>
@@ -32,6 +33,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  add [-A] [--] <paths...>  Stage file contents or deletions\n"
                      "  config <key> [value]       Read or set local commit identity\n"
                      "  commit -m <message> [--allow-empty]  Commit the index\n"
+                     "  status [--porcelain|-s]    Compare HEAD, index and worktree\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -132,6 +134,22 @@ int run(const std::vector<std::string_view>& args) {
         if (!message) throw UsageError("commit requires -m <message>");
         const auto id = minigit::create_commit(minigit::Repository::discover(), *message, allow_empty);
         std::cout << id.hex() << ' ' << message->substr(0, message->find('\n')) << '\n';
+        return 0;
+    }
+    if (command == "status") {
+        if (args.size() > 2 || (args.size() == 2 && args[1] != "--porcelain" &&
+            args[1] != "--short" && args[1] != "-s"))
+            throw UsageError("status accepts --porcelain, --short or -s");
+        const auto report = minigit::collect_status(minigit::Repository::discover());
+        if (args.size() == 1) {
+            if (report.head.symbolic)
+                std::cout << "On branch " << minigit::quote_path(report.head.symbolic->substr(11)) << '\n';
+            else std::cout << "HEAD detached at " << report.head.id->hex().substr(0, 12) << '\n';
+            if (!report.head.id) std::cout << "No commits yet\n";
+            if (report.entries.empty()) std::cout << "working tree clean\n";
+        }
+        for (const auto& entry : report.entries)
+            std::cout << entry.staged << entry.unstaged << ' ' << minigit::quote_path(entry.path) << '\n';
         return 0;
     }
     throw UsageError("invalid arguments; use --help");
