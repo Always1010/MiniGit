@@ -1,6 +1,6 @@
 # 学习笔记与观察实验
 
-MiniGit 的目标是让数据模型和行为之间的关系可以亲手观察。当前初始化、对象、暂存和提交已有对应接口，可以运行下面的 MiniGit 实验；真实 Git 对照实验明确保留 Git 命令，尚未实现的差异展示不能直接替换命令前缀。验收状态见 [进度](progress.md)。
+MiniGit 的目标是让数据模型和行为之间的关系可以亲手观察。当前初始化、对象、暂存、提交和差异已有对应接口，可以运行下面的 MiniGit 实验；真实 Git 对照实验明确保留 Git 命令，其他未实现操作不能直接替换命令前缀。验收状态见 [进度](progress.md)。
 
 ## MiniGit 实验：对象独立于工作区
 
@@ -23,6 +23,16 @@ bash examples/experiments/commits.sh ./build/debug/minigit
 [实验脚本](../examples/experiments/commits.sh) 先设置本地身份，将 note 从 A 改为 B 并 add，再改为 C，然后 commit。通过 Commit 的 tree 字段和根 Tree 的条目，找到保存 B 的 Blob；工作区仍为 C。再 add 和 commit，检查第二个提交的 parent 等于第一个提交。实验还创建 saved-B 轻量标签，再提交 C，验证 status 干净而 `log saved-B` 仍从保存 B 的提交开始，最后删除标签。
 
 为什么提交需要 parent？若只保存根 Tree，可以知道每个版本有哪些文件，但无法回答某版本接续哪个版本，也无法区分两个分支从同一快照分别发展。父关系把快照连接成历史，后续共同祖先与三方合并才能有定义。为什么不把分支名放进 Commit？分支是观察历史的位置，允许移动和重命名；放进不可变对象会让纯粹的分支重命名重写历史。
+
+## MiniGit 实验：同一个文件为什么有两份 diff
+
+```sh
+bash examples/experiments/diff.sh ./build/debug/minigit
+```
+
+[实验脚本](../examples/experiments/diff.sh) 提交 A、暂存 B、保留工作区 C，然后验证 `diff` 是 B→C、`diff --cached` 是 A→B、`diff HEAD` 是 A→C。随后 commit 保存 B，默认 diff 仍然是 B→C，而两个提交的 diff 是 A→B。三次比较没有“对同一个修改做重复展示”，它们回答的是下一次 add、下一次 commit 和当前工作内容相对历史分别改变什么。
+
+比较历史版本无需当前 Index；即使 Index 损坏，指定两个有效提交仍可检查它们的差异。工作区未 add 的 Blob 尚不存在于对象库，必须直接读取文件。将工作区 ID 当作已有对象读取会在正常使用中出错，而偷偷保存它又会让只读查询产生额外对象。当前 Inspection 正确区分这两种内容来源。
 
 ## 实验一：内容与名称是两件事
 

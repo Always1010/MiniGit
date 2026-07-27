@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎已完成 Phase 2 子项验收，差异 CLI、分支及后续操作仍为计划；验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎与 diff CLI 已完成 Phase 2 子项验收；show、分支及后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -17,6 +17,11 @@ flowchart TD
     Commands --> DAG[DAG 提交图遍历]
     Commands --> Snapshot[Snapshot 路径映射与 Tree 转换]
     Commands --> Diff[Diff 快照比较]
+    Commands --> Inspection[Inspection 查询与内容来源]
+    Inspection --> Diff
+    Inspection --> Snapshot
+    Inspection --> Refs
+    Inspection --> Worktree
     Commands --> Operations[Operations 可恢复操作状态]
     Commands --> Objects[ObjectStore 内容寻址对象库]
     Operations --> Merge[Merge 三方合并]
@@ -120,6 +125,8 @@ flowchart LR
 ## 行差异与显示边界
 
 [diff.hpp](../include/minigit/diff.hpp) 的纯算法不读取仓库：`split_lines` 借用内容缓冲区；`diff_lines` 返回两侧的半开编辑区间；`make_hunks` 将编辑与上下文组装为显示块；`format_file_diff` 接收两侧可选的内容视图和模式。缺失侧用 `nullopt`，不能用空 Bytes 代替。工作区内容来源与引用解析由后续命令协调层负责，算法不依赖 Status 或可变 HEAD。
+
+[inspection.hpp](../include/minigit/inspection.hpp) 的 `repository_diff` 在一个 RepoLock 内选择两侧：Index→工作区、HEAD/修订→Index、修订→工作区或两个历史快照。涉及 Index 时拒绝冲突阶段，历史双修订不读取当前 Index。工作区候选只包含比较基准与需要的 Index 路径，不扫描无关未跟踪文件；内容由 WorktreeFile 读取，不假设尚未 add 的摘要已存在于对象库。`diff_snapshots` 作为持锁的共享快照查询，为后续 show 复用。逐路径加载内容、格式化并释放，最终结果不超过 64 MiB，输出前完成全部校验。
 
 LCS 表最多 4000000 个单元，内部比较经过字节确认的行 ID。相同前后缀不进入 DP；超过表格预算仅替换剩余区间，超过每侧 100000 行则拒绝文本差异。Hunk 坐标始终零基，输出非空范围加一，空范围保持起点；无 LF 提示不计入行数。格式化先构造完整结果，每文件输出限制 64 MiB，显示路径最多 4096 字节并在复制前检查；二进制 NUL 仅显示摘要，不声称生成可恢复二进制内容的补丁。
 

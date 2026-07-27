@@ -30,6 +30,7 @@ add_library(minigit_core
     src/core/history.cpp
     src/core/format.cpp
     src/core/diff.cpp
+    src/core/inspection.cpp
     src/core/status.cpp
     src/core/dag.cpp
     src/core/tags.cpp)
@@ -52,7 +53,8 @@ if(BUILD_TESTING)
         tests/unit/test_status.cpp
         tests/unit/test_dag.cpp
         tests/unit/test_tags.cpp
-        tests/unit/test_diff.cpp)
+        tests/unit/test_diff.cpp
+        tests/unit/test_inspection.cpp)
     target_include_directories(minigit_tests PRIVATE tests/support)
     target_link_libraries(minigit_tests PRIVATE minigit_core Catch2::Catch2WithMain)
     include(Catch)
@@ -71,4 +73,6 @@ if(BUILD_TESTING)
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/log_cli.cmake)
     add_test(NAME tags_cli COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/tags_cli.cmake)
+    add_test(NAME diff_cli COMMAND ${CMAKE_COMMAND}
+        -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/diff_cli.cmake)
 endif()
