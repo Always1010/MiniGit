@@ -1,6 +1,6 @@
 # 代码导读
 
-Phase 0 已完成，Phase 1 已加入初始化、对象库、Index、引用、快照与 `add/commit/status`。日志、标签命令及后续操作仍为计划。完成和验证状态见 [进度](progress.md)。
+Phase 0 已完成，Phase 1 已加入初始化、对象库、Index、引用、快照与 `add/commit/status/log`。标签命令及后续操作仍为计划。完成和验证状态见 [进度](progress.md)。
 
 ## 从一次命令开始
 
@@ -51,7 +51,7 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 8 | `status`、`log`、轻量 `tag` | 比较哪些状态？历史如何遍历？引用如何校验？ |
 | 9 | Diff、Worktree、Operations | 恢复、覆盖保护和继续/中止怎样跨进程保持？ |
 
-表中前七项已有接口，阅读链接见相关章节；历史展示及后续项仍为计划。依赖关系见 [架构](architecture.md)。
+表中前七项已有接口，阅读链接见相关章节；标签命令及后续项仍为计划。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -66,6 +66,12 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 从 [status.cpp](../src/core/status.cpp) 的 `collect_status` 阅读：加载 HEAD 快照及 Index，验证引用的 Blob，再扫描工作区。正常条目分别比较 HEAD→Index 和 Index→工作区；冲突路径读取 stage 集合，未跟踪路径另行枚举。先生成完整 `StatusReport`，再由 CLI 输出，读取失败不会留下半份状态报告。
 
 [test_status.cpp](../tests/unit/test_status.cpp) 检查 `MM`、模式变化、删除、忽略例外、冲突和损坏；[status_cli.cmake](../tests/integration/status_cli.cmake) 通过命令串观察 `?? → A → AM → 未暂存修改 → MM → 删除`。`quote_path` 将空格、换行及控制字节转义，避免一个文件名伪装成多行报告。
+
+## 从一条父链到 DAG
+
+[dag.cpp](../src/core/dag.cpp) 的 `load_commit_graph` 收集所有可达 Commit，使用发现集合避免共享祖先重复入队。`topological_order` 为每条 parent 边统计尚未输出的子提交数，用有序集合维护就绪节点；输出一个提交后降低其父节点的计数，只有所有子边已输出，父节点才就绪。
+
+[test_dag.cpp](../tests/unit/test_dag.cpp) 手工保存线性、多父及共享祖先对象，验证去重和拓扑约束，同时覆盖缺失父对象、错误类型及纯算法输入的环。[log_cli.cmake](../tests/integration/log_cli.cmake) 检查实际命令的顺序、身份、消息、起点与显示限制。输入时间不决定顺序，因而历史关系不会被时钟偏差改变。
 
 ## 跟踪一份文件的版本
 

@@ -27,7 +27,8 @@ add_library(minigit_core
     src/core/worktree.cpp
     src/core/refs.cpp
     src/core/history.cpp
-    src/core/status.cpp)
+    src/core/status.cpp
+    src/core/dag.cpp)
 target_include_directories(minigit_core PUBLIC include)
 target_link_libraries(minigit_core PUBLIC minigit_options PRIVATE OpenSSL::Crypto ZLIB::ZLIB)
 set_target_properties(minigit_core PROPERTIES CXX_EXTENSIONS OFF)
@@ -39,7 +40,7 @@ set_target_properties(minigit PROPERTIES CXX_EXTENSIONS OFF)
 include(CTest)
 if(BUILD_TESTING)
     find_package(Catch2 3 REQUIRED)
-    add_executable(minigit_tests tests/unit/test_objects.cpp tests/unit/test_repository.cpp tests/unit/test_staging.cpp tests/unit/test_history.cpp tests/unit/test_status.cpp)
+    add_executable(minigit_tests tests/unit/test_objects.cpp tests/unit/test_repository.cpp tests/unit/test_staging.cpp tests/unit/test_history.cpp tests/unit/test_status.cpp tests/unit/test_dag.cpp)
     target_include_directories(minigit_tests PRIVATE tests/support)
     target_link_libraries(minigit_tests PRIVATE minigit_core Catch2::Catch2WithMain)
     include(Catch)
@@ -54,4 +55,6 @@ if(BUILD_TESTING)
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/commits_cli.cmake)
     add_test(NAME status_cli COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/status_cli.cmake)
+    add_test(NAME log_cli COMMAND ${CMAKE_COMMAND}
+        -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/log_cli.cmake)
 endif()
