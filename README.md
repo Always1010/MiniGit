@@ -2,7 +2,7 @@
 
 MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
 
-Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 已加入初始化、对象库、Index 与 `add`，验证状态见 [进度](docs/progress.md)。`commit`、`status`、`log`、`tag` 尚未交付，Phase 1 尚未整体验收。
+Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 已加入初始化、对象库、Index、引用与 `add/commit`，验证状态见 [进度](docs/progress.md)。`status`、`log`、`tag` 尚未交付，Phase 1 尚未整体验收。
 
 ## 构建与运行
 
@@ -30,18 +30,35 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `cat-file -p full-id` | 输出 blob 或 commit 内容，tree 按条目显示 |
 | `add [--] paths...` | 暂存指定文件、目录内的修改和删除；路径相对于当前目录 |
 | `add -A`、`add --all` | 暂存整个仓库的新增、修改及删除，不与路径参数组合 |
+| `config user.name [value]`、`config user.email [value]` | 读取或设置仓库本地提交身份 |
+| `commit -m message [--allow-empty]` | 将 Index 保存为 Tree 和 Commit，并移动当前引用 |
 
 对象 ID 必须为完整 64 位十六进制文本，尚不支持缩写。不带 `-w` 的摘要计算可以在仓库外执行；写入和读取需要当前目录或祖先存在有效 `.minigit` 仓库。当前文件读取上限为 64 MiB，软链接和非普通文件被拒绝。
 
 `add` 立即保存文件字节并更新 `.minigit/index`，之后继续编辑工作区不会改变暂存内容。仓库根的 `.minigitignore` 支持注释、普通路径、目录尾斜杠和 `*`、`?` 模式；无斜杠规则匹配任意层的名称，路径规则相对于根目录。不支持 `!` 和 `**`，遇到这些语法明确报错。忽略规则不移除已跟踪路径，明确添加被忽略的新文件会失败。
 
+首次提交前设置显式身份。身份单独保存在 `.minigit/identity`，不改写仓库格式标识：
+
+```sh
+minigit init demo
+cd demo
+minigit config user.name Learner
+minigit config user.email learner@example.test
+printf 'hello\n' > note.txt
+minigit add note.txt
+minigit commit -m '记录首个快照'
+```
+
+将 `minigit` 换成构建产物的绝对路径，或自行将其加入可执行文件搜索路径。提交时采用运行时 UTC 业务时间，不从本项目的开发提交日期取得时间。默认拒绝空快照首提交及没有快照变化的提交，`--allow-empty` 明确允许；未解决的 Index 冲突仍被拒绝。
+
 构建后可运行 [对象观察实验](examples/experiments/objects.sh)：
 
 ```sh
 bash examples/experiments/objects.sh ./build/debug/minigit
+bash examples/experiments/commits.sh ./build/debug/minigit
 ```
 
-脚本创建临时仓库，保存 blob 后修改工作区，再读取并比较旧对象内容，结束时自动清理。该实验不调用系统 Git。测试结果以 [进度](docs/progress.md) 为准。
+[提交实验](examples/experiments/commits.sh) 进一步检查暂存 B、工作区编辑为 C 后仍提交 B，以及下一次提交链接前一个 parent。脚本创建临时仓库并在结束时自动清理，不调用系统 Git。测试结果以 [进度](docs/progress.md) 为准。
 
 ## 设计范围
 

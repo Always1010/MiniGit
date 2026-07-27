@@ -1,6 +1,6 @@
 # Git 原理与 MiniGit 的选择
 
-本文介绍 MiniGit 的对象库模型及后续快照规划。当前可通过 `hash-object` 和 `cat-file` 观察 blob；tree 和 commit 提供核心编解码接口，暂存命令已实现，提交命令仍为计划。验收状态见 [进度](progress.md)，对象格式约束见 [架构](architecture.md)。真实 Git 的行为以本页链接的官方资料为参考，MiniGit 的自有格式不视为兼容性实现。
+本文介绍 MiniGit 的对象库与快照实现。可通过 `hash-object` 和 `cat-file` 观察对象，`add` 保存暂存内容，`commit` 将 Index 组织为 Tree 并链接 parent。验收状态见 [进度](progress.md)，对象格式约束见 [架构](architecture.md)。真实 Git 的行为以本页链接的官方资料为参考，MiniGit 的自有格式不视为兼容性实现。
 
 ## 内容寻址与快照
 
@@ -30,7 +30,7 @@ mode SP basename NUL <32 bytes object id>
 
 名称排序必须固定，否则同一个目录从不同遍历顺序构造，会得到不同 tree 摘要。MiniGit 按 basename 的无符号 UTF-8 字节排序，模式只接受 `100644`、`100755`、`40000`；解码拒绝未排序或重复条目。没有验证真实 Git 的特殊目录排序规则之前，不能将“排序一致”当作格式兼容的证据。
 
-当前 `encode_commit` 和 `decode_commit` 在文本中保存 `tree`、重复的 `parent` 行、`author`、`committer`、空行及消息。author/committer 只要求非空单行文本，并未验证身份和时间语法；后续 commit 命令负责提供规范身份与业务时间。提供编解码不代表提交命令或历史引用已完成。
+当前 `encode_commit` 和 `decode_commit` 在文本中保存 `tree`、重复的 `parent` 行、`author`、`committer`、空行及消息。author/committer 只要求非空单行文本，并未验证身份和时间语法；业务 `create_commit` 负责提供规范身份与运行时 UTC 时间。底层编解码不自动猜测身份，使格式层与命令策略各有职责。
 
 ## 工作区、Index 与 HEAD
 
@@ -49,6 +49,8 @@ MiniGit 的 `add` 已体现这种分离：工作区字节先成为不可变 Blob
 ## 引用、提交图与恢复
 
 分支是可移动的提交引用；轻量标签通常保持指向选定对象。HEAD 可符号指向分支，也可直接指向提交，后者称为分离 HEAD。提交通过 parent 构成有向无环历史，分支名不存入 commit 内容，见 [Git References](https://git-scm.com/book/en/v2/Git-Internals-Git-References)。
+
+MiniGit 首次提交没有 parent，后续提交记录提交前的 HEAD。父关系让相同文件快照处于不同历史位置时仍有不同身份。分支引用保存一个 ID，移动分支只需更新很小的引用文件；树与 Blob 可以继续复用。当前 `create_commit` 已支持更新符号分支或分离 HEAD，分支操作命令将在 Phase 2 接入。
 
 规划中的 merge 为两个分支找到共同祖先，比较 base、ours、theirs，得到结果 tree；产生新合并提交时记录两个 parent。cherry-pick 把一个提交相对其父提交的改变应用到当前历史，revert 则应用逆向改变。冲突状态需要持久化，才能在解决后继续或中止，不能只留下冲突标记而丢失操作上下文。
 
