@@ -1,6 +1,6 @@
 # 代码导读
 
-Phase 0 已完成，Phase 1 首个子项加入初始化与对象库。当前可阅读仓库发现、文件安全工具、摘要与对象编解码；Index、业务提交、完整引用管理和后续操作仍为计划。完成和验证状态见 [进度](progress.md)。
+Phase 0 已完成，Phase 1 已加入初始化、对象库、Index 与 `add`。业务提交、完整引用管理和后续操作仍为计划。完成和验证状态见 [进度](progress.md)。
 
 ## 从一次命令开始
 
@@ -36,6 +36,8 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 保护对象格式的测试位于 [test_objects.cpp](../tests/unit/test_objects.cpp)，文件路径、初始化和进程锁测试位于 [test_repository.cpp](../tests/unit/test_repository.cpp)。先阅读损坏对象、相对路径和 `link/..` 的反例，再回到实现检查错误如何被阻止。
 
 ## 业务实现后的阅读顺序
+
+暂存模块从 [index.hpp](../include/minigit/index.hpp)、[index.cpp](../src/core/index.cpp) 阅读校验与编解码，再到 [worktree.hpp](../include/minigit/worktree.hpp)、[worktree.cpp](../src/core/worktree.cpp) 的 `add_paths`。调用链是参数选择 → 路径验证 → 读取选择范围 → 写入 Blob → 移除旧条目或冲突阶段 → 保存完整 Index。单元测试 [test_staging.cpp](../tests/unit/test_staging.cpp) 直接读回 Blob，检查暂存后编辑、删除和目录类型转换，避免仅凭 CLI 成功判断暂存语义。
 
 | 顺序 | 计划模块或类型 | 阅读时要回答的问题 |
 | --- | --- | --- |

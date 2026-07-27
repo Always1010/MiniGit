@@ -4,15 +4,16 @@
 
 ## 当前状态
 
-Phase 0 构建与 CLI 基础已完成，版本为 `0.1.0`。Phase 1 首个子项已验收：`init`、`hash-object`、`cat-file` 和对象库。`add`、`commit`、`status`、`log`、`tag` 尚未实现，Phase 1 尚未整体验收。
+Phase 0 构建与 CLI 基础已完成，版本为 `0.1.0`。Phase 1 的初始化与对象库已验收，Index 和 `add` 已通过模块与 CLI 验证；`commit`、`status`、`log`、`tag` 尚未实现，Phase 1 尚未整体验收。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；注册 13 个单元及 2 个 CLI 用例 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 22 个单元及 3 个 CLI 用例 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
 | 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
 | Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
+| Phase 1 子项：Index 与 add | 已验收 | Debug 与 sanitized 的 9 个模块用例及 2 个相关 CLI 用例全部通过 |
 | Phase 1 剩余命令与后续阶段 | 计划 | 尚未实现或验收 |
 
 已执行的 Debug 验证：
@@ -44,6 +45,7 @@ Phase 0 的一个 CTest 用例通过，覆盖 `--help`、版本格式和空参�
 - `ObjectId`、EVP SHA-256、blob/tree/commit 封装与编解码、zlib 松散对象写入和读取。
 - `RepoLock`、`read_file`、`atomic_write`，普通文件与软链接检查，64 MiB 文件上限。
 - CLI `init [directory]`、`hash-object [-w] file`、`cat-file -t|-p full-id`。
+- 版本化 MGIX Index、按选择范围保存 Blob 的 `add`、暂存删除及文件模式；支持简化 `.minigitignore`，支持冲突阶段的持久化与 add 解决。
 - 对象 CLI 集成用例与 [对象实验](../examples/experiments/objects.sh)，均已通过。
 
 验证证据：
@@ -53,6 +55,8 @@ Phase 0 的一个 CTest 用例通过，覆盖 `--help`、版本格式和空参�
 - `ctest --preset sanitized --output-on-failure`：15 个用例全部通过，没有 ASan/UBSan 报告；最后目录同步修正后，以 `-R 'Loose blobs|Repository initializes|Repeated init|Relative filesystem|cli_basics|objects_cli'` 复验受影响的 6 个用例，全部通过。
 - `bash examples/experiments/objects.sh ./build/debug/minigit`：保存复用、工作区编辑后读回旧 blob、重复初始化保留对象通过。
 - 六份文档相对链接、实验脚本语法与 `git diff --check` 通过。
+
+Index/add 验证：`ctest --preset debug -R 'unit\.(Index|Invalid index|Add|Selected add|Ignore rules|Invalid later add)|staging_cli|cli_basics' --output-on-failure` 和对应 sanitized 命令，各 11 个用例全部通过，无 ASan/UBSan 报告。覆盖损坏索引与校验和、排序和冲突阶段、二进制与空文件、可执行位、暂存后修改、选择性与全仓库删除、子目录参数、忽略与已跟踪例外、软链和原始 `missing/../file` 等无效路径、文件目录转换、失败保持原 Index。
 
 关键覆盖包括空与二进制 blob、SHA-256 已知向量、压缩截断及尾部数据、解压大小限制、错误类型／长度／哈希、Tree 顺序和非法名称、Commit 父顺序、多行消息与字段注入、相对路径、软链接及 `link/..`、FIFO、无效仓库、锁竞争和输出失败。
 
@@ -89,4 +93,4 @@ Phase 0 的一个 CTest 用例通过，覆盖 `--help`、版本格式和空参�
 
 ## 下一步
 
-下一节点为版本化 Index、`add` 与引用管理，再完成 `commit/status/log/tag` 的 Phase 1 闭环。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+Index/`add` 已完成，下一步接入引用和 `commit/status/log/tag`，继续 Phase 2 至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。

@@ -5,6 +5,7 @@
 #include "minigit/object_store.hpp"
 #include "minigit/objects.hpp"
 #include "minigit/repository.hpp"
+#include "minigit/worktree.hpp"
 
 #include <filesystem>
 #include <iostream>
@@ -26,6 +27,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  init [directory]           Initialize a repository\n"
                      "  hash-object [-w] <file>    Hash or store file content\n"
                      "  cat-file -t|-p <object>    Inspect an object\n"
+                     "  add [-A] [--] <paths...>  Stage file contents or deletions\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -82,6 +84,21 @@ int run(const std::vector<std::string_view>& args) {
                             static_cast<std::streamsize>(object.payload.size()));
         }
         if (!std::cout) throw minigit::Error("cannot write output");
+        return 0;
+    }
+    if (command == "add") {
+        bool all = false;
+        bool options = true;
+        std::vector<std::filesystem::path> paths;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (options && args[i] == "--") { options = false; continue; }
+            if (options && (args[i] == "-A" || args[i] == "--all")) { all = true; continue; }
+            if (options && args[i].starts_with('-')) throw UsageError("unknown add option");
+            paths.emplace_back(args[i]);
+        }
+        if ((!all && paths.empty()) || (all && !paths.empty()))
+            throw UsageError("add requires paths, or -A without paths");
+        minigit::add_paths(minigit::Repository::discover(), paths, all);
         return 0;
     }
     throw UsageError("invalid arguments; use --help");

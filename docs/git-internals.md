@@ -1,6 +1,6 @@
 # Git 原理与 MiniGit 的选择
 
-本文介绍 MiniGit 的对象库模型及后续快照规划。当前可通过 `hash-object` 和 `cat-file` 观察 blob；tree 和 commit 提供核心编解码接口，暂存与提交命令仍为计划。验收状态见 [进度](progress.md)，对象格式约束见 [架构](architecture.md)。真实 Git 的行为以本页链接的官方资料为参考，MiniGit 的自有格式不视为兼容性实现。
+本文介绍 MiniGit 的对象库模型及后续快照规划。当前可通过 `hash-object` 和 `cat-file` 观察 blob；tree 和 commit 提供核心编解码接口，暂存命令已实现，提交命令仍为计划。验收状态见 [进度](progress.md)，对象格式约束见 [架构](architecture.md)。真实 Git 的行为以本页链接的官方资料为参考，MiniGit 的自有格式不视为兼容性实现。
 
 ## 内容寻址与快照
 
@@ -43,6 +43,8 @@ mode SP basename NUL <32 bytes object id>
 | 工作区路径不在 Index | 未跟踪文件候选 | 新建文件尚未 add |
 
 因此 `add` 后继续编辑，再执行 `commit`，应提交暂存的版本。Index 不是“被跟踪文件名的清单”，而是一次待提交快照的持久化表示。真实 Git index 还含冲突阶段、统计信息及扩展等结构，详见 [gitformat-index](https://git-scm.com/docs/gitformat-index)；MiniGit 使用单独版本化的自有格式。
+
+MiniGit 的 `add` 已体现这种分离：工作区字节先成为不可变 Blob，Index 记录其 ID。删除文件通过移除 Index 条目表示，不需要为“已删除”再创建对象。可执行位由 Index 与 Tree 保存，属于快照的一部分，即使内容摘要相同，模式变化也必须进入下一次提交。
 
 ## 引用、提交图与恢复
 
