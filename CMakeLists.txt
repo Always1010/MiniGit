@@ -29,6 +29,7 @@ add_library(minigit_core
     src/core/snapshot.cpp
     src/core/history.cpp
     src/core/format.cpp
+    src/core/diff.cpp
     src/core/status.cpp
     src/core/dag.cpp
     src/core/tags.cpp)
@@ -50,7 +51,8 @@ if(BUILD_TESTING)
         tests/unit/test_history.cpp
         tests/unit/test_status.cpp
         tests/unit/test_dag.cpp
-        tests/unit/test_tags.cpp)
+        tests/unit/test_tags.cpp
+        tests/unit/test_diff.cpp)
     target_include_directories(minigit_tests PRIVATE tests/support)
     target_link_libraries(minigit_tests PRIVATE minigit_core Catch2::Catch2WithMain)
     include(Catch)
