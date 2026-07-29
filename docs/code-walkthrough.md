@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已接入待验收，分支与工作区操作仍为计划。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，分支与工作区操作仍为计划。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
