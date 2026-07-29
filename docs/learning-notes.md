@@ -34,6 +34,16 @@ bash examples/experiments/diff.sh ./build/debug/minigit
 
 比较历史版本无需当前 Index；即使 Index 损坏，指定两个有效提交仍可检查它们的差异。工作区未 add 的 Blob 尚不存在于对象库，必须直接读取文件。将工作区 ID 当作已有对象读取会在正常使用中出错，而偷偷保存它又会让只读查询产生额外对象。当前 Inspection 正确区分这两种内容来源。
 
+## MiniGit 实验：show 读取哪个世界
+
+```sh
+bash examples/experiments/show.sh ./build/debug/minigit
+```
+
+[实验脚本](../examples/experiments/show.sh) 提交 A、暂存 B、保留工作区 C，再读取 `show HEAD:note` 与 `show :note`。两者分别是 A 与 B，不会把工作区 C 暗中保存。二进制通过输出到文件后 cmp 核对，不能用 Shell 变量承载含 NUL 的字节。
+
+Index 的 stage 是同一路径的多个候选版本，stage 0 表示已决定的待提交内容；冲突时 stage 1/2/3 分别用于 base/ours/theirs。show 能独立读取这些阶段，而普通 commit 必须等待它们被一个 stage 0 取代。当前已有阶段存储与读取，真正产生三方冲突的命令将在 Phase 3 接入。
+
 ## 实验一：内容与名称是两件事
 
 在独立临时目录创建 Git 仓库并比较同内容文件的 blob：

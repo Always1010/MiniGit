@@ -2,7 +2,7 @@
 
 MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
 
-Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，已形成纯差异引擎及 `diff` 的内容来源协调，`show` 尚未接入。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
+Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，已形成差异引擎、diff 与 show 的内容来源协调。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
 
 ## 构建与运行
 
@@ -34,6 +34,7 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `commit -m message [--allow-empty]` | 将 Index 保存为 Tree 和 Commit，并移动当前引用 |
 | `status [--porcelain]` | 显示分支及三棵树比较；`--porcelain`、`--short`、`-s` 仅显示状态行 |
 | `diff [--cached] [-U count] [revision [revision]]` | 默认比较 Index→工作区；已暂存、修订→工作区及双修订比较见下文 |
+| `show [--] [spec]` | 默认检查 HEAD；提交、原始对象、提交内文件与 Index stage 选择见下文 |
 | `log [--oneline] [-n count] [revision]` | 沿全部 parent 展示去重历史，默认从 HEAD 开始 |
 | `tag`、`tag [-f] name [revision]`、`tag -d name` | 列出、创建／强制移动或删除指向 Commit 的轻量标签 |
 
@@ -63,7 +64,21 @@ minigit commit -m '记录首个快照'
 
 差异展示执行位和二进制变化，二进制只显示摘要；文本保留 CRLF 与末尾 LF 区别。大变化超出 LCS 表格预算时整体替换变化区间，每侧文本最多 100000 行，完整输出最多 64 MiB，显示路径最多 4096 字节。它不保存工作区 Blob、Index 或引用，头部使用 `diff --minigit`，不承诺完整 Git 补丁兼容。
 
+`show` 直接读取已保存内容：
+
+| spec | 输出 |
+| --- | --- |
+| `HEAD`、分支、标签、完整 Commit ID | 元数据与相对第一父提交的差异；首提交与空快照比较 |
+| 完整 Blob / Tree ID | Blob 原始字节，或 Tree 的模式、完整 ID、转义名称 |
+| `revision:path` | 指定提交中的文件原始字节 |
+| `:path`、`:0:path` | Index 的 stage 0 内容 |
+| `:1:path`、`:2:path`、`:3:path` | 冲突阶段的 base、ours、theirs 内容；不存在的 stage 明确失败 |
+
+含 `1:` 等前缀的真实文件名可用 `:0:1:name` 避免 stage 歧义。历史和原始对象查询不解析当前 Index，工作区编辑不影响它们。提交差异采用三行上下文，多父提交列出全部 parent，但只与第一父提交比较；不支持 combined diff 或目录路径展示。完整 show 结果最多 64 MiB，选择串最多 8193 字节。输入带选项样式的引用名时使用 `show -- name`。
+
 `log` 使用子提交先于父提交的拓扑顺序，并对共享祖先去重；同时可输出的节点按完整 ID 排序。显示缩写为 12 位，解析仍要求完整 ID。支持 HEAD、分支、标签或完整引用名称，名称歧义明确失败。`-n` 只限制显示数量，仍读取所选提交的完整可达历史；目前限 100000 个提交、1000000 条父边及 64 MiB 图数据。
+
+log 与 show 共用提交文本格式化；单个格式化提交条目及完整 log 输出最多 64 MiB，以限制消息缩进与条目累积后的显示规模；日志先完成格式化，超限时返回错误且不留下部分输出。
 
 构建后可运行 [对象观察实验](examples/experiments/objects.sh)：
 
@@ -71,11 +86,14 @@ minigit commit -m '记录首个快照'
 bash examples/experiments/objects.sh ./build/debug/minigit
 bash examples/experiments/commits.sh ./build/debug/minigit
 bash examples/experiments/diff.sh ./build/debug/minigit
+bash examples/experiments/show.sh ./build/debug/minigit
 ```
 
 [提交实验](examples/experiments/commits.sh) 进一步检查暂存 B、工作区编辑为 C 后仍提交 B，以及下一次提交链接前一个 parent；还核对 status、log 和标签在分支前进后保持原提交。脚本创建临时仓库并在结束时自动清理，不调用系统 Git。测试结果以 [进度](docs/progress.md) 为准。
 
 [差异实验](examples/experiments/diff.sh) 将 HEAD A、Index B、工作区 C 的三种比较实际重放，再提交 B，并验证历史 A→B 与未暂存 B→C。补丁文件放在临时仓库外，脚本结束自动清理。
+
+[内容实验](examples/experiments/show.sh) 读取提交 A、暂存 B，并验证工作区仍为 C；通过原始 Blob ID 与 Index 路径输出含 NUL 的二进制文件，再用 `cmp` 核对字节。
 
 ## 设计范围
 

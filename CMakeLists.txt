@@ -75,4 +75,6 @@ if(BUILD_TESTING)
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/tags_cli.cmake)
     add_test(NAME diff_cli COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/diff_cli.cmake)
+    add_test(NAME show_cli COMMAND ${CMAKE_COMMAND}
+        -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/show_cli.cmake)
 endif()
