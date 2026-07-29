@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；Phase 2 尚未整体验收；继续逐项推进至 Phase 4。
+Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；Phase 2 尚未整体验收；继续逐项推进至 Phase 4。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 77 个单元及 11 个 CLI 用例 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 84 个单元及 12 个 CLI 用例 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
 | 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
 | Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
@@ -25,6 +25,7 @@ Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/
 | Phase 2 子项：show 与共享提交格式 | 已验收 | 两种预设各 12 项相关检查通过；二进制输出与 A/B/C 实验通过 |
 | Phase 2 子项：工作区短事务与 recover | 已验收 | 两种预设各 74 项相关检查与事务实验通过；逐持久化步骤中断、再次中断恢复及真实 CLI 恢复通过 |
 | Phase 2 子项：reflog 与 commit 事务发布 | 已验收 | 两种预设各 22 项定向检查及各 1 项新增语义根复验通过；引用日志实验通过 |
+| Phase 2 子项：branch 列表、创建及删除 | 已验收 | 两种预设各 23 项定向检查通过，无编译警告及 ASan/UBSan 报告；分支实验通过 |
 | Phase 2 其余及 Phase 3 至 Phase 4 | 计划 | 尚未实现或验收 |
 
 已执行的 Debug 验证：
@@ -138,14 +139,24 @@ show 与 log 共用提交格式化已验收。两种预设构建与 `-R 'unit\.(
 
 验收条件：不同快照之间的差异和对象内容可检查；分支与分离 HEAD 行为明确；恢复和重置对 HEAD、Index、工作区的影响分别验证。覆盖未提交内容或未跟踪文件前执行保护检查。在 Phase 1 写锁与原子元数据更新基础上，扩展多文件事务、异常恢复和 reflog，并随修改命令一起验证，不能只验证正常路径。
 
-### Reflog 与 commit 事务发布：进行中
+### Reflog 与 commit 事务发布：已验收
 
-MGRL v1 编解码、纯移动规划与只读 reflog CLI 已接入。日志有 8 MiB／100000 项边界，原因有 4096 字节、UTF-8 与单行约束。当前符号 HEAD 的 commit 同事务发布分支 ref 与 HEAD／分支日志；分离 HEAD 发布 HEAD 与它的日志。不同符号分支指向同一提交时，核心仍记录 HEAD 切换事件。恢复重放已编码日志，不重复追加事件。branch/switch CLI 尚未交付。
+MGRL v1 编解码、纯移动规划与只读 reflog CLI 已接入。日志有 8 MiB／100000 项边界，原因有 4096 字节、UTF-8 与单行约束。当前符号 HEAD 的 commit 同事务发布分支 ref 与 HEAD／分支日志；分离 HEAD 发布 HEAD 与它的日志。不同符号分支指向同一提交时，核心仍记录 HEAD 切换事件。恢复重放已编码日志，不重复追加事件。reflog 子项验收时 branch/switch CLI 尚未交付；随后 branch 接入见下一子项。
 
-验证证据：Debug 与 sanitized 配置、最终构建通过，GCC 无警告。`ctest --preset debug -R 'unit\.(Reflog|Commit|References)|unit\.Transaction (validates|preserves)|reflog_cli|commits_cli|recovery_cli|log_cli|cli_basics' --output-on-failure` 与对应 sanitized 命令各 22 项通过。补充日志语义根用例后，两种预设 `-R '^unit\.Reflog transactions reject'` 各 1 项通过，无 ASan/UBSan 报告；未修改的日志边界及原事务中断矩阵没有重复执行。当前注册 77 个单元、11 个 CLI，共 88 项。
+验证证据：Debug 与 sanitized 配置、最终构建通过，GCC 无警告。`ctest --preset debug -R 'unit\.(Reflog|Commit|References)|unit\.Transaction (validates|preserves)|reflog_cli|commits_cli|recovery_cli|log_cli|cli_basics' --output-on-failure` 与对应 sanitized 命令各 22 项通过。补充日志语义根用例后，两种预设 `-R '^unit\.Reflog transactions reject'` 各 1 项通过，无 ASan/UBSan 报告；未修改的日志边界及原事务中断矩阵没有重复执行。reflog 子项验收时注册 77 个单元、11 个 CLI，共 88 项。
 
 两种预设的 `bash examples/experiments/reflog.sh <对应预设的 minigit>` 均通过，验证缺失→A→B 及 HEAD／main 日志字节一致。脚本语法、六份文档 122 个相对链接与 `git diff --check` 通过。新增覆盖包括 checksum／截断／UTF-8／计数和大小边界、规划强异常保证、符号及分离 HEAD、同 ID 切换、受控中断恢复、只读 CLI 和日志语义根预检。缺失或 Blob 类型日志端点在发布前拒绝；旧历史 Commit 的 Tree 缺失不会令日志追加重新展开整个历史。sanitized 的十万条记录边界存在明显额外执行开销，当前不代表大日志追加性能已优化。
 日志端点验证为 Commit 类型与结构，旧历史事件不逐项展开 Tree；新发布目标仍验证完整 Snapshot。事务 roots 保留日志端点及 before/after 备份。当前不提供 actor、时间、过期、修订选择器或 reflog 撤销命令，GC 策略仍待 Phase 4。Phase 1 无 reflog、短事务机制验收时尚未接入 commit 的描述均保留为对应阶段事实。
+
+### Branch 列表、创建及删除：已验收
+
+branch 核心接口、CLI 和 [分支实验](../examples/experiments/branches.sh) 已接入。列表按短名排序，标记当前符号分支并包含 unborn，detached 不标任何分支；相同 Commit 的 Snapshot 去重校验，短名总预算为 64 MiB。默认创建来源为 HEAD，未出生 HEAD 拒绝；创建／强制移动只改分支 ref 与日志，保持 HEAD、Index 和工作区。
+
+当前符号分支不能被覆盖或删除，非当前分支 same-ID 强制移动在目标验证后无操作。`-d` 用 HEAD 全 parent 闭包与拓扑校验判断 tip 可达；`-D` 跳过祖先要求，仍校验原 tip 快照、日志结构及 Commit 根。删除 ref 与分支日志同事务发布，HEAD 日志保留，空命名空间父链安全清理；不永久保留已删分支日志。公共纯规划接口为后续 switch -c 复用，switch 尚未实现。
+
+验证证据：Debug 与 sanitized 配置、构建通过，GCC 无警告。`ctest --preset debug -R 'unit\.Branch|unit\.References|unit\.DAG|unit\.Reflog (HEAD|transaction recovery)|branches_cli|recovery_cli|reflog_cli|commits_cli|log_cli|cli_basics' --output-on-failure` 与对应 sanitized 命令各 23 项全部通过，无 ASan/UBSan 报告。branch 新增 7 个单元及 1 个 CLI，当前总注册 84 单元、12 CLI，共 96 项；该数量是注册规模，本轮执行的是上述定向检查。上一 reflog 子项的 77 单元、11 CLI 为当时证据。
+
+`bash examples/experiments/branches.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，验证 topic 固定 A、main 前进 B、祖先安全删除及命名空间复用。`-f` 仅用于创建／移动，删除组合明确拒绝；强制删除用 `-D`。覆盖列表、unborn／detached、当前分支保护、同 ID 无操作、全部父边的可达性、规划异常保护、日志／快照损坏、只读行为与删除恢复。脚本语法、六份文档 132 个相对链接与 `git diff --check` 通过。
 
 ## Phase 3：可恢复的合并与应用
 
@@ -161,4 +172,4 @@ MGRL v1 编解码、纯移动规划与只读 reflog CLI 已接入。日志有 8 
 
 ## 下一步
 
-Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；下一步接入共享工作区更新规划，再逐项实现分支及恢复命令，持续推进至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；下一步接入共享工作区更新规划，再逐项实现 switch 及恢复命令，持续推进至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。

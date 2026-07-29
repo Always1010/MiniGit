@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，分支及后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收，工作区切换及后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -13,6 +13,11 @@ flowchart TD
     Commands --> Worktree[Worktree 路径检查与文件读写]
     Commands --> Index[Index 版本化暂存区]
     Commands --> Refs[Refs 与 HEAD]
+    Commands --> Branches[Branches 列表与引用管理]
+    Branches --> Refs
+    Branches --> DAG
+    Branches --> Reflog
+    Branches --> Transaction
     Commands --> History[History 提交协调与身份]
     Commands --> DAG[DAG 提交图遍历]
     Commands --> Snapshot[Snapshot 路径映射与 Tree 转换]
@@ -194,9 +199,35 @@ flowchart TD
 
 事务预检与 `transaction_roots` 解析日志双方所有存在的 ID，验证对象哈希、Commit 类型及结构，并将它们加入语义根；历史事件不逐项展开 Tree。旧 Commit 的树缺损不应阻止单纯保存这条历史线索，新发布的提交目标仍须通过完整 Snapshot 校验。GC 尚未实现；actor、时间、过期策略、选择器及 reflog 撤销命令也不在当前格式中。
 
+## Branches：管理引用，保持三棵树原值
+
+[branches.hpp](../include/minigit/branches.hpp) 提供 `BranchInfo`、名称转换、列表、纯创建规划和创建／删除业务入口。`BranchInfo::id` 为空表示当前未出生分支，不意味着对应文件损坏；分离 HEAD 不属于任何当前分支。列表使用名称排序，按唯一 Commit ID 校验完整 Snapshot，避免多条分支指向同一提交时重复展开；短名总字节预算为 64 MiB。
+
+`branch_ref` 只接收短名，拒绝 HEAD、refs/ 前缀和纯 64 位十六进制 ID，随后校验完整 refs/heads 名称与日志路径的 4096 字节／128 分量边界。`list_branches/create_branch/delete_branch` 各自取得 RepoLock 并检查待恢复事务；`plan_create_branch` 要求调用者已持锁，以供未来 switch -c 将“创建引用”和“切换工作区”合在一个计划里。目前没有 switch 命令。
+
+```mermaid
+flowchart TD
+    N[branch 短名与目标修订] --> C[校验名称和完整目标 Snapshot]
+    C --> P[plan_create_branch 生成 ref 与 branch log]
+    P --> T[Transaction 发布或恢复]
+    D[branch -d 名称] --> G[加载 HEAD 全 parent 闭包]
+    G --> K[拓扑校验后检查目标成员资格]
+    K --> X[规划删除 ref 与 branch log]
+    F[branch -D 名称] --> X
+    X --> V[事务仍校验原 ref Snapshot 和日志 Commit 根]
+    V --> T
+    T --> U[HEAD / Index / 工作区保持原值]
+```
+
+新分支记录缺失→目标，强制移动记录旧值→目标；两者只改分支引用和 `logs/refs/heads/<名称>`，不生成 HEAD 移动事件。当前符号分支不能被该入口覆盖或删除，避免在没有工作区更新计划的情况下直接改变当前快照位置。非当前分支强制指向原目标是验证后的无操作，不添加重复事件。
+
+安全删除的定义是“分支 tip 在当前 HEAD 的 parent 闭包中”，包含 HEAD 本身及所有父边，不以名称、时间或相同文件内容推断。先用 DAG 的拓扑校验拒绝损坏闭包与环，再检查包含关系。`-D` 跳过祖先判断，仍要求待删 ref 的完整快照及原日志结构、Commit 根有效；强制参数不绕过持久化协议。
+
+删除将 ref 和该分支日志的 after 都设为缺失，在同一事务中发布；HEAD 日志不删除。只清理相关命名空间中的空父目录，保留 refs/heads 与 logs/refs/heads，并支持删除 topic/sub 后创建 topic。事务备份可用于未完成删除的回滚，完成删除后不会永久留一份分支日志。对象回收仍是后续阶段的独立职责。
+
 ## 工作区短事务与恢复
 
-短事务机制已通过 Debug/sanitized 相关回归及实验验收。随后接入的 commit 已使用它发布引用与 reflog，接入验证仍在进行；add/tag 继续使用各自原子元数据写入。所有业务查询和修改检查待恢复事务；原始 Blob/Tree 观察仍可使用。分支与工作区更新命令将复用这些共同机制。
+短事务机制已通过 Debug/sanitized 相关回归及实验验收。commit 的引用与 reflog 事务发布已通过后续子项验收；branch 创建、移动与删除接入同一机制，已通过子项验收。add/tag 继续使用各自原子元数据写入。所有业务查询和修改检查待恢复事务；原始 Blob/Tree 观察仍可使用。分支与工作区更新命令将复用这些共同机制。
 
 问题来自更新范围：切换分支可能需要删除旧文件、创建目录、写入新文件，并修改 Index 与 HEAD。分别原子替换每个文件，仍可能在第三步崩溃后留下前两步的新内容。事务因此保存每个节点的 before/after 和可恢复意图，而不是只记录“曾经执行过哪个命令”。
 

@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，分支与工作区操作仍为计划。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，工作区切换仍为计划。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -67,9 +67,11 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 6 | Index 与 `add` | 暂存的是哪个版本？路径越界和软链接如何拒绝？ |
 | 7 | Refs / HEAD 与 `commit` | 空历史怎样表示？引用何时更新？中途失败留下什么？ |
 | 8 | `status`、`log`、轻量 `tag` | 比较哪些状态？历史如何遍历？引用如何校验？ |
-| 9 | Diff、Worktree、Operations（计划） | 恢复、覆盖保护和继续/中止怎样跨进程保持？ |
+| 9 | Diff 与 Inspection | 差异怎样计算？历史、Index 与工作文件的内容来源如何区分？ |
+| 10 | Transaction、Reflog、Branches | 引用及日志怎样一起发布？分支管理为何不改变工作区？ |
+| 11 | 工作区更新规划与 Operations（计划） | 覆盖保护和继续/中止怎样跨进程保持？ |
 
-表中前八项已有接口，阅读链接见相关章节；后续分支及工作区操作仍为计划。依赖关系见 [架构](architecture.md)。
+表中前十项已有接口，阅读链接见相关章节；分支管理见新增章节，工作区切换与恢复仍为计划。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -156,3 +158,15 @@ Index 增加独立的 `encode_index/decode_index`，`save_index/load_index` 复�
 两个规划入口先执行 `auto next = plan`，把可能失败的读取、检查、分配和编码放在副本上，最后才 `plan = std::move(next)`。这是强异常保证的具体例子：失败时调用者的计划仍是原值，磁盘尚未修改。它与事务的磁盘恢复保证分属两个层次；不能从 C++ 容器回滚推导出文件系统会自动回滚。
 
 [reflog 单元测试](../tests/unit/test_reflog.cpp) 覆盖格式、原因与边界、移动规划、异常保护及事务恢复；[reflog CLI 测试](../tests/integration/reflog_cli.cmake) 检查实际命令的倒序输出和错误行为。[引用日志实验](../examples/experiments/reflog.sh) 用两个 commit 核对 HEAD 与 main 的日志一致，可与 `log --oneline` 对照阅读事件顺序和父图。
+
+## 从分支列表到安全删除
+
+从 [branches.hpp](../include/minigit/branches.hpp) 阅读 `BranchInfo`，再进入 [branches.cpp](../src/core/branches.cpp)。`branch_ref` 将验证后的短名转换成唯一 namespace，避免业务代码四处拼接 refs/heads。列表把当前 unborn 分支补进结果，而不是要求磁盘已经存在对应 ref；detached HEAD 只验证当前提交，不把某条同 ID 分支误标成当前。
+
+`list_branches` 用 map 按名称排序，用 set 保存已经验证的 ObjectId。相同提交只展开一次 Snapshot，随后将 BranchInfo 移动到返回 vector。这展示了几个不同职责：map 管唯一名称与顺序，set 只管校验去重，vector 提供稳定返回序列。64 MiB 短名预算限制输入名称数据；它不表示必须长期持有所有分支的文件内容。
+
+`create_branch` 是自持锁的业务入口：解析目标 → `plan_create_branch` → `execute_transaction`。规划接口不再次加锁，先完成目标快照检查，再复制计划并追加 ref 和分支日志，成功才移动赋回；后续 switch -c 能复用它。当前分支保护先于“目标 ID 是否相同”的判断，非当前分支 same-ID 强制移动才是无操作。
+
+`delete_branch` 的普通模式调用 `load_commit_graph` 收集 HEAD 闭包，再执行 `topological_order`，最后用 `graph.contains(branch_id)` 判断。发现集合负责去重，不能单靠它证明无环；拓扑校验因此不是多余的一步。强制模式只省略图可达性判断，仍进入同一事务验证，不能跳过旧 ref 和日志检查。
+
+[test_branches.cpp](../tests/unit/test_branches.cpp) 与 [branches_cli.cmake](../tests/integration/branches_cli.cmake) 是分支行为的验证入口；相关定向检查已通过，证据见进度页。阅读 [分支实验](../examples/experiments/branches.sh)，同时观察 topic=A、main=B、HEAD、Index 和 note 内容，确认创建引用不等于切换工作区。再跟踪 ref／日志删除与空目录 prune，理解 topic/sub 清理后为何可以重用 topic 名称。

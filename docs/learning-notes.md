@@ -180,7 +180,7 @@ CLI 的成功也包含输出是否成功。写到缓冲流时，错误可能在�
 bash examples/experiments/reflog.sh ./build/debug/minigit
 ```
 
-[脚本](../examples/experiments/reflog.sh) 在临时仓库提交 A、B，从分支引用取得实际完整 ID，再核对 `reflog` 的最新事件为 A→B、较旧事件为缺失→A，同时用 cmp 比较 HEAD 与 main 的 MGRL 字节。两个预设的实验已通过；本子项剩余回归状态见 [进度](progress.md)。提交 ID 由实际内容和业务元数据决定，实验不硬编码摘要或开发日期。
+[脚本](../examples/experiments/reflog.sh) 在临时仓库提交 A、B，从分支引用取得实际完整 ID，再核对 `reflog` 的最新事件为 A→B、较旧事件为缺失→A，同时用 cmp 比较 HEAD 与 main 的 MGRL 字节。两个预设的实验和 reflog 子项验收已通过；详细证据见 [进度](progress.md)。提交 ID 由实际内容和业务元数据决定，实验不硬编码摘要或开发日期。
 
 在另一份临时仓库执行相同两次提交，再分别运行 `minigit log --oneline`、`minigit reflog`、`minigit reflog main`。log 根据 parent 读到 B、A；reflog 根据保存的事件逆序展示 A→B、缺失→A。为两个输出画两张图：前者的边连接 Commit，后者的边描述引用位置变化。未来 reset 和 switch 接入后，事件还可能出现 B→A 或 A→A，而已有 Commit 的 parent 不会随之改变。
 
@@ -189,3 +189,17 @@ C++ 学习练习是比较这两个类型：`CommitGraph` 用 map 去重并服务
 再追踪一次失败：规划器复制 TransactionPlan，追加事件并编码，全部成功才赋回；执行器随后发布 Prepared，将分支引用和两份日志一起更新。如果恢复再次追加“commit”，事件数量会随着恢复次数增长。实际恢复直接选择 journal 里的 before 或 after 字节，因此重复 recover 保持同一结果。可在 [reflog 测试](../tests/unit/test_reflog.cpp) 找到中断及重试的断言。
 
 日志中的 old/new 是 Commit 根，不是文件备份。为了保留旧历史线索，事务只验证这些 Commit 的类型和结构，不为每个旧事件展开 Tree；新发布目标仍由 Snapshot 完整校验。思考未来 GC：删除当前分支后，哪些日志端点仍需保留？日志过期策略如何影响这些根？当前没有过期和回收命令，不能把这些问题当作已有行为。
+
+## MiniGit 实验：创建一个名字，保留一个历史位置
+
+```sh
+bash examples/experiments/branches.sh ./build/debug/minigit
+```
+
+[脚本](../examples/experiments/branches.sh) 先提交 A 并创建 topic，列表里 main 与 topic 显示同一完整 ID，只有 main 带 `*`。再提交 B，topic 仍为 A，`show topic:note` 读 A，`show HEAD:note` 读 B。实验用真实输出核对引用，不调用系统 Git；两种预设的实验已通过，详细结果见 [进度](progress.md)。
+
+随后 `branch -d topic` 删除祖先分支和它的分支日志，HEAD 及 main 保持原值。脚本再创建 topic/sub、删除它、创建 topic，观察空父目录清理如何让同一前缀重新成为文件。这与递归删除整个目录不同：若存在未知条目，事务不能把它当成内部垃圾删除。
+
+C++ 学习练习：在 `delete_branch` 中找到 `graph.contains`，画出它前面完整加载和拓扑校验的调用链。若只检查第一父链，合并的第二个父分支可能被错误拒绝；若按文件快照相等判断，又会把独立历史误认为祖先。安全删除保护的是提交可达性，force 只跳过这一策略，格式和恢复不变量仍然成立。
+
+再思考同 ID 的两种情况。覆盖当前符号分支始终拒绝，因为 branch 命令没有准备工作区更新；非当前分支强制移回原 ID 则无需重复事件。这里的判断顺序体现策略先于去重优化：不能因为“最后结果看似相同”就绕过当前分支保护。

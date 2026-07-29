@@ -66,7 +66,7 @@ MiniGit 先剥离相同前后缀，将精确相等的行映射成相同整数，
 
 分支是可移动的提交引用；轻量标签通常保持指向选定对象。HEAD 可符号指向分支，也可直接指向提交，后者称为分离 HEAD。提交通过 parent 构成有向无环历史，分支名不存入 commit 内容，见 [Git References](https://git-scm.com/book/en/v2/Git-Internals-Git-References)。
 
-MiniGit 首次提交没有 parent，后续提交记录提交前的 HEAD。父关系让相同文件快照处于不同历史位置时仍有不同身份。分支引用保存一个 ID，移动分支只需更新很小的引用文件；树与 Blob 可以继续复用。当前 `create_commit` 已支持更新符号分支或分离 HEAD，分支操作命令将在 Phase 2 接入。
+MiniGit 首次提交没有 parent，后续提交记录提交前的 HEAD。父关系让相同文件快照处于不同历史位置时仍有不同身份。分支引用保存一个 ID，移动分支只需更新很小的引用文件；树与 Blob 可以继续复用。当前 `create_commit` 已支持更新符号分支或分离 HEAD；branch 列表、创建及删除已通过子项验收，工作区切换仍待后续子项。
 
 MiniGit 的 log 已遍历完整 parent 图，不能只沿第一父链。一份合并历史若 D 的父为 B、C，而 B、C 的父都为 A，需输出 D、B/C、A，且 A 只出现一次。具体 B/C 顺序采用对象 ID 排序，但 A 必须在 B 和 C 之后，这就是拓扑约束。作者时间由用户及运行环境决定，不能代替父关系。
 
@@ -76,11 +76,19 @@ MiniGit 的 log 已遍历完整 parent 图，不能只沿第一父链。一份�
 
 引用移动不等于删除对象。reflog 记录移动的线索，gc 根据根集合分析可达性，再遵守保留规则回收不可达对象。真实 Git 还有 packfile 和增量对象，见 [gitformat-pack](https://git-scm.com/docs/gitformat-pack)。MiniGit 首先使用松散对象，gc 的具体策略在 Phase 4 实现时定义。
 
+## 创建分支不等于切换分支
+
+MiniGit 的 `branch topic` 把当前提交 ID 写入 refs/heads/topic，同时记录该分支的创建事件。HEAD 仍绑定原分支，Index 和工作文件也不改变。main 与 topic 此刻指向同一个不可变 Commit；随后在 main 提交 B，main 才前进，topic 仍指向 A。分支保存位置，提交保存快照与父关系。
+
+`branch -d topic` 用当前 HEAD 的完整祖先集合判断是否可安全删除。若 B 的 parent 是 A，topic 指向 A，则从 B 沿 parent 可达 A，可以删除 topic；如果另一个分支指向独立提交 C，文件即使与 B 相同，也不能由快照相等推导出已合入。多父历史必须包含所有 parent，拓扑校验保证判断来自有效的图。
+
+`-D` 明确放弃这项祖先保护，但仍要求原分支快照和删除事务中的日志对象有效。它同时删除分支 ref 与分支日志，不改变 Commit 本身，也不删除 HEAD 日志。删除分支后对象暂时仍在；将来 GC 才根据当前引用、保留日志和进行中操作等根决定可达性。本实现不提供删除后永久保存分支日志的保证。
+
 ## Reflog 记录位置变化，log 读取父关系
 
 MiniGit 已接入自己的 MGRL 引用日志，验证状态见 [进度](progress.md)。连续提交 A、B 时，Commit B 的 parent 为 A，而初始分支日志记录“缺失→A”和“A→B”。前者回答 B 从哪里发展，后者回答本地引用经历了什么动作。未来 reset 将引用从 B 移回 A 时，无需改写 B 的 parent，也不会创建一个“反向 parent”；它会留下新的 B→A 事件。
 
-核心移动规划还能区分两条都指向 A 的分支。HEAD 从一条分支切到另一条，提交 ID 没变，符号绑定已变，所以 HEAD 日志可以记录 A→A。这样的自环是有效事件，却不能作为提交 DAG 的父边。branch/switch/reset 命令仍待后续交付，当前 commit 已实际记录事件。
+核心移动规划还能区分两条都指向 A 的分支。HEAD 从一条分支切到另一条，提交 ID 没变，符号绑定已变，所以 HEAD 日志可以记录 A→A。这样的自环是有效事件，却不能作为提交 DAG 的父边。branch 管理已通过子项验收，switch/reset 命令仍待后续交付，当前 commit 已实际记录事件。
 
 ```mermaid
 flowchart LR

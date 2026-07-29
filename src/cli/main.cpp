@@ -14,6 +14,7 @@
 #include "minigit/inspection.hpp"
 #include "minigit/transaction.hpp"
 #include "minigit/reflog.hpp"
+#include "minigit/branches.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -55,6 +56,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  tag [-f] [name [revision]] | tag -d name  Manage light tags\n"
                      "  recover                  Recover an interrupted transaction\n"
                      "  reflog [HEAD|branch]     Inspect local reference movements\n"
+                     "  branch [-f] [name [revision]] | branch -d|-D name  Manage branches\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -285,6 +287,40 @@ int run(const std::vector<std::string_view>& args) {
             output += formatted;
         }
         std::cout << output;
+        return 0;
+    }
+    if (command == "branch") {
+        bool force = false;
+        bool force_creation = false;
+        bool remove = false;
+        bool options = true;
+        std::vector<std::string_view> values;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (options && args[i] == "--") { options = false; continue; }
+            if (options && args[i] == "-f") { force = true; force_creation = true; continue; }
+            if (options && (args[i] == "-d" || args[i] == "-D")) {
+                if (remove) throw UsageError("branch deletion mode may be specified once");
+                remove = true;
+                if (args[i] == "-D") force = true;
+                continue;
+            }
+            if (options && args[i].starts_with('-')) throw UsageError("unknown branch option");
+            values.push_back(args[i]);
+        }
+        if (values.size() > 2 || (remove && (values.size() != 1 || force_creation)) || (force && values.empty()))
+            throw UsageError("branch accepts [-f] <name> [revision], -d|-D <name>, or no arguments");
+        const auto repo = minigit::Repository::discover();
+        if (remove) minigit::delete_branch(repo, values[0], force);
+        else if (values.empty()) {
+            std::string text;
+            for (const auto& branch : minigit::list_branches(repo)) {
+                const auto line = std::string(branch.current ? "* " : "  ") + minigit::quote_path(branch.name) + " " +
+                    (branch.id ? branch.id->hex() : "(unborn)") + "\n";
+                if (line.size() > minigit::max_file_size - text.size()) throw minigit::Error("branch output exceeds 64 MiB");
+                text += line;
+            }
+            std::cout << text;
+        } else minigit::create_branch(repo, values[0], values.size() == 2 ? values[1] : "HEAD", force);
         return 0;
     }
     if (command == "tag") {
