@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，工作区切换仍为计划。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器核心实现已完成，工作区切换仍为计划。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -69,9 +69,10 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 8 | `status`、`log`、轻量 `tag` | 比较哪些状态？历史如何遍历？引用如何校验？ |
 | 9 | Diff 与 Inspection | 差异怎样计算？历史、Index 与工作文件的内容来源如何区分？ |
 | 10 | Transaction、Reflog、Branches | 引用及日志怎样一起发布？分支管理为何不改变工作区？ |
-| 11 | 工作区更新规划与 Operations（计划） | 覆盖保护和继续/中止怎样跨进程保持？ |
+| 11 | WorktreeUpdate | 部分目标、精确授权与实际 before 怎样变成事务计划？ |
+| 12 | Operations（计划） | 继续／中止怎样跨进程保持？ |
 
-表中前十项已有接口，阅读链接见相关章节；分支管理见新增章节，工作区切换与恢复仍为计划。依赖关系见 [架构](architecture.md)。
+表中前十一项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；工作区切换与恢复业务仍为计划。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -170,3 +171,36 @@ Index 增加独立的 `encode_index/decode_index`，`save_index/load_index` 复�
 `delete_branch` 的普通模式调用 `load_commit_graph` 收集 HEAD 闭包，再执行 `topological_order`，最后用 `graph.contains(branch_id)` 判断。发现集合负责去重，不能单靠它证明无环；拓扑校验因此不是多余的一步。强制模式只省略图可达性判断，仍进入同一事务验证，不能跳过旧 ref 和日志检查。
 
 [test_branches.cpp](../tests/unit/test_branches.cpp) 与 [branches_cli.cmake](../tests/integration/branches_cli.cmake) 是分支行为的验证入口；相关定向检查已通过，证据见进度页。阅读 [分支实验](../examples/experiments/branches.sh)，同时观察 topic=A、main=B、HEAD、Index 和 note 内容，确认创建引用不等于切换工作区。再跟踪 ref／日志删除与空目录 prune，理解 topic/sub 清理后为何可以重用 topic 名称。
+
+## 核心 API 练习：先规划，再统一执行
+
+[worktree_update.hpp](../include/minigit/worktree_update.hpp) 中，`WorktreeTargets` 是按路径索引的 map，owned_paths 是 set，两者承担目标描述与覆盖授权的不同职责。`WorktreeTarget` 的两个 optional 区分缺失文件、空 Blob、默认权限及明确权限；不要把缺失路径偷换成空文件。
+
+下面演示单路径临时仓库的调用顺序：假设唯一旧跟踪文件是 dir/note，业务层已确认它的当前修改可以覆盖。Index 参数是完整目标 Index，而 worktree targets 可以只描述部分路径。
+
+```cpp
+RepoLock lock(repo.metadata());
+ObjectStore store(repo.metadata() / "objects");
+const auto blob = store.write(ObjectType::Blob, to_bytes("new\n"));
+TransactionPlan plan;
+const WorktreeTargets targets{
+    {"dir/note", {FileState{"100644", blob}, std::nullopt}}
+};
+plan_worktree_update(repo, plan, targets, {"dir/note"});
+plan_index_update(repo, plan, Index{{"dir/note", "100644", blob}});
+execute_transaction(repo, std::move(plan));
+```
+
+前两次调用只准备计划，工作区规划可以写不可变备份 Blob；最后一次才发布实际文件及 Index。这个例子没有移动 HEAD，不是尚未交付的 switch 命令。若目标改为删除普通文件，使用 WorktreeTarget{std::nullopt, std::nullopt}；同一计划若还包含它下面的新文件，该空目标允许旧文件被移除，再由必要父目录补齐把位置变成 Directory。若要保留零字节文件，应先保存空 Blob 再提供 FileState。多路径仓库需保留完整 Index 的其他条目，不能把部分 worktree targets 直接当作整个 Index。
+
+所有调用共用外层 RepoLock，规划函数不重复取得锁；已有 metadata 可以继续组合，但 worktree 规划要求 plan.work 为空，Index 规划拒绝重复的 index MetadataChange。异常保护针对调用者的计划值，之前已经保存的备份对象不会被 C++ 容器回滚删除。
+
+实现接着从 [worktree_update.cpp](../src/core/worktree_update.cpp) 阅读：`validate_paths` 用模板参数和取键 lambda 共用 map/set 的路径检查，随后校验所有目标模式与 Blob，推导必要父目录。私有 `current` 缓存轻量 NodeImage，`inventory` 对要移除的目录逐层检查授权及显式删除；文件内容读取后释放，不把全部字节塞进缓存。
+
+`owned_directory` 使用 set 的 `lower_bound(path + "/")` 查询是否存在已授权后代，必须再检查完整分隔符前缀，不能把 dir-extra 当作 dir 的子项。精确 owned 的文件位置本身若变为空目录，也视为已授权位置；递归到陌生空子目录时要重新判断，父授权不传给它。新目标补出来的父目录与已有父目录分别处理：已有目录权限保留、状态相同则不记录 WorkChange，因此局部更新无需清理无关兄弟。
+
+目录扫描可以往 desired map 加入旧子项；实现先保存初始 roots，再展开递归清单，避免新插入节点改变本轮入口集合。map 插入不会使已有元素引用失效，因此 `after` 和 `before` 的引用可以保持到当前检查结束。这里只缓存对象 ID、节点类型及权限，不拥有文件缓冲区。desired 与 actual 每次加入新键前还需检查 200000 节点／64 MiB 展开名称预算，不能等所有父路径已经分配后才看最终 changed 数量。
+
+所有变化路径先检查完，最后才逐项 `capture_work_node` 保存实际 before；捕获值须与此前 NodeImage 一致，否则拒绝期间发生的变化。`auto next = plan` 隔离可抛异常的追加，完成后 move 赋回。`plan_index_update` 再独立编码完整目标、读取精确旧字节、校验全部 stage 的 typed Blob，并拒绝已有 index 计划。函数没有发布动作，最终发布仍由 Transaction 执行。
+
+[test_worktree_update.cpp](../tests/unit/test_worktree_update.cpp) 直接调用这些 API：多文件及空 Blob、明确权限、新父目录、双向文件目录转换、未变父目录的未知兄弟保护、精确授权、Index 缺失与冲突 stage、格式和预算拒绝，以及 Prepared／Committed 后工作区与 Index 的联合恢复。Debug 定向检查已通过，完整验证证据见进度页；本项没有 CLI 用例或命令实验。已有事务的完整崩溃矩阵不由这里重新实现，新测试只验证规划结果能交给共享执行器。
