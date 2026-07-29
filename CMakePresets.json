@@ -15,7 +15,10 @@
       "name": "sanitized",
       "inherits": "debug",
       "binaryDir": "${sourceDir}/build/sanitized",
-      "cacheVariables": { "MINIGIT_SANITIZERS": "ON" }
+      "cacheVariables": {
+        "MINIGIT_SANITIZERS": "ON",
+        "CMAKE_CXX_FLAGS_DEBUG": "-g -O1"
+      }
     }
   ],
   "buildPresets": [
