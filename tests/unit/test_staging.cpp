@@ -64,6 +64,8 @@ TEST_CASE("Index round trips sorted UTF-8 paths and conflict stages", "[staging]
     RepoLock lock(repo.metadata());
     save_index(repo, input);
     const auto decoded = load_index(repo);
+    REQUIRE(encode_index(input) == read_file(repo.metadata() / "index"));
+    REQUIRE(decode_index(encode_index(input)) == decoded);
     REQUIRE(decoded.size() == 3);
     REQUIRE(decoded[0] == input[2]);
     REQUIRE(decoded[1] == input[1]);

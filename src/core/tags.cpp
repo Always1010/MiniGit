@@ -1,5 +1,6 @@
 #include "minigit/tags.hpp"
 #include "minigit/error.hpp"
+#include "minigit/transaction.hpp"
 #include "minigit/fs.hpp"
 #include "minigit/history.hpp"
 #include "minigit/refs.hpp"
@@ -17,6 +18,7 @@ std::string tag_ref(std::string_view name) {
 }
 std::map<std::string, ObjectId> list_tags(const Repository& repo) {
     RepoLock lock(repo.metadata());
+    require_no_transaction(repo);
     std::map<std::string, ObjectId> result;
     for (const auto& [ref, id] : list_refs(repo, tag_prefix)) {
         const auto name = ref.substr(tag_prefix.size());
@@ -28,6 +30,7 @@ std::map<std::string, ObjectId> list_tags(const Repository& repo) {
 }
 void create_tag(const Repository& repo, std::string_view name, std::string_view revision, bool force) {
     RepoLock lock(repo.metadata());
+    require_no_transaction(repo);
     const auto ref = tag_ref(name);
     const auto existing = read_ref(repo, ref);
     if (existing && !force) throw Error("标签已存在，使用 -f 覆盖");
@@ -36,6 +39,7 @@ void create_tag(const Repository& repo, std::string_view name, std::string_view 
 }
 void delete_tag(const Repository& repo, std::string_view name) {
     RepoLock lock(repo.metadata());
+    require_no_transaction(repo);
     const auto ref = tag_ref(name);
     const auto existing = read_ref(repo, ref);
     if (!existing) throw Error("标签不存在");

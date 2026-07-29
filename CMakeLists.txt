@@ -23,6 +23,7 @@ add_library(minigit_core
     src/core/objects.cpp
     src/core/object_store.cpp
     src/core/repository.cpp
+    src/core/transaction.cpp
     src/core/index.cpp
     src/core/worktree.cpp
     src/core/refs.cpp
@@ -42,11 +43,17 @@ add_executable(minigit src/cli/main.cpp)
 target_link_libraries(minigit PRIVATE minigit_core)
 set_target_properties(minigit PROPERTIES CXX_EXTENSIONS OFF)
 
+# Optional learning experiment: uses the public transaction injection API.
+add_executable(minigit_transaction_lab EXCLUDE_FROM_ALL examples/experiments/transaction.cpp)
+target_link_libraries(minigit_transaction_lab PRIVATE minigit_core)
+set_target_properties(minigit_transaction_lab PROPERTIES CXX_EXTENSIONS OFF)
+
 include(CTest)
 if(BUILD_TESTING)
     find_package(Catch2 3 REQUIRED)
     add_executable(minigit_tests
         tests/unit/test_objects.cpp
+        tests/unit/test_transaction.cpp
         tests/unit/test_repository.cpp
         tests/unit/test_staging.cpp
         tests/unit/test_history.cpp
@@ -56,6 +63,8 @@ if(BUILD_TESTING)
         tests/unit/test_diff.cpp
         tests/unit/test_inspection.cpp)
     target_include_directories(minigit_tests PRIVATE tests/support)
+    # Transaction crash scenarios also exercise recovery through the real CLI.
+    add_dependencies(minigit_tests minigit)
     target_link_libraries(minigit_tests PRIVATE minigit_core Catch2::Catch2WithMain)
     include(Catch)
     catch_discover_tests(minigit_tests TEST_PREFIX "unit.")
@@ -75,6 +84,8 @@ if(BUILD_TESTING)
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/tags_cli.cmake)
     add_test(NAME diff_cli COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/diff_cli.cmake)
+    add_test(NAME recovery_cli COMMAND ${CMAKE_COMMAND}
+        -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/recovery_cli.cmake)
     add_test(NAME show_cli COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/show_cli.cmake)
 endif()

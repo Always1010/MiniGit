@@ -5,9 +5,11 @@
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <linux/fs.h>
 #include <optional>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <utility>
 namespace minigit {
@@ -81,6 +83,108 @@ void ensure_directory(const std::filesystem::path& path) {
 void sync_directory(const std::filesystem::path& path) {
     Fd fd(open_directory(path));
     if (::fsync(fd.value) != 0) fail("同步目录失败");
+}
+namespace {
+std::filesystem::path parent_of(const std::filesystem::path& path) {
+    return path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
+}
+void validate_name(const std::filesystem::path& name) {
+    if (name.empty() || name == "." || name == "..") throw Error("非法事务文件名");
+}
+void set_directory_permissions(int fd, std::uint32_t permissions) {
+    if (permissions > 07777) throw Error("目录权限超过 07777 范围");
+    if (::fchmod(fd, static_cast<mode_t>(permissions)) != 0) fail("设置目录权限失败");
+    struct stat state{};
+    if (::fstat(fd, &state) != 0) fail("检查目录权限失败");
+    if (static_cast<std::uint32_t>(state.st_mode & 07777) != permissions)
+        throw Error("目录权限未被精确应用");
+    if (::fsync(fd) != 0) fail("同步目录权限失败");
+}
+void remove_entry(const std::filesystem::path& path, bool directory) {
+    const auto name = path.filename();
+    validate_name(name);
+    Fd parent(open_directory(parent_of(path)));
+    struct stat state{};
+    if (::fstatat(parent.value, name.c_str(), &state, AT_SYMLINK_NOFOLLOW) != 0) fail("检查待删除节点失败");
+    if (directory ? !S_ISDIR(state.st_mode) : !S_ISREG(state.st_mode))
+        throw Error("待删除节点类型不符，禁止软链接");
+    if (::unlinkat(parent.value, name.c_str(), directory ? AT_REMOVEDIR : 0) != 0) fail("删除事务节点失败");
+    if (::fsync(parent.value) != 0) fail("同步事务节点删除失败");
+}
+}
+void remove_regular(const std::filesystem::path& path) { remove_entry(path, false); }
+void remove_empty_directory(const std::filesystem::path& path) { remove_entry(path, true); }
+void create_directory_exact(const std::filesystem::path& path, std::uint32_t permissions) {
+    if (permissions > 07777) throw Error("目录权限超过 07777 范围");
+    const auto name = path.filename();
+    validate_name(name);
+    Fd parent(open_directory(parent_of(path)));
+    if (::mkdirat(parent.value, name.c_str(), 0700) != 0 && errno != EEXIST) fail("创建事务目录失败");
+    // mkdir is affected by umask, so pin even a mode-0000 inode before opening
+    // it for fsync. /proc/self/fd refers to this inode, not a replaceable name.
+    Fd pinned(::openat(parent.value, name.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    if (pinned.value < 0) fail("固定事务目录失败");
+    const auto pinned_path = "/proc/self/fd/" + std::to_string(pinned.value);
+    if (::chmod(pinned_path.c_str(), 0700) != 0) fail("设置暂存目录访问权限失败");
+    Fd fd(::open(pinned_path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    if (fd.value < 0) fail("打开事务目录失败");
+    set_directory_permissions(fd.value, permissions);
+    if (::fsync(parent.value) != 0) fail("同步事务目录创建失败");
+}
+void chmod_directory(const std::filesystem::path& path, std::uint32_t permissions) {
+    if (permissions > 07777) throw Error("目录权限超过 07777 范围");
+    const auto name = path.filename();
+    validate_name(name);
+    Fd parent(open_directory(parent_of(path)));
+    Fd pinned(::openat(parent.value, name.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    if (pinned.value < 0) fail("固定待修改目录失败");
+    const auto pinned_path = "/proc/self/fd/" + std::to_string(pinned.value);
+    int raw = ::open(pinned_path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (raw < 0 && errno == EACCES) {
+        if (::chmod(pinned_path.c_str(), 0700) != 0) fail("恢复目录访问权限失败");
+        raw = ::open(pinned_path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    }
+    if (raw < 0) fail("打开待修改目录失败");
+    Fd fd(raw);
+    set_directory_permissions(fd.value, permissions);
+}
+std::uint64_t directory_device(const std::filesystem::path& path) {
+    Fd fd(open_directory(path));
+    struct stat state{};
+    if (::fstat(fd.value, &state) != 0) fail("检查目录设备失败");
+    return static_cast<std::uint64_t>(state.st_dev);
+}
+std::uint64_t node_device(const std::filesystem::path& path) {
+    const auto name = path.filename();
+    validate_name(name);
+    Fd parent(open_directory(parent_of(path)));
+    Fd fd(::openat(parent.value, name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC));
+    if (fd.value < 0) fail("固定事务节点设备失败");
+    struct stat state{};
+    if (::fstat(fd.value, &state) != 0) fail("检查事务节点设备失败");
+    if (!S_ISREG(state.st_mode) && !S_ISDIR(state.st_mode)) throw Error("设备检查节点必须是普通文件或目录");
+    return static_cast<std::uint64_t>(state.st_dev);
+}
+void rename_staged(const std::filesystem::path& source, const std::filesystem::path& target) {
+    const auto source_name = source.filename(), target_name = target.filename();
+    validate_name(source_name);
+    validate_name(target_name);
+    Fd source_parent(open_directory(parent_of(source))), target_parent(open_directory(parent_of(target)));
+    struct stat source_state{}, target_parent_state{};
+    if (::fstatat(source_parent.value, source_name.c_str(), &source_state, AT_SYMLINK_NOFOLLOW) != 0)
+        fail("检查事务源节点失败");
+    if (::fstat(target_parent.value, &target_parent_state) != 0) fail("检查事务目标设备失败");
+    if (source_state.st_dev != target_parent_state.st_dev) throw Error("事务发布不支持跨文件系统");
+    if (S_ISREG(source_state.st_mode)) {
+        reject_target(target_parent.value, target_name);
+        if (::renameat(source_parent.value, source_name.c_str(), target_parent.value, target_name.c_str()) != 0)
+            fail("发布事务文件失败");
+    } else if (S_ISDIR(source_state.st_mode)) {
+        if (::syscall(SYS_renameat2, source_parent.value, source_name.c_str(), target_parent.value,
+                      target_name.c_str(), RENAME_NOREPLACE) != 0) fail("发布事务目录失败");
+    } else throw Error("事务源节点必须是普通文件或目录，禁止软链接");
+    if (::fsync(target_parent.value) != 0) fail("同步事务目标父目录失败");
+    if (::fsync(source_parent.value) != 0) fail("同步事务源父目录失败");
 }
 }
 FileData read_file_data(const std::filesystem::path& path) {

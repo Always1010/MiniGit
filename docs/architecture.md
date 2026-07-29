@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；分支及后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；分支及后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -52,7 +52,7 @@ Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/
 
 仓库元数据存放在 `.minigit` 专用目录。当前初始化写入 `config`，内容为 `format=1` 和 `hash=sha256` 两行；`HEAD` 为 `ref: refs/heads/main`，此时 main 尚无首个提交。松散对象路径为 `objects/<摘要前两位>/<剩余六十二位>`。初始化先在临时目录构造元数据，再发布为 `.minigit`，有效仓库重复初始化保留已有内容。
 
-当前持久化布局如下，操作日志与多文件事务在 Phase 2 增加：
+当前持久化布局如下；长期操作状态及 reflog 尚待后续子项接入：
 
 ```text
 .minigit/
@@ -61,6 +61,8 @@ Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/
   identity               version=1 与显式本地 name/email
   index                  MGIX v1 暂存区及校验和
   write.lock             持久锁文件；解锁不删除
+  transaction            MGTR v1，未完成短事务时存在
+  transaction-staging/   本次双方节点的内部暂存
   objects/ab/<62位ID>     zlib 松散对象
   refs/heads/<分支>       完整提交 ID 与换行
   refs/tags/<标签>        完整提交 ID 与换行
@@ -147,3 +149,37 @@ flowchart LR
 先实现松散对象，便于检查字节和定位问题；packfile、增量对象与网络协议不进入首版。自有 Index 格式降低初期编码负担，同时要求显式版本和损坏检查。普通 UTF-8 路径限制使首版聚焦对象语义；路径编码、大小写差异及平台文件模式仍需单独扩展和验证。
 
 每层都应把业务错误转换为稳定的错误类型，由 CLI 统一报告。单元测试验证格式和不变量，集成测试验证跨模块状态变化，端到端测试检查命令输出、退出码和磁盘结果。更多验收条件见 [进度](progress.md)。
+
+## 工作区短事务与恢复
+
+本子项已通过 Debug/sanitized 相关回归及实验验收；它建立共同机制，分支命令和 reflog 业务接入将在后续子项完成。已有 add/commit/tag 仍使用各自原子元数据写入，但所有业务查询和修改会检查待恢复事务；原始 Blob/Tree 观察仍可使用。
+
+问题来自更新范围：切换分支可能需要删除旧文件、创建目录、写入新文件，并修改 Index 与 HEAD。分别原子替换每个文件，仍可能在第三步崩溃后留下前两步的新内容。事务因此保存每个节点的 before/after 和可恢复意图，而不是只记录“曾经执行过哪个命令”。
+
+[transaction.hpp](../include/minigit/transaction.hpp) 区分 `Absent`、`File` 与 `Directory`；文件保存 Blob ID 和完整权限，目录保存权限，缺失与空文件不同。`capture_work_node` 备份实际工作字节，不能用 HEAD 快照代替：若用户在提交后编辑过文件，中止时必须恢复编辑后的原内容。元数据保存精确可选字节，缺失与空文件也分别表示；日志内部将字节存为 Blob，避免把多个大 Index 嵌入日志。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Preparing: 完整预检及内部暂存
+    Preparing --> Prepared: 同步并发布事务日志
+    Prepared --> Applying: 更新工作区及元数据
+    Applying --> Committed: 原子替换日志状态
+    Committed --> [*]: 清理日志和内部暂存
+    Prepared --> Rollback: recover
+    Applying --> Rollback: 日志仍为 Prepared
+    Rollback --> [*]: 恢复 before 后清理
+    Committed --> Rollforward: recover
+    Rollforward --> [*]: 确认 after 后清理
+```
+
+`.minigit/transaction` 使用 MGTR v1：大端版本和计数、状态字节、路径及双方 NodeImage、元数据备份 Blob ID，最后为整个主体的 SHA-256；总计最多 64 MiB，最多 100000 项改动、每路径 4096 字节和 128 分量。它是单个带校验的日志；Prepared/Committed 状态与全部数据一起原子发布。独立的“成功标记”会使两份文件的清理顺序产生歧义，因此不采用它。`.minigit/transaction-staging` 只保存本次待发布节点，名称可以由日志推导；目录先在内部暂存区创建并设置权限，再原子移动到工作区。工作目录不产生随机临时文件，文件／目录转换时也无需删除未知临时项。
+
+恢复先检查整份日志、所有备份对象、当前工作节点和元数据，只有当前状态属于 before、after 或明确的合法中间缺失状态才开始修改。删除仅针对计划中的普通文件和空目录；目录内出现计划外条目、外部编辑、软链接、特殊文件、损坏备份或不支持的设备布局都会拒绝并保留现场。重复执行恢复必须收敛到同一结果。
+
+安全文件操作通过固定父目录 fd 的 `unlinkat`、`renameat` 和目录发布的 `renameat2(RENAME_NOREPLACE)` 实现，并同步受影响父目录。暂存目录在极端 umask 下可能最初为 0000；Linux 的 `O_PATH` 固定其 inode，再经 `/proc/self/fd` 设置访问权限以完成精确权限和同步。当前要求 Linux/POSIX、可用 procfs，并拒绝事务涉及的跨文件系统发布。写锁只协调 MiniGit 进程，不能锁住普通编辑器；预检后与单次系统调用之间的外部竞态仍是明确边界。
+
+公开 API 的测试钩子在持久化步骤之后模拟子进程突然退出，不通过生产 CLI 或环境变量开启。阶段证据会记录实际覆盖的崩溃点；没有系统调用同步失败注入或真实断电实验时，不把进程退出测试写成断电证明。
+
+当前恢复不保存 owner/group 或文件时间戳；重新发布相同内容时 inode 和 mtime 可以变化。设备检查涵盖当前节点、已存在父链及元数据暂存，拒绝不同 st_dev；同设备挂载点等布局不作完整识别。同步发生在发布之后的失败重试，恢复会重发文件、核对目录权限并同步实际存在父链。
+
+进程在 `atomic_write` 的随机临时文件写入内部被终止时，内部暂存可能出现未记录的 `.minigit-tmp-*`；此时恢复拒绝自动删除未知项并保留现场。现有恢复设计和测试以公开持久化步骤完成边界为证据，不承诺任意系统调用内部中断均能自动恢复。系统调用级故障注入及已知临时项协议属于后续改进。

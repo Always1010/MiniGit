@@ -2,7 +2,7 @@
 
 MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
 
-Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，已形成差异引擎、diff 与 show 的内容来源协调。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
+Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，已形成差异引擎、diff/show 内容来源协调和短事务恢复机制。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
 
 ## 构建与运行
 
@@ -118,3 +118,20 @@ bash examples/experiments/show.sh ./build/debug/minigit
 5. [进度](docs/progress.md)：完成状态、验证证据、阶段验收与下一步。
 
 Phase 1 的暂存、提交与历史实验可直接运行。分支、工作区恢复、合并及历史重写随后续阶段交付，当前状态统一由进度文档记录。
+
+### 中断事务的恢复
+
+工作区短事务与 `minigit recover` 已完成子项验收。发生中断后，状态／历史查询和业务修改会提示先恢复，原始对象仍可通过 `cat-file` 或完整 Blob/Tree ID 的 `show` 观察。恢复拒绝损坏日志、缺失备份和计划外修改，并保留现场；不要通过手工删除日志来把未知状态当作成功。
+
+事务使用 `.minigit/transaction` 与内部 `transaction-staging`。当前 Linux 实现依赖可用的 `/proc/self/fd`，工作区相关目录和元数据暂存必须在同一文件系统；源文件需具备 owner-read 权限，目录需可读取和遍历，包含更新子项的目录需 owner-rwx。这些约束属于当前实现边界，具体已验证范围见 [进度](docs/progress.md)。分支与恢复业务命令将于共同事务机制验收后接入。
+
+可重复的 [事务实验](examples/experiments/transactions.sh) 使用单独构建的 C++ 教学程序，在 a 已更新、b 尚未更新时保留 Prepared 日志，再通过真实 CLI 恢复并核对两次结果：
+
+```sh
+cmake --build --preset debug --target minigit_transaction_lab -j 2
+bash examples/experiments/transactions.sh ./build/debug/minigit ./build/debug/minigit_transaction_lab
+```
+
+[教学程序](examples/experiments/transaction.cpp) 只允许空目录，并调用核心库的公开测试钩子；它不是生产 CLI 的隐含模式，也不模拟断电系统调用。
+
+恢复保留内容和权限位，不还原 owner/group 或时间戳。已验证的故障点以 API 持久化步骤完成为边界；若系统调用内部中断留下未记录临时项，恢复会保留现场并拒绝自动清理，不承诺任意断电或 SIGKILL 都能自动恢复。

@@ -1,5 +1,6 @@
 #include "minigit/worktree.hpp"
 #include "minigit/error.hpp"
+#include "minigit/transaction.hpp"
 #include "minigit/object_store.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -173,6 +174,7 @@ Snapshot scan_worktree(const Repository& repo) {
 void add_paths(const Repository& repo, const std::vector<std::filesystem::path>& input, bool all) {
     if (input.empty() && !all) throw Error("add 需要指定路径或 -A");
     RepoLock lock(repo.metadata());
+    require_no_transaction(repo);
     auto index = load_index(repo);
     const auto tracked = tracked_paths(index);
     const auto rules = read_ignore(repo);
