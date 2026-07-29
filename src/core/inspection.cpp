@@ -2,6 +2,7 @@
 #include "minigit/diff.hpp"
 #include "minigit/error.hpp"
 #include "minigit/fs.hpp"
+#include "minigit/format.hpp"
 #include "minigit/history.hpp"
 #include "minigit/object_store.hpp"
 #include "minigit/refs.hpp"
@@ -52,6 +53,43 @@ void append(std::string& output, std::string addition) {
 }
 Snapshot revision_snapshot(const Repository& repo, std::string_view revision) {
     return read_snapshot(repo, read_commit(repo, resolve_commit(repo, revision)).tree);
+}
+void validate_show_path(std::string_view path) {
+    if (path.size() > 4096) throw Error("查看路径超过 4096 字节限制");
+    validate_repo_path(path);
+}
+Bytes show_path(const Repository& repo, std::string_view revision, std::string_view path) {
+    const ObjectStore store(repo.metadata() / "objects");
+    if (!revision.empty()) {
+        validate_show_path(path);
+        const auto snapshot = revision_snapshot(repo, revision);
+        const auto entry = snapshot.find(std::string(path));
+        if (entry == snapshot.end()) throw Error("提交中不存在指定文件");
+        return read_blob(store, entry->second.id);
+    }
+    std::uint8_t stage = 0;
+    if (path.size() >= 2 && path[0] >= '0' && path[0] <= '3' && path[1] == ':') {
+        stage = static_cast<std::uint8_t>(path[0] - '0');
+        path.remove_prefix(2);
+    }
+    validate_show_path(path);
+    for (const auto& entry : load_index(repo))
+        if (entry.path == path && entry.stage == stage) return read_blob(store, entry.id);
+    throw Error("索引中不存在指定路径和阶段");
+}
+Bytes show_commit(const Repository& repo, const ObjectId& id, const Commit& commit, std::size_t context) {
+    const auto after = read_snapshot(repo, commit.tree);
+    const auto before = commit.parents.empty() ? Snapshot{} : read_snapshot(repo, read_commit(repo, commit.parents[0]).tree);
+    auto output = format_commit(id, commit);
+    append(output, diff_snapshots(repo, before, after, context));
+    return to_bytes(output);
+}
+Bytes show_tree(std::span<const std::uint8_t> bytes) {
+    std::string output;
+    for (const auto& entry : decode_tree(bytes)) {
+        append(output, entry.mode + " " + entry.id.hex() + " " + quote_path(entry.name) + "\n");
+    }
+    return to_bytes(output);
 }
 std::string worktree_diff(const Repository& repo, const Snapshot& before, const Snapshot& index, std::size_t context) {
     validate_snapshots(before, index);
@@ -111,5 +149,21 @@ std::string repository_diff(const Repository& repo, const DiffOptions& options) 
     }
     if (options.revisions.empty()) return worktree_diff(repo, index, index, options.context);
     return worktree_diff(repo, revision_snapshot(repo, options.revisions[0]), index, options.context);
+}
+Bytes show_object(const Repository& repo, std::string_view spec, std::size_t context) {
+    if (spec.size() > 8193) throw Error("查看对象描述超过 8193 字节限制");
+    validate_context(context);
+    RepoLock lock(repo.metadata());
+    const auto colon = spec.find(':');
+    if (colon != std::string_view::npos) return show_path(repo, spec.substr(0, colon), spec.substr(colon + 1));
+    if (spec.size() == 64 && spec.find_first_not_of("0123456789abcdefABCDEF") == std::string_view::npos) {
+        const auto id = ObjectId::from_hex(spec);
+        auto object = ObjectStore(repo.metadata() / "objects").read(id);
+        if (object.type == ObjectType::Blob) return std::move(object.payload);
+        if (object.type == ObjectType::Tree) return show_tree(object.payload);
+        return show_commit(repo, id, decode_commit(object.payload), context);
+    }
+    const auto id = resolve_commit(repo, spec);
+    return show_commit(repo, id, read_commit(repo, id), context);
 }
 }

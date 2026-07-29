@@ -48,6 +48,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  commit -m <message> [--allow-empty]  Commit the index\n"
                      "  status [--porcelain|-s]    Compare HEAD, index and worktree\n"
                      "  diff [--cached] [-U count] [revision [revision]]  Compare snapshots\n"
+                     "  show [object|revision:path|:stage:path]  Inspect saved content\n"
                      "  log [--oneline] [-n count] [revision]  Walk commit history\n"
                      "  tag [-f] [name [revision]] | tag -d name  Manage light tags\n"
                      "  --help | --version\n";
@@ -200,6 +201,20 @@ int run(const std::vector<std::string_view>& args) {
         std::cout << minigit::repository_diff(minigit::Repository::discover(), request);
         return 0;
     }
+    if (command == "show") {
+        bool options = true;
+        std::optional<std::string_view> spec;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (options && args[i] == "--") { options = false; continue; }
+            if ((options && args[i].starts_with('-')) || spec)
+                throw UsageError("show accepts one object, revision:path or :stage:path");
+            spec = args[i];
+        }
+        const auto content = minigit::show_object(minigit::Repository::discover(), spec.value_or("HEAD"));
+        if (!content.empty()) std::cout.write(reinterpret_cast<const char*>(content.data()),
+                                             static_cast<std::streamsize>(content.size()));
+        return 0;
+    }
     if (command == "log") {
         bool oneline = false;
         bool options = true;
@@ -219,26 +234,15 @@ int run(const std::vector<std::string_view>& args) {
         }
         const auto entries = minigit::log_history(minigit::Repository::discover(),
             revision.value_or("HEAD"), maximum);
-        if (entries.empty() && !oneline && maximum != 0) std::cout << "No commits yet\n";
+        std::string output;
+        if (entries.empty() && !oneline && maximum != 0) output = "No commits yet\n";
         for (const auto& entry : entries) {
-            if (oneline) {
-                std::cout << entry.id.hex().substr(0, 12) << ' '
-                          << entry.commit.message.substr(0, entry.commit.message.find('\n')) << '\n';
-                continue;
-            }
-            std::cout << "commit " << entry.id.hex() << '\n';
-            for (const auto& parent : entry.commit.parents) std::cout << "parent " << parent.hex() << '\n';
-            std::cout << "author " << entry.commit.author << '\n'
-                      << "committer " << entry.commit.committer << "\n\n";
-            std::string_view remaining(entry.commit.message);
-            do {
-                const auto newline = remaining.find('\n');
-                std::cout << "    " << remaining.substr(0, newline) << '\n';
-                if (newline == std::string_view::npos) break;
-                remaining.remove_prefix(newline + 1);
-            } while (!remaining.empty());
-            std::cout << '\n';
+            const auto formatted = minigit::format_commit(entry.id, entry.commit, oneline);
+            if (formatted.size() > minigit::max_file_size - output.size())
+                throw minigit::Error("日志总输出超过 64 MiB 限制");
+            output += formatted;
         }
+        std::cout << output;
         return 0;
     }
     if (command == "tag") {

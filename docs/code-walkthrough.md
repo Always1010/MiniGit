@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎与 diff 查询。show、分支与工作区操作仍为计划。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎与 diff/show 查询。分支与工作区操作仍为计划。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -88,6 +88,8 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 从 CLI 的 `diff` 分支进入 [inspection.cpp](../src/core/inspection.cpp) 的 `repository_diff`：验证请求 → 获取锁 → 解析修订或读取 Index → 选定候选路径 → 从对象库或 WorktreeFile 取得两侧 → 纯格式化 → 返回完整结果。`diff_snapshots` 验证对象类型，即使文件没有变化，也不能以相等 ID 掩盖损坏对象。双修订比较独立于工作区和 Index，便于在冲突现场仍检查历史。
 
 [test_inspection.cpp](../tests/unit/test_inspection.cpp) 验证内容来源与读取失败不改变元数据；[diff_cli.cmake](../tests/integration/diff_cli.cmake) 重放真实命令、上下文别名、模式与删除、损坏 Index 和错误退出码；[差异实验](../examples/experiments/diff.sh) 让三棵树关系可重复观察。
+
+`show` 从同一 Inspection 模块的 `show_object` 阅读。先区分是否有路径选择：提交路径展开 Tree 后查询，Index 路径按 stage 查找；两者最终读取 Blob 原始字节。没有路径时，完整对象 ID 支持 Blob/Tree/Commit，普通名称解析提交；Commit 使用 `format_commit` 的元数据文本及 `diff_snapshots` 的第一父差异。log 也调用同一纯格式化函数，避免两套消息缩进规则。[show_cli.cmake](../tests/integration/show_cli.cmake) 检查 root/parent、暂存与历史来源、嵌套空格路径、错误不产生部分输出；[内容实验](../examples/experiments/show.sh) 再通过文件重定向及 cmp 验证二进制原样输出。
 
 [test_diff.cpp](../tests/unit/test_diff.cpp) 的关键断言是把编辑实际应用到旧行后得到完整新字节。阅读预算回退、无 LF 和 hunk 零长度反例，有助于区分算法正确性与补丁是否精简。纯算法直接使用 C++ 库测试，不需要构造提交。
 
