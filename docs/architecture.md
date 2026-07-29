@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收，工作区切换及后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器核心实现已完成，工作区切换及后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -11,6 +11,10 @@ flowchart TD
     CLI[CLI 参数与输出] --> Commands[Commands 命令协调]
     Commands --> Repo[Repository 仓库发现与初始化上下文]
     Commands --> Worktree[Worktree 路径检查与文件读写]
+    Commands --> WorktreeUpdate[WorktreeUpdate 目标与授权规划]
+    WorktreeUpdate --> Worktree
+    WorktreeUpdate --> Snapshot
+    WorktreeUpdate --> Transaction
     Commands --> Index[Index 版本化暂存区]
     Commands --> Refs[Refs 与 HEAD]
     Commands --> Branches[Branches 列表与引用管理]
@@ -224,6 +228,44 @@ flowchart TD
 安全删除的定义是“分支 tip 在当前 HEAD 的 parent 闭包中”，包含 HEAD 本身及所有父边，不以名称、时间或相同文件内容推断。先用 DAG 的拓扑校验拒绝损坏闭包与环，再检查包含关系。`-D` 跳过祖先判断，仍要求待删 ref 的完整快照及原日志结构、Commit 根有效；强制参数不绕过持久化协议。
 
 删除将 ref 和该分支日志的 after 都设为缺失，在同一事务中发布；HEAD 日志不删除。只清理相关命名空间中的空父目录，保留 refs/heads 与 logs/refs/heads，并支持删除 topic/sub 后创建 topic。事务备份可用于未完成删除的回滚，完成删除后不会永久留一份分支日志。对象回收仍是后续阶段的独立职责。
+
+## WorktreeUpdate：把授权目标变为真实节点计划
+
+[worktree_update.hpp](../include/minigit/worktree_update.hpp) 提供 `WorktreeTarget`、`WorktreeTargets`、`plan_worktree_update` 与 `plan_index_update`。二者都要求 caller-held RepoLock，不取得第二把锁。业务层选择目标、决定哪些旧路径可改，再把工作区、Index、HEAD 和引用日志组合到同一个 TransactionPlan；规划器不自行决定 switch 或 reset 的策略，也不提供这些 CLI。
+
+WorktreeTarget 的可选 FileState 表示目标文件，空 optional 表示该路径不再作为普通文件；若新子路径需要它成为父目录，最终节点会由文件转为目录，否则删除。指向空 Blob 则表示保留零字节文件。可选完整权限默认从模式取得 `0644`／`0755`，显式权限必须与 `100644`／`100755` 的执行位一致，仍遵循事务的权限边界。未来 mv 可以保留完整权限，而不是只把内容变成普通 0644 文件。
+
+```mermaid
+flowchart TD
+    T[Targets: 部分路径的目标 FileState 或缺失] --> V[路径 / 模式 / Blob 类型 / 预算检查]
+    O[Owned paths: 允许改写的旧跟踪文件] --> P[检查实际节点与目录拓扑]
+    V --> P
+    P --> C[逐文件捕获实际 before Blob 与权限]
+    C --> W[TransactionPlan.work]
+    I[目标 Index 与精确旧 Index 字节] --> M[TransactionPlan.metadata]
+    W --> X[事务 Prepared / 发布 / Committed]
+    M --> X
+    X --> R[recover 选择 before 或 after]
+```
+
+改变实际普通文件必须获得 owned_paths 对该路径的精确授权；授权某个目录名不能代替授权其中每个文件。新文件的路径确实缺失时可以创建。忽略规则不把已有未授权文件变成可覆盖内容，业务层还需决定何时允许覆盖已跟踪修改；这个授权集合本身不证明工作区与 HEAD 一致。
+
+部分更新只补新目标必要的缺失父目录，新目录权限为 0755；已有且不变化的父目录不记录，保留无关兄弟节点。目录变成文件或缺失时，递归检查完整实际目录：每个旧文件都要有精确授权及显式删除目标。精确 owned 的旧文件位置若实际变为空目录，可显式移除空节点；这不给子项递归授权。目录必须精确获授权或含已授权的后代路径，陌生空子目录、软链或 FIFO 拒绝。删除一个叶文件允许保留已空父目录，这是当前简化。执行器最终只删除已记录文件与空目录，不使用 remove_all。
+
+每次工作区规划要求 plan.work 为空，但可保留其他已准备的 metadata。实现向副本添加 WorkChange，成功才赋回；异常保留原计划，已经写入的不可变备份对象可能留下。它不发布工作区或元数据，备份读取逐文件释放，不积累全部文件内容。
+
+| 输入或结果 | 当前预算 |
+| --- | --- |
+| Targets、owned_paths | 各最多 200000 路径、64 MiB 路径字节 |
+| 中间 desired／actual 节点缓存 | 各最多 200000 节点、64 MiB 展开名称字节；新键插入前检查 |
+| 每个路径 | 最多 4096 字节、128 分量 |
+| 生成的工作区改动 | 最多 100000 WorkChange，受事务预算约束 |
+
+`plan_index_update` 支持所有 stage，校验目标及现有 Index 编码、模式、路径和所引用的 Blob 类型。现有文件损坏拒绝，缺失则精确记录 before=null；不将缺失擅自换成编码后的空 Index。已有 index 元数据计划拒绝重复规划，只有精确编码字节相同才是无操作。它复用 MGIX 与 MGTR，没有新增持久化格式。
+
+展开预算覆盖推导父目录与递归清单，roots 从受限 desired 复制；输入合法不意味着所有展开结果都能保留。该预算限制名称和节点数量，不将文件内容累计为总文件大小上限。
+
+本子项核心实现已完成，验证入口是核心单元测试，构建与验证证据见进度页；后续 switch 会提供真实 CLI 学习实验。共享规划机制已实现，不代表各业务命令的覆盖策略已经交付。
 
 ## 工作区短事务与恢复
 

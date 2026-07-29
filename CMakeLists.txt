@@ -28,6 +28,7 @@ add_library(minigit_core
     src/core/branches.cpp
     src/core/index.cpp
     src/core/worktree.cpp
+    src/core/worktree_update.cpp
     src/core/refs.cpp
     src/core/snapshot.cpp
     src/core/history.cpp
@@ -60,6 +61,7 @@ if(BUILD_TESTING)
         tests/unit/test_branches.cpp
         tests/unit/test_repository.cpp
         tests/unit/test_staging.cpp
+        tests/unit/test_worktree_update.cpp
         tests/unit/test_history.cpp
         tests/unit/test_status.cpp
         tests/unit/test_dag.cpp
