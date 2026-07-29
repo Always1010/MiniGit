@@ -126,3 +126,13 @@ Phase 1 验收后，选择一个含多行文本的普通文件，在测试仓库
 - 端到端测试：从 CLI 验证退出码、输出和真实磁盘状态，测试结束清理临时目录。
 
 测试名称应描述外部行为或数据不变量。需要构造损坏数据时保留最小反例，避免用和实现相同的算法生成预期结果。安全更新机制引入后，对失败边界和未提交内容覆盖保护补充有针对性的集成用例。
+
+### 从多文件修改到恢复
+
+事务的阅读入口是 [transaction.hpp](../include/minigit/transaction.hpp)，再读 [transaction.cpp](../src/core/transaction.cpp)。`TransactionPlan` 明确列出每个工作节点和元数据的 before/after；调用者负责业务语义，执行器负责验证、持久化日志、发布和恢复。二者的边界让 switch、restore 以及后续冲突操作复用同一故障机制。
+
+`execute_transaction` 必须在调用者已持有 RepoLock 时调用；它不能再次取得锁。准备阶段将实际旧文件保存为 Blob，构造内部暂存文件，再发布 Prepared 日志。工作区文件按拓扑顺序处理，元数据随后发布，最后原子将日志改为 Committed。`recover_transaction` 按日志状态选择 before 或 after，先完成全局检查再写入；不能一边检查一边恢复，以免后面的外部修改使前面的文件已经被覆盖。
+
+Index 增加独立的 `encode_index/decode_index`，`save_index/load_index` 复用同一编解码流程。这不是新索引格式，而是让事务先在内存中准备准确的新 Index 字节，随后与 HEAD、引用等一起发布。安全删除、目录权限和内部暂存节点发布集中在文件工具中；业务模块不用重复实现系统调用。
+
+[transaction.cpp 教学程序](../examples/experiments/transaction.cpp) 展示公共接口的最小调用链：实际节点备份 → 生成两个目标 Blob → TransactionPlan → durable-write 回调中断。它是按需构建的实验目标，不参与生产 CLI 命令解析；[脚本](../examples/experiments/transactions.sh) 用 CLI 完成恢复并逐字节比较文件。

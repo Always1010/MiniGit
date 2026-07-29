@@ -3,6 +3,7 @@
 #include "minigit/fs.hpp"
 #include <algorithm>
 #include <map>
+#include <utility>
 namespace minigit {
 namespace {
 bool path_less(std::string_view a, std::string_view b) {
@@ -76,7 +77,10 @@ Index load_index(const Repository& repo) {
     const auto status = std::filesystem::symlink_status(path, error);
     if (error == std::errc::no_such_file_or_directory || (!error && status.type() == std::filesystem::file_type::not_found)) return {};
     if (error) throw Error("检查索引失败: " + error.message());
-    const auto bytes = read_file(path);
+    return decode_index(read_file(path));
+}
+Index decode_index(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() > max_file_size) throw Error("索引超过 64 MiB 限制");
     if (bytes.size() < 44) throw Error("索引被截断");
     const std::span<const std::uint8_t> body(bytes.data(), bytes.size() - 32);
     if (sha256(body) != ObjectId::from_bytes(std::span<const std::uint8_t>(bytes).last(32)))
@@ -113,7 +117,7 @@ Index load_index(const Repository& repo) {
     validate_index(entries);
     return entries;
 }
-void save_index(const Repository& repo, Index entries) {
+Bytes encode_index(Index entries) {
     validate_index(entries);
     std::sort(entries.begin(), entries.end(), entry_less);
     // Validate the entire size before allocating or replacing the existing index.
@@ -136,6 +140,9 @@ void save_index(const Repository& repo, Index entries) {
     }
     const auto checksum = sha256(bytes);
     bytes.insert(bytes.end(), checksum.bytes().begin(), checksum.bytes().end());
-    atomic_write(repo.metadata() / "index", bytes);
+    return bytes;
+}
+void save_index(const Repository& repo, Index entries) {
+    atomic_write(repo.metadata() / "index", encode_index(std::move(entries)));
 }
 }

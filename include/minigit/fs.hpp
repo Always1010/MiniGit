@@ -33,5 +33,15 @@ void reject_symlinks(const std::filesystem::path& path);
 void ensure_directory(const std::filesystem::path& path);
 void require_directory(const std::filesystem::path& path);
 void sync_directory(const std::filesystem::path& path);
+// Pinned-directory operations for transaction publication; no symlink following.
+void remove_regular(const std::filesystem::path& path);
+void remove_empty_directory(const std::filesystem::path& path);
+void create_directory_exact(const std::filesystem::path& path, std::uint32_t permissions);
+void chmod_directory(const std::filesystem::path& path, std::uint32_t permissions);
+// Source must be a prepared regular file or directory on the same device.
+// Directory publication requires an absent destination; file replaces only a file.
+void rename_staged(const std::filesystem::path& source, const std::filesystem::path& target);
+std::uint64_t directory_device(const std::filesystem::path& path);
+std::uint64_t node_device(const std::filesystem::path& path);
 }
 }

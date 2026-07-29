@@ -12,6 +12,7 @@
 #include "minigit/tags.hpp"
 #include "minigit/format.hpp"
 #include "minigit/inspection.hpp"
+#include "minigit/transaction.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -51,6 +52,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  show [object|revision:path|:stage:path]  Inspect saved content\n"
                      "  log [--oneline] [-n count] [revision]  Walk commit history\n"
                      "  tag [-f] [name [revision]] | tag -d name  Manage light tags\n"
+                     "  recover                  Recover an interrupted transaction\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -83,6 +85,7 @@ int run(const std::vector<std::string_view>& args) {
         if (write) {
             const auto repo = minigit::Repository::discover();
             const minigit::RepoLock lock(repo.metadata());
+            minigit::require_no_transaction(repo);
             id = minigit::ObjectStore(repo.metadata() / "objects").write(minigit::ObjectType::Blob, payload);
         }
         std::cout << id.hex() << '\n';
@@ -131,6 +134,8 @@ int run(const std::vector<std::string_view>& args) {
         const auto repo = minigit::Repository::discover();
         if (args.size() == 3) minigit::configure_identity(repo, args[1], args[2]);
         else {
+            const minigit::RepoLock lock(repo.metadata());
+            minigit::require_no_transaction(repo);
             const auto value = minigit::identity_value(repo, args[1]);
             if (!value) throw minigit::Error("identity value is not configured");
             std::cout << *value << '\n';
@@ -199,6 +204,14 @@ int run(const std::vector<std::string_view>& args) {
         if (request.staged && request.revisions.size() > 1)
             throw UsageError("diff --cached accepts at most one revision");
         std::cout << minigit::repository_diff(minigit::Repository::discover(), request);
+        return 0;
+    }
+    if (command == "recover") {
+        if (args.size() != 1) throw UsageError("recover accepts no arguments");
+        const auto repo = minigit::Repository::discover();
+        const minigit::RepoLock lock(repo.metadata());
+        minigit::recover_transaction(repo);
+        std::cout << "Recovery completed\n";
         return 0;
     }
     if (command == "show") {

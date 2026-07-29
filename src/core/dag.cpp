@@ -1,5 +1,6 @@
 #include "minigit/dag.hpp"
 #include "minigit/error.hpp"
+#include "minigit/transaction.hpp"
 #include "minigit/fs.hpp"
 #include "minigit/refs.hpp"
 #include <algorithm>
@@ -78,6 +79,7 @@ std::vector<ObjectId> topological_order(const CommitGraph& graph) {
 }
 std::vector<HistoryEntry> log_history(const Repository& repo, std::string_view revision, std::optional<std::size_t> maximum) {
     RepoLock lock(repo.metadata());
+    require_no_transaction(repo);
     if (revision == "HEAD" && !read_head(repo).id) return {};
     auto graph = load_commit_graph(repo, {resolve_commit(repo, revision)});
     const auto order = topological_order(graph);

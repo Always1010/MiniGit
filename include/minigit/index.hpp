@@ -12,6 +12,9 @@ struct IndexEntry {
 using Index = std::vector<IndexEntry>;
 void validate_repo_path(std::string_view path);
 Index load_index(const Repository& repo);
+// Codec is independent of repository access and validates the complete index.
+Bytes encode_index(Index entries);
+Index decode_index(std::span<const std::uint8_t> bytes);
 // The caller must hold RepoLock. The complete index is validated before writing.
 void save_index(const Repository& repo, Index entries);
 }

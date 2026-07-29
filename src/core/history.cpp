@@ -3,6 +3,7 @@
 #include "minigit/object_store.hpp"
 #include "minigit/fs.hpp"
 #include "minigit/error.hpp"
+#include "minigit/transaction.hpp"
 #include <algorithm>
 #include <chrono>
 namespace minigit {
@@ -73,6 +74,7 @@ std::optional<std::string> identity_value(const Repository& repo, std::string_vi
 void configure_identity(const Repository& repo, std::string_view key, std::string_view value) {
     validate_identity(key, value);
     RepoLock lock(repo.metadata());
+    require_no_transaction(repo);
     auto identity = load_identity(repo);
     identity[std::string(key)] = value;
     std::string text = "version=1\n";
@@ -87,6 +89,7 @@ ObjectId create_commit(const Repository& repo, std::string_view message, bool al
         std::all_of(message.begin(), message.end(), [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f'; }))
         throw Error("提交消息必须包含非空白内容且禁止 NUL");
     RepoLock lock(repo.metadata());
+    require_no_transaction(repo);
     const auto identity = load_identity(repo);
     if (!identity.contains("user.name") || !identity.contains("user.email")) throw Error("请显式配置 user.name 和 user.email");
     const auto head = read_head(repo);

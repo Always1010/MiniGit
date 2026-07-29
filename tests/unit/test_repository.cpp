@@ -234,3 +234,55 @@ TEST_CASE("Permanent repository lock serializes separate processes", "[repositor
     REQUIRE(before.st_ino == after.st_ino);
     RepoLock next(repo.metadata());
 }
+TEST_CASE("Transaction filesystem publication pins nodes preserves modes and refuses unsafe replacement", "[repository][filesystem]") {
+    test::TempDirectory temp;
+    const auto staging = temp.path() / "staging";
+    struct RestoreUmask {
+        mode_t previous = ::umask(0777);
+        ~RestoreUmask() { ::umask(previous); }
+    } mask;
+    detail::create_directory_exact(staging, 0750);
+    struct stat state{};
+    REQUIRE(::stat(staging.c_str(), &state) == 0);
+    REQUIRE((state.st_mode & 07777) == 0750);
+    atomic_write_with_permissions(staging / "file", to_bytes("prepared"), 0740);
+    const auto target = temp.path() / "target";
+    detail::rename_staged(staging / "file", target);
+    REQUIRE_FALSE(std::filesystem::exists(staging / "file"));
+    REQUIRE(read_file_data(target).permissions == 0740);
+    REQUIRE(to_string(read_file(target)) == "prepared");
+    atomic_write_with_permissions(staging / "file", to_bytes("replacement"), 0644);
+    detail::rename_staged(staging / "file", target);
+    REQUIRE(to_string(read_file(target)) == "replacement");
+    REQUIRE(read_file_data(target).permissions == 0644);
+    detail::create_directory_exact(staging / "directory", 0755);
+    detail::rename_staged(staging / "directory", temp.path() / "published");
+    REQUIRE(std::filesystem::is_directory(temp.path() / "published"));
+    detail::chmod_directory(temp.path() / "published", 0710);
+    REQUIRE(::stat((temp.path() / "published").c_str(), &state) == 0);
+    REQUIRE((state.st_mode & 07777) == 0710);
+    detail::chmod_directory(temp.path() / "published", 0000);
+    detail::chmod_directory(temp.path() / "published", 0755);
+    REQUIRE(::stat((temp.path() / "published").c_str(), &state) == 0);
+    REQUIRE((state.st_mode & 07777) == 0755);
+    REQUIRE(detail::directory_device(staging) == detail::directory_device(temp.path()));
+    REQUIRE(detail::node_device(target) == detail::directory_device(temp.path()));
+    detail::create_directory_exact(staging / "directory", 0755);
+    REQUIRE_THROWS_AS(detail::rename_staged(staging / "directory", temp.path() / "published"), Error);
+    REQUIRE(std::filesystem::exists(staging / "directory"));
+    atomic_write_with_permissions(staging / "file", to_bytes("preserve"), 0644);
+    REQUIRE_THROWS_AS(detail::rename_staged(staging / "file", temp.path() / "published"), Error);
+    REQUIRE(to_string(read_file(staging / "file")) == "preserve");
+    std::filesystem::create_symlink(target, staging / "link");
+    REQUIRE_THROWS_AS(detail::rename_staged(staging / "link", target), Error);
+    REQUIRE_THROWS_AS(detail::remove_regular(staging / "link"), Error);
+    REQUIRE_THROWS_AS(detail::node_device(staging / "link"), Error);
+    REQUIRE_THROWS_AS(detail::create_directory_exact(staging / "link", 0755), Error);
+    REQUIRE_THROWS_AS(detail::remove_empty_directory(staging), Error);
+    REQUIRE_THROWS_AS(detail::create_directory_exact(staging / "invalid", 010000), Error);
+    REQUIRE_FALSE(std::filesystem::exists(staging / "invalid"));
+    detail::remove_regular(target);
+    detail::remove_empty_directory(temp.path() / "published");
+    REQUIRE_FALSE(std::filesystem::exists(target));
+    REQUIRE_FALSE(std::filesystem::exists(temp.path() / "published"));
+}

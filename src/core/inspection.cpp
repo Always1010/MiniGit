@@ -1,6 +1,7 @@
 #include "minigit/inspection.hpp"
 #include "minigit/diff.hpp"
 #include "minigit/error.hpp"
+#include "minigit/transaction.hpp"
 #include "minigit/fs.hpp"
 #include "minigit/format.hpp"
 #include "minigit/history.hpp"
@@ -137,6 +138,7 @@ std::string repository_diff(const Repository& repo, const DiffOptions& options) 
     validate_context(options.context);
     if (options.revisions.size() > 2 || (options.staged && options.revisions.size() > 1)) throw Error("差异请求版本数量非法");
     RepoLock lock(repo.metadata());
+    require_no_transaction(repo);
     if (options.revisions.size() == 2) {
         const auto before = revision_snapshot(repo, options.revisions[0]);
         const auto after = revision_snapshot(repo, options.revisions[1]);
@@ -155,14 +157,19 @@ Bytes show_object(const Repository& repo, std::string_view spec, std::size_t con
     validate_context(context);
     RepoLock lock(repo.metadata());
     const auto colon = spec.find(':');
-    if (colon != std::string_view::npos) return show_path(repo, spec.substr(0, colon), spec.substr(colon + 1));
+    if (colon != std::string_view::npos) {
+        require_no_transaction(repo);
+        return show_path(repo, spec.substr(0, colon), spec.substr(colon + 1));
+    }
     if (spec.size() == 64 && spec.find_first_not_of("0123456789abcdefABCDEF") == std::string_view::npos) {
         const auto id = ObjectId::from_hex(spec);
         auto object = ObjectStore(repo.metadata() / "objects").read(id);
         if (object.type == ObjectType::Blob) return std::move(object.payload);
         if (object.type == ObjectType::Tree) return show_tree(object.payload);
+        require_no_transaction(repo);
         return show_commit(repo, id, decode_commit(object.payload), context);
     }
+    require_no_transaction(repo);
     const auto id = resolve_commit(repo, spec);
     return show_commit(repo, id, read_commit(repo, id), context);
 }

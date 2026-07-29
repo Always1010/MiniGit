@@ -1,5 +1,6 @@
 #include "minigit/status.hpp"
 #include "minigit/error.hpp"
+#include "minigit/transaction.hpp"
 #include "minigit/history.hpp"
 #include "minigit/worktree.hpp"
 #include "minigit/object_store.hpp"
@@ -23,6 +24,7 @@ std::pair<char, char> conflict_codes(unsigned mask) {
 }
 StatusReport collect_status(const Repository& repo) {
     RepoLock lock(repo.metadata());
+    require_no_transaction(repo);
     StatusReport report{read_head(repo), {}};
     const auto head = head_snapshot(repo);
     const auto index = load_index(repo);
