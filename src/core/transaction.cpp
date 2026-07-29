@@ -3,6 +3,7 @@
 #include "minigit/index.hpp"
 #include "minigit/object_store.hpp"
 #include "minigit/refs.hpp"
+#include "minigit/reflog.hpp"
 #include "minigit/snapshot.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -112,7 +113,18 @@ void validate_metadata_bytes(const Repository& repo, const MetadataChange& chang
         for (const auto& entry : decode_index(bytes)) keep(entry.id, ObjectType::Blob);
         return;
     }
-    if (change.path.starts_with("logs/")) throw Error("尚未定义事务 reflog 格式");
+    if (change.path.starts_with("logs/")) {
+        std::set<ObjectId> checked;
+        for (const auto& entry : decode_reflog(bytes)) {
+            for (const auto* id : {&entry.old_id, &entry.new_id}) if (*id && checked.insert(**id).second) {
+                const auto object = store.read(**id);
+                if (object.type != ObjectType::Commit) throw Error("reflog 必须引用 Commit");
+                (void)decode_commit(object.payload);
+                if (roots) roots->insert(**id);
+            }
+        }
+        return;
+    }
     const auto text = to_string(bytes);
     if (change.path == "HEAD" && text.starts_with("ref: ")) {
         if (text.empty() || text.back() != '\n') throw Error("事务 HEAD 格式非法");

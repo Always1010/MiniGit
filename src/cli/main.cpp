@@ -13,6 +13,7 @@
 #include "minigit/format.hpp"
 #include "minigit/inspection.hpp"
 #include "minigit/transaction.hpp"
+#include "minigit/reflog.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -53,6 +54,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  log [--oneline] [-n count] [revision]  Walk commit history\n"
                      "  tag [-f] [name [revision]] | tag -d name  Manage light tags\n"
                      "  recover                  Recover an interrupted transaction\n"
+                     "  reflog [HEAD|branch]     Inspect local reference movements\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -204,6 +206,33 @@ int run(const std::vector<std::string_view>& args) {
         if (request.staged && request.revisions.size() > 1)
             throw UsageError("diff --cached accepts at most one revision");
         std::cout << minigit::repository_diff(minigit::Repository::discover(), request);
+        return 0;
+    }
+    if (command == "reflog") {
+        bool options = true;
+        std::optional<std::string_view> selected;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (options && args[i] == "--") { options = false; continue; }
+            if ((options && args[i].starts_with('-')) || selected)
+                throw UsageError("reflog accepts HEAD or one branch");
+            selected = args[i];
+        }
+        const std::string ref = !selected || *selected == "HEAD" ? "HEAD" :
+            selected->starts_with("refs/") ? std::string(*selected) : "refs/heads/" + std::string(*selected);
+        const auto repo = minigit::Repository::discover();
+        const minigit::RepoLock lock(repo.metadata());
+        minigit::require_no_transaction(repo);
+        const auto entries = minigit::read_reflog(repo, ref);
+        std::string text;
+        for (std::size_t i = entries.size(); i > 0; --i) {
+            const auto& entry = entries[i - 1];
+            const auto line = minigit::quote_path(ref) + "@{" + std::to_string(entries.size() - i) + "} " +
+                (entry.old_id ? entry.old_id->hex() : "-") + " -> " +
+                (entry.new_id ? entry.new_id->hex() : "-") + " " + entry.reason + "\n";
+            if (line.size() > minigit::max_file_size - text.size()) throw minigit::Error("reflog output exceeds 64 MiB");
+            text += line;
+        }
+        std::cout << text;
         return 0;
     }
     if (command == "recover") {

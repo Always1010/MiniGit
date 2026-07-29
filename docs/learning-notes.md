@@ -173,3 +173,19 @@ CLI 的成功也包含输出是否成功。写到缓冲流时，错误可能在�
 “中止操作”还有两种时间尺度。短事务恢复上一次发布动作的 before；未来 merge/rebase 的 abort 则需要保存整个用户操作开始时的快照。它们会共用文件执行器，但不能共用同一份状态记录，因为一次长操作可能包含多次已完成的短事务。
 
 [事务实验](../examples/experiments/transactions.sh) 可实际观察混合状态：先看到 `a=new A`、`b=old B`，此时 status 要求先恢复；执行 recover 后二者回到 old，再次 recover 仍保持相同结果。阅读 [教学程序](../examples/experiments/transaction.cpp)，找到回调中的 `work.write:a` 标签，理解它为什么发生在 Prepared 之后、Committed 之前。实验模拟受控中断，真实子进程突然退出与恢复的覆盖由事务测试另行验证。
+
+## MiniGit 实验：事件序列与提交图分别记录什么
+
+```sh
+bash examples/experiments/reflog.sh ./build/debug/minigit
+```
+
+[脚本](../examples/experiments/reflog.sh) 在临时仓库提交 A、B，从分支引用取得实际完整 ID，再核对 `reflog` 的最新事件为 A→B、较旧事件为缺失→A，同时用 cmp 比较 HEAD 与 main 的 MGRL 字节。两个预设的实验已通过；本子项剩余回归状态见 [进度](progress.md)。提交 ID 由实际内容和业务元数据决定，实验不硬编码摘要或开发日期。
+
+在另一份临时仓库执行相同两次提交，再分别运行 `minigit log --oneline`、`minigit reflog`、`minigit reflog main`。log 根据 parent 读到 B、A；reflog 根据保存的事件逆序展示 A→B、缺失→A。为两个输出画两张图：前者的边连接 Commit，后者的边描述引用位置变化。未来 reset 和 switch 接入后，事件还可能出现 B→A 或 A→A，而已有 Commit 的 parent 不会随之改变。
+
+C++ 学习练习是比较这两个类型：`CommitGraph` 用 map 去重并服务拓扑排序，`Reflog` 用 vector 保留发生顺序。若把事件存入 set 去重，同一位置的重复访问可能丢失；若把事件边塞进提交图，合法回退又可能被误判为 DAG 环。容器选择应来自数据含义，而不是只考虑哪个接口更方便。
+
+再追踪一次失败：规划器复制 TransactionPlan，追加事件并编码，全部成功才赋回；执行器随后发布 Prepared，将分支引用和两份日志一起更新。如果恢复再次追加“commit”，事件数量会随着恢复次数增长。实际恢复直接选择 journal 里的 before 或 after 字节，因此重复 recover 保持同一结果。可在 [reflog 测试](../tests/unit/test_reflog.cpp) 找到中断及重试的断言。
+
+日志中的 old/new 是 Commit 根，不是文件备份。为了保留旧历史线索，事务只验证这些 Commit 的类型和结构，不为每个旧事件展开 Tree；新发布目标仍由 Snapshot 完整校验。思考未来 GC：删除当前分支后，哪些日志端点仍需保留？日志过期策略如何影响这些根？当前没有过期和回收命令，不能把这些问题当作已有行为。

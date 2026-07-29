@@ -4,6 +4,7 @@
 #include "minigit/fs.hpp"
 #include "minigit/error.hpp"
 #include "minigit/transaction.hpp"
+#include "minigit/reflog.hpp"
 #include <algorithm>
 #include <chrono>
 namespace minigit {
@@ -107,8 +108,9 @@ ObjectId create_commit(const Repository& repo, std::string_view message, bool al
     Commit commit{tree, {}, author, author, std::string(message)};
     if (head.id) commit.parents.push_back(*head.id);
     const auto id = ObjectStore(repo.metadata() / "objects").write(ObjectType::Commit, encode_commit(commit));
-    if (head.symbolic) update_ref(repo, *head.symbolic, head.id, id);
-    else set_head(repo, id.hex());
+    TransactionPlan plan;
+    plan_move_head(repo, plan, head, {head.symbolic, id}, "commit");
+    execute_transaction(repo, plan);
     return id;
 }
 }

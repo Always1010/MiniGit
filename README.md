@@ -2,7 +2,7 @@
 
 MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
 
-Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，已形成差异引擎、diff/show 内容来源协调和短事务恢复机制。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
+Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，已形成差异引擎、diff/show 内容来源协调和短事务恢复机制；reflog 与 commit 的事务发布已接入，正在验证。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
 
 ## 构建与运行
 
@@ -36,6 +36,8 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `diff [--cached] [-U count] [revision [revision]]` | 默认比较 Index→工作区；已暂存、修订→工作区及双修订比较见下文 |
 | `show [--] [spec]` | 默认检查 HEAD；提交、原始对象、提交内文件与 Index stage 选择见下文 |
 | `log [--oneline] [-n count] [revision]` | 沿全部 parent 展示去重历史，默认从 HEAD 开始 |
+| `reflog [--] [HEAD\|branch\|refs/heads/branch]` | 只读展示本地 HEAD 或分支移动事件，默认 HEAD，最新事件在前 |
+| `recover` | 按短事务的 Prepared／Committed 状态恢复，重复执行安全 |
 | `tag`、`tag [-f] name [revision]`、`tag -d name` | 列出、创建／强制移动或删除指向 Commit 的轻量标签 |
 
 对象 ID 必须为完整 64 位十六进制文本，尚不支持缩写。不带 `-w` 的摘要计算可以在仓库外执行；写入和读取需要当前目录或祖先存在有效 `.minigit` 仓库。当前文件读取上限为 64 MiB，软链接和非普通文件被拒绝。
@@ -78,7 +80,11 @@ minigit commit -m '记录首个快照'
 
 `log` 使用子提交先于父提交的拓扑顺序，并对共享祖先去重；同时可输出的节点按完整 ID 排序。显示缩写为 12 位，解析仍要求完整 ID。支持 HEAD、分支、标签或完整引用名称，名称歧义明确失败。`-n` 只限制显示数量，仍读取所选提交的完整可达历史；目前限 100000 个提交、1000000 条父边及 64 MiB 图数据。
 
-log 与 show 共用提交文本格式化；单个格式化提交条目及完整 log 输出最多 64 MiB，以限制消息缩进与条目累积后的显示规模；日志先完成格式化，超限时返回错误且不留下部分输出。
+log 与 show 共用提交文本格式化；单个格式化提交条目及完整 log 输出最多 64 MiB，以限制消息缩进与条目累积后的显示规模；log 先完成格式化，超限时返回错误且不留下部分输出。
+
+`reflog` 观察引用曾怎样移动，与沿 parent 读取的 `log` 分开。当前 commit 将分支引用、HEAD 日志与分支日志放进同一个短事务；分离 HEAD 则发布 HEAD 与它的日志。输出用完整 ID 显示 `old -> new reason`，缺失端点为 `-`；文件缺失时显示空日志，标签不支持 reflog。`HEAD@{0}` 等是显示位置，尚不能作为修订选择串使用。带选项样式的分支名可用 `reflog -- name`。
+
+Reflog 使用自有 MGRL v1 格式，每份日志最多 8 MiB、100000 个事件；原因是非空单行 UTF-8，最多 4096 字节。完整 CLI 输出预检为 64 MiB，待恢复事务会阻止查询。当前没有 actor、时间、过期清理、选择器或 reflog 撤销命令；branch/switch 尚未交付，核心已能规划不同分支指向同一提交时的 HEAD 切换事件。接入验证状态见进度页。
 
 构建后可运行 [对象观察实验](examples/experiments/objects.sh)：
 
@@ -87,6 +93,7 @@ bash examples/experiments/objects.sh ./build/debug/minigit
 bash examples/experiments/commits.sh ./build/debug/minigit
 bash examples/experiments/diff.sh ./build/debug/minigit
 bash examples/experiments/show.sh ./build/debug/minigit
+bash examples/experiments/reflog.sh ./build/debug/minigit
 ```
 
 [提交实验](examples/experiments/commits.sh) 进一步检查暂存 B、工作区编辑为 C 后仍提交 B，以及下一次提交链接前一个 parent；还核对 status、log 和标签在分支前进后保持原提交。脚本创建临时仓库并在结束时自动清理，不调用系统 Git。测试结果以 [进度](docs/progress.md) 为准。
@@ -94,6 +101,8 @@ bash examples/experiments/show.sh ./build/debug/minigit
 [差异实验](examples/experiments/diff.sh) 将 HEAD A、Index B、工作区 C 的三种比较实际重放，再提交 B，并验证历史 A→B 与未暂存 B→C。补丁文件放在临时仓库外，脚本结束自动清理。
 
 [内容实验](examples/experiments/show.sh) 读取提交 A、暂存 B，并验证工作区仍为 C；通过原始 Blob ID 与 Index 路径输出含 NUL 的二进制文件，再用 `cmp` 核对字节。
+
+[引用日志实验](examples/experiments/reflog.sh) 连续提交 A、B，核对缺失端点→A→B 的事件及 HEAD／main 两份日志字节一致。它展示的是引用事件，不是提交父图；两种预设的实验已通过，相关回归及本子项最终验收仍在进行。
 
 ## 设计范围
 
@@ -123,7 +132,7 @@ Phase 1 的暂存、提交与历史实验可直接运行。分支、工作区恢
 
 工作区短事务与 `minigit recover` 已完成子项验收。发生中断后，状态／历史查询和业务修改会提示先恢复，原始对象仍可通过 `cat-file` 或完整 Blob/Tree ID 的 `show` 观察。恢复拒绝损坏日志、缺失备份和计划外修改，并保留现场；不要通过手工删除日志来把未知状态当作成功。
 
-事务使用 `.minigit/transaction` 与内部 `transaction-staging`。当前 Linux 实现依赖可用的 `/proc/self/fd`，工作区相关目录和元数据暂存必须在同一文件系统；源文件需具备 owner-read 权限，目录需可读取和遍历，包含更新子项的目录需 owner-rwx。这些约束属于当前实现边界，具体已验证范围见 [进度](docs/progress.md)。分支与恢复业务命令将于共同事务机制验收后接入。
+事务使用 `.minigit/transaction` 与内部 `transaction-staging`。当前 Linux 实现依赖可用的 `/proc/self/fd`，工作区相关目录和元数据暂存必须在同一文件系统；源文件需具备 owner-read 权限，目录需可读取和遍历，包含更新子项的目录需 owner-rwx。这些约束属于当前实现边界，具体已验证范围见 [进度](docs/progress.md)。commit 已接入共同事务与 reflog 规划；分支与工作区恢复业务命令将在后续子项接入。
 
 可重复的 [事务实验](examples/experiments/transactions.sh) 使用单独构建的 C++ 教学程序，在 a 已更新、b 尚未更新时保留 Prepared 日志，再通过真实 CLI 恢复并核对两次结果：
 

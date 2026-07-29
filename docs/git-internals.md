@@ -76,6 +76,27 @@ MiniGit 的 log 已遍历完整 parent 图，不能只沿第一父链。一份�
 
 引用移动不等于删除对象。reflog 记录移动的线索，gc 根据根集合分析可达性，再遵守保留规则回收不可达对象。真实 Git 还有 packfile 和增量对象，见 [gitformat-pack](https://git-scm.com/docs/gitformat-pack)。MiniGit 首先使用松散对象，gc 的具体策略在 Phase 4 实现时定义。
 
+## Reflog 记录位置变化，log 读取父关系
+
+MiniGit 已接入自己的 MGRL 引用日志，验证状态见 [进度](progress.md)。连续提交 A、B 时，Commit B 的 parent 为 A，而初始分支日志记录“缺失→A”和“A→B”。前者回答 B 从哪里发展，后者回答本地引用经历了什么动作。未来 reset 将引用从 B 移回 A 时，无需改写 B 的 parent，也不会创建一个“反向 parent”；它会留下新的 B→A 事件。
+
+核心移动规划还能区分两条都指向 A 的分支。HEAD 从一条分支切到另一条，提交 ID 没变，符号绑定已变，所以 HEAD 日志可以记录 A→A。这样的自环是有效事件，却不能作为提交 DAG 的父边。branch/switch/reset 命令仍待后续交付，当前 commit 已实际记录事件。
+
+```mermaid
+flowchart LR
+    subgraph Parent[不可变 parent 关系]
+        B[Commit B] --> A[Commit A]
+    end
+    subgraph Events[可变引用的本地事件序列]
+        E1[缺失到 A] --> E2[A 到 B]
+        E2 -.未来 reset.-> E3[B 到 A]
+    end
+```
+
+MiniGit 将当前分支引用、HEAD 日志和分支日志放入同一短事务；分离 HEAD 使用 HEAD 文件和它的日志。恢复重放已规划的完整 before/after 日志字节，不重新生成业务事件。Reflog 不保存文件内容，未来 GC 仍须沿它保留的 Commit ID 检查对象可达性；只保留装着日志字节的备份 Blob 不够。
+
+当前 CLI `reflog` 逆序显示事件，缺失端点用 `-`，只接受 HEAD 或分支，文件缺失为空。显示的 `HEAD@{0}` 是序号标签，尚未支持选择器解析、身份、时间、过期或撤销动作。MGRL 是 MiniGit 的简化格式，不声称兼容 Git 的 reflog 文件。
+
 ## 与真实 Git 的差异
 
 | 方面 | MiniGit 的目标 | 真实 Git 的参考 |
