@@ -24,6 +24,7 @@ add_library(minigit_core
     src/core/object_store.cpp
     src/core/repository.cpp
     src/core/transaction.cpp
+    src/core/reflog.cpp
     src/core/index.cpp
     src/core/worktree.cpp
     src/core/refs.cpp
@@ -54,6 +55,7 @@ if(BUILD_TESTING)
     add_executable(minigit_tests
         tests/unit/test_objects.cpp
         tests/unit/test_transaction.cpp
+        tests/unit/test_reflog.cpp
         tests/unit/test_repository.cpp
         tests/unit/test_staging.cpp
         tests/unit/test_history.cpp
@@ -88,4 +90,6 @@ if(BUILD_TESTING)
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/recovery_cli.cmake)
     add_test(NAME show_cli COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/show_cli.cmake)
+    add_test(NAME reflog_cli COMMAND ${CMAKE_COMMAND}
+        -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/reflog_cli.cmake)
 endif()

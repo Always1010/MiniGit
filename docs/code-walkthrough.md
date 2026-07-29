@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎与 diff/show 查询。分支与工作区操作仍为计划。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已接入待验收，分支与工作区操作仍为计划。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -75,7 +75,7 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 
 读取 [refs.hpp](../include/minigit/refs.hpp)、[refs.cpp](../src/core/refs.cpp)，先看 `read_head` 怎样表示未出生分支，再看 `update_ref` 如何检查预期旧值。读取 [snapshot.hpp](../include/minigit/snapshot.hpp)、[snapshot.cpp](../src/core/snapshot.cpp) 的 `write_snapshot/read_snapshot`，观察路径映射如何递归构造 Tree，以及每个 Tree 条目的模式如何约束所引用的对象类型。
 
-然后阅读 [history.hpp](../include/minigit/history.hpp)、[history.cpp](../src/core/history.cpp) 的提交协调与身份。`create_commit` 的调用链是：获取写锁 → 读取配置身份和 Index → 检查冲突条目 → 构造根 Tree → 校验旧 HEAD → 保存带 parent 的 Commit → 更新引用。失败可能留下未引用对象，但不会发布尚未完整保存的提交。底层编码保留读取教学对象的自由，业务层要求身份和消息有效。
+然后阅读 [history.hpp](../include/minigit/history.hpp)、[history.cpp](../src/core/history.cpp) 的提交协调与身份。`create_commit` 的调用链是：获取写锁 → 读取配置身份和 Index → 检查冲突条目 → 构造根 Tree → 校验旧 HEAD → 保存带 parent 的 Commit → `plan_move_head` → `execute_transaction`。失败可能留下未引用对象或待恢复事务；提交目标先完整保存，引用与 reflog 随后共同发布。底层编码保留读取教学对象的自由，业务层要求身份和消息有效。
 
 [test_history.cpp](../tests/unit/test_history.cpp) 检查快照、parent 与失败边界；[commits_cli.cmake](../tests/integration/commits_cli.cmake) 在工作区编辑后直接读取已提交 Tree 和 Blob，证明提交来源是 Index；[提交实验](../examples/experiments/commits.sh) 可重复演示同一机制。
 
@@ -136,3 +136,23 @@ Phase 1 验收后，选择一个含多行文本的普通文件，在测试仓库
 Index 增加独立的 `encode_index/decode_index`，`save_index/load_index` 复用同一编解码流程。这不是新索引格式，而是让事务先在内存中准备准确的新 Index 字节，随后与 HEAD、引用等一起发布。安全删除、目录权限和内部暂存节点发布集中在文件工具中；业务模块不用重复实现系统调用。
 
 [transaction.cpp 教学程序](../examples/experiments/transaction.cpp) 展示公共接口的最小调用链：实际节点备份 → 生成两个目标 Blob → TransactionPlan → durable-write 回调中断。它是按需构建的实验目标，不参与生产 CLI 命令解析；[脚本](../examples/experiments/transactions.sh) 用 CLI 完成恢复并逐字节比较文件。
+
+## 从引用移动读懂 C++ 异常保证
+
+先读 [reflog.hpp](../include/minigit/reflog.hpp) 的 `ReflogEntry`：`optional<ObjectId>` 表示端点可能不存在，`std::string` 保存原因，`vector` 保留事件顺序。再读 [reflog.cpp](../src/core/reflog.cpp) 的 `encode_reflog/decode_reflog`；不要把这些结构体的内存直接写盘，因为填充、指针和机器端序并不是磁盘协议。
+
+| 函数 | 阅读时追踪的问题 |
+| --- | --- |
+| `validate_reason` | UTF-8 如何按字节检查？为何长度限制统计字节，禁止控制字符后原因才能安全显示在一行？ |
+| `Reader::take`、`Reader::number` | 借用的 `span` 怎样先检查剩余长度，再取字段？大端整数如何由移位组合？ |
+| `read_reflog` | 日志缺失与损坏为什么走不同结果？调用者怎样保证仓库锁已取得？ |
+| `plan_append_reflog` | 追加到已存在的计划时怎样读取 after，怎样核对尾项连续性？ |
+| `plan_move_head` | 相同 ID、不同符号分支为何仍是移动？当前分支 commit 与 detached commit 分别规划哪些文件？ |
+| `create_commit`、`execute_transaction` | 不可变对象、可变引用与日志分别在何时保存？ |
+| `recover_transaction`、`transaction_roots` | 为什么恢复不调用追加函数？日志字节之外还需要保留哪些对象？ |
+
+这里的 `span<const uint8_t>` 借用调用者缓冲区，不拥有内存；Reader 只在解码期间借用它，返回条目的 reason 则复制到拥有自身存储的 string。`take` 先比较 `size > remaining`，避免用可能溢出的 `position + size` 判断边界。编码预先计算有界大小，再 reserve，减少逐字段扩容，但 reserve 不能替代输入校验。
+
+两个规划入口先执行 `auto next = plan`，把可能失败的读取、检查、分配和编码放在副本上，最后才 `plan = std::move(next)`。这是强异常保证的具体例子：失败时调用者的计划仍是原值，磁盘尚未修改。它与事务的磁盘恢复保证分属两个层次；不能从 C++ 容器回滚推导出文件系统会自动回滚。
+
+[reflog 单元测试](../tests/unit/test_reflog.cpp) 覆盖格式、原因与边界、移动规划、异常保护及事务恢复；[reflog CLI 测试](../tests/integration/reflog_cli.cmake) 检查实际命令的倒序输出和错误行为。[引用日志实验](../examples/experiments/reflog.sh) 用两个 commit 核对 HEAD 与 main 的日志一致，可与 `log --oneline` 对照阅读事件顺序和父图。

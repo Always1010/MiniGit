@@ -39,7 +39,7 @@ NodeImage capture_work_node(const Repository& repo, std::string_view path);
 // Total path bytes and metadata image bytes are each capped at 64 MiB. Files
 // require owner-read; directories require owner-read/execute, and owner-write
 // when containing planned descendants. Ownership is not captured or restored.
-// Metadata ancestor file conversions and undefined reflog schemas are rejected.
+// Metadata ancestor file conversions are rejected; logs use the MGRL codec.
 // HEAD must exist in both images so repository discovery can enter recovery.
 void execute_transaction(const Repository& repo, TransactionPlan plan, const TransactionHook& hook = {});
 // Prepared restores before; Committed restores after. Repeated recovery is safe.

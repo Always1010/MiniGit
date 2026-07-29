@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；分支及后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，分支及后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -28,6 +28,12 @@ flowchart TD
     Merge --> Diff
     History --> Refs
     History --> Snapshot
+    History --> Reflog[Reflog 移动规划]
+    History --> Transaction[Transaction 发布与恢复]
+    Reflog --> Refs
+    Reflog --> Plan[TransactionPlan 元数据计划]
+    Transaction --> Plan
+    Transaction --> LogCodec[MGRL 编解码]
     DAG --> Snapshot
     Refs --> Snapshot
     Snapshot --> Objects
@@ -52,7 +58,7 @@ Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/
 
 仓库元数据存放在 `.minigit` 专用目录。当前初始化写入 `config`，内容为 `format=1` 和 `hash=sha256` 两行；`HEAD` 为 `ref: refs/heads/main`，此时 main 尚无首个提交。松散对象路径为 `objects/<摘要前两位>/<剩余六十二位>`。初始化先在临时目录构造元数据，再发布为 `.minigit`，有效仓库重复初始化保留已有内容。
 
-当前持久化布局如下；长期操作状态及 reflog 尚待后续子项接入：
+当前持久化布局如下；reflog 在首次记录事件时创建，长期操作状态仍待后续子项接入：
 
 ```text
 .minigit/
@@ -66,6 +72,8 @@ Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/
   objects/ab/<62位ID>     zlib 松散对象
   refs/heads/<分支>       完整提交 ID 与换行
   refs/tags/<标签>        完整提交 ID 与换行
+  logs/HEAD              MGRL v1，HEAD 移动事件
+  logs/refs/heads/<分支>  MGRL v1，该分支移动事件
 ```
 
 identity、index 和具体引用在首次使用时创建。Index、引用、快照与提交已实现；操作状态仍为计划。各项职责与阶段如下：
@@ -73,9 +81,9 @@ identity、index 和具体引用在首次使用时创建。Index、引用、快�
 | 数据 | 责任 | 更新特征 |
 | --- | --- | --- |
 | 对象库 | 由摘要寻址的 blob、tree、commit；本子项 | 内容不可变，重复写入同一内容可复用 |
-| Index | 路径、文件模式、blob 摘要及后续冲突状态 | 自有版本化格式，不复用 Git index 格式 |
+| Index | 路径、文件模式、blob 摘要及冲突阶段 | 自有版本化格式，不复用 Git index 格式 |
 | Refs / HEAD | 分支、轻量标签、当前分支或分离提交 | 小型可变数据，校验名称与目标类型 |
-| Reflog | 引用移动的恢复线索 | Phase 2 引入，不能替代对象存储 |
+| Reflog | HEAD／分支的 old、new、原因事件序列 | Phase 2 已验收；与引用同事务发布，不能替代对象存储 |
 | 操作状态 | 正在进行的合并或历史编辑及恢复信息 | Phase 3 起用于继续、中止与重启恢复 |
 
 Index 已由 [index.hpp](../include/minigit/index.hpp) 定义为条目列表，`IndexEntry` 持有 `path/mode/id/stage`。磁盘格式为 `MGIX` 魔数、大端版本和条目数量；每项保存大端路径长度、路径字节、大端模式、stage 字节及原始 32 字节摘要，末尾附 SHA-256 校验。条目按路径和 stage 排序；同一路径不能同时包含 stage 0 和冲突阶段，正常快照不能同时包含文件路径及其子路径。文件缺失表示空 Index，文件损坏明确拒绝，不降级为空。
@@ -84,7 +92,7 @@ Index 已由 [index.hpp](../include/minigit/index.hpp) 定义为条目列表，`
 
 [refs.hpp](../include/minigit/refs.hpp) 定义 `Head`，同时保留符号分支名称及可选提交 ID，空 ID 表示未出生分支。引用文件保存完整 ID；`read_ref` 将文件缺失与损坏区分，`update_ref` 校验调用方预期旧值及目标 Commit 的完整可读取快照，再以原子替换发布新值。删除嵌套引用时只清理命名空间内的空父目录，保留 heads/tags；重试的幂等更新也补目录同步。`resolve_commit` 解析 HEAD、完整 ID、分支与标签，遇到同名分支及标签明确拒绝歧义。
 
-[snapshot.hpp](../include/minigit/snapshot.hpp) 的 `Snapshot` 将目录树展开为路径映射；`write_snapshot` 校验 Blob 并递归构造子 Tree，`read_snapshot` 按模式校验每个对象类型。展开限制为 128 层 Tree、100000 Tree 条目（包含文件与目录）及 64 MiB 展开路径／Tree 数据，以免小型复用图展开为无限制内存。[history.hpp](../include/minigit/history.hpp) 的 `create_commit` 在一个写锁下读取 Index、生成根 Tree、记录旧 HEAD parent、写入 Commit，最后移动分支或分离 HEAD。身份文件单独使用显式版本和 name/email 字段。
+[snapshot.hpp](../include/minigit/snapshot.hpp) 的 `Snapshot` 将目录树展开为路径映射；`write_snapshot` 校验 Blob 并递归构造子 Tree，`read_snapshot` 按模式校验每个对象类型。展开限制为 128 层 Tree、100000 Tree 条目（包含文件与目录）及 64 MiB 展开路径／Tree 数据，以免小型复用图展开为无限制内存。[history.hpp](../include/minigit/history.hpp) 的 `create_commit` 在一个写锁下读取 Index、生成根 Tree、记录旧 HEAD parent、写入 Commit，最后由 reflog 规划器构造引用与日志的元数据计划，通过短事务发布。身份文件单独使用显式版本和 name/email 字段。
 
 [tags.hpp](../include/minigit/tags.hpp) 将轻量标签命令组合到已验证的引用机制：`create_tag` 解析目标并使用预期旧值更新，`delete_tag` 复用安全目录清理，`list_tags` 先验证所有目标，再返回按名称排序的映射。三项操作各持有一个写锁；标签不保存新对象，也不改变 HEAD 或 Index。首版只允许指向具有有效快照的 Commit。
 
@@ -109,7 +117,7 @@ Index 已由 [index.hpp](../include/minigit/index.hpp) 定义为条目列表，`
 
 `add` 的实际流程：发现仓库 → 检查与枚举路径 → 读取文件原始字节与模式 → 写入 blob → 更新 Index。重复添加相同文件应复用同一 blob。对象可能先于 Index 更新而存在；暂时不可达对象允许后续回收。
 
-`commit` 的实际流程：读取 Index → 分目录构造 tree → 读取 HEAD 作为父提交 → 序列化 commit → 写入对象 → 更新当前引用。初次提交没有 parent；多父提交由合并阶段引入。
+`commit` 的实际流程：读取 Index → 分目录构造 tree → 读取 HEAD 作为父提交 → 序列化 commit → 写入对象 → 规划引用与 reflog → 短事务发布。初次提交没有 parent；多父提交由合并阶段引入。
 
 ```mermaid
 flowchart LR
@@ -150,9 +158,45 @@ flowchart LR
 
 每层都应把业务错误转换为稳定的错误类型，由 CLI 统一报告。单元测试验证格式和不变量，集成测试验证跨模块状态变化，端到端测试检查命令输出、退出码和磁盘结果。更多验收条件见 [进度](progress.md)。
 
+## Reflog：引用事件与事务发布
+
+[reflog.hpp](../include/minigit/reflog.hpp) 的 `ReflogEntry` 持有两个 `std::optional<ObjectId>` 和一个拥有自身字节的原因字符串；`Reflog` 是按发生顺序保存的 `std::vector`。端点缺失表示未出生或删除后的引用，不用全零 ID 冒充缺失。它记录本地引用事件，不改变 Commit 对象，也不以 parent 图代替事件顺序。
+
+MGRL v1 是独立元数据格式，字段按以下顺序编码：
+
+| 字段 | 编码与约束 |
+| --- | --- |
+| 魔数、版本、条目数 | `MGRL`，大端 `uint32_t` 版本 1，大端 `uint32_t` 数量 |
+| 每项 old、new | 分别为单字节存在标志 0／1；存在时接原始 32 字节 ID |
+| 每项原因 | 大端 `uint32_t` 字节长度，再接非空 UTF-8；最多 4096 字节，禁止 ASCII 控制字符及 DEL |
+| 尾部校验 | 前面全部主体字节的 SHA-256，固定 32 字节 |
+
+每份编码日志最多 8 MiB、100000 项。解码先验证大小和校验，再检查版本、存在标志、长度、UTF-8 和尾部剩余字节。日志丢失返回空序列，日志损坏明确失败。读取与规划要求调用者持有 RepoLock；CLI 另外检查待恢复事务，并在完整格式化至最多 64 MiB 后才输出。
+
+```mermaid
+flowchart TD
+    C[完整 Commit 对象已保存] --> P[plan_move_head 校验预期 HEAD]
+    P --> B[符号 HEAD: 当前分支 ref 与两份日志]
+    P --> D[分离 HEAD: HEAD 文件与 HEAD 日志]
+    B --> T[TransactionPlan 精确 before/after 元数据]
+    D --> T
+    T --> V[校验旧日志的 Commit 类型与语义根]
+    V --> J[MGTR Prepared 发布]
+    J --> A[发布引用和 MGRL 文件]
+    A --> K[同一 MGTR 原子变为 Committed]
+    J --> R[recover 重放已保存日志字节]
+    K --> R
+```
+
+当前符号 HEAD 下的 commit 改变分支 ref，并规划 `logs/HEAD` 与 `logs/refs/heads/<分支>`；HEAD 的符号文本本身保持同一分支。分离 HEAD 下的 commit 规划 HEAD 文件和 `logs/HEAD`。规划器还能处理未来分支切换：不同分支即使指向同一个 ID，符号名称的变化也生成 HEAD 事件；目标分支没有移动时无需改写其分支日志。相同 Head 状态则不产生移动事件。目前没有 switch CLI。
+
+`plan_append_reflog` 与 `plan_move_head` 只准备内存中的 MetadataChange，不写文件；已有日志尾项的 new 必须与追加事件的 old 连续。实现先复制计划，在副本中完成检查与编码，再移动赋回，因此异常不会留下半个日志规划。执行器将日志 before/after 存为备份 Blob，与引用一起恢复；recover 不再次调用 append，避免一次中断增加两次事件。
+
+事务预检与 `transaction_roots` 解析日志双方所有存在的 ID，验证对象哈希、Commit 类型及结构，并将它们加入语义根；历史事件不逐项展开 Tree。旧 Commit 的树缺损不应阻止单纯保存这条历史线索，新发布的提交目标仍须通过完整 Snapshot 校验。GC 尚未实现；actor、时间、过期策略、选择器及 reflog 撤销命令也不在当前格式中。
+
 ## 工作区短事务与恢复
 
-本子项已通过 Debug/sanitized 相关回归及实验验收；它建立共同机制，分支命令和 reflog 业务接入将在后续子项完成。已有 add/commit/tag 仍使用各自原子元数据写入，但所有业务查询和修改会检查待恢复事务；原始 Blob/Tree 观察仍可使用。
+短事务机制已通过 Debug/sanitized 相关回归及实验验收。随后接入的 commit 已使用它发布引用与 reflog，接入验证仍在进行；add/tag 继续使用各自原子元数据写入。所有业务查询和修改检查待恢复事务；原始 Blob/Tree 观察仍可使用。分支与工作区更新命令将复用这些共同机制。
 
 问题来自更新范围：切换分支可能需要删除旧文件、创建目录、写入新文件，并修改 Index 与 HEAD。分别原子替换每个文件，仍可能在第三步崩溃后留下前两步的新内容。事务因此保存每个节点的 before/after 和可恢复意图，而不是只记录“曾经执行过哪个命令”。
 
