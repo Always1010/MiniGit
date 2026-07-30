@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收，restore 等后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收，reset、rm、mv 等后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -263,6 +263,36 @@ flowchart TD
 业务入口不在持锁期间调用 self-lock create_branch，而组合 caller-lock 规划函数。普通 switch 不移动目标分支 tip；-c 才创建 ref 与分支日志。未出生且 -c 没有显式来源时，仅改变符号 HEAD 并记录 null→null 事件，不创建空 ref，保留已暂存和实际文件。Head 同值无操作仍先校验 Index；symbolic 不同但 ID 相同则仍记录切换。
 
 工作区路径并集最多 200000 项／64 MiB 名称；原始与最终组合 Index 快照均限 100000 项／64 MiB 路径及条目数据，后续规划与事务继续遵循各自预算。完整权限用实际 before 备份，新写文件采用模式默认权限。核心与 CLI 已通过子项验收，验证证据见进度页；无强制丢弃修改、前一分支或远端追踪选择，不承诺原生 Git 全部 switch 策略兼容。
+
+## Restore：选择范围和发布目的相互独立
+
+[restore.hpp](../include/minigit/restore.hpp) 的 RestoreOptions 分开保存 source、staged、worktree；restore_paths 取得一次 RepoLock。核心与 CLI 已通过子项验收，执行证据见进度页。来源选择与目的选择分别表达：不指定目的标志时默认更新 Work，来源为 Index stage 0；仅 staged 或 staged+worktree 默认来源 HEAD，未出生 HEAD 无提交时拒绝。显式 source 必须解析并读取完整 Commit 快照；它可在未出生仓库中提供来源，HEAD 仍不移动。
+
+| 目的 | 默认来源 | 可变状态 |
+| --- | --- | --- |
+| 默认／worktree | Index stage 0 | 选中实际文件 |
+| staged | HEAD | 选中 Index 条目 |
+| staged + worktree | HEAD | 选中 Index 与实际文件，同一事务 |
+
+Index 读取校验全部阶段的 Blob，但不会全局拒绝冲突。默认 Index→Work 只拒绝选中冲突路径；未选中阶段保留。显式 Commit→Work 可恢复冲突位置，仍保留 Index；staged 更新才移除所选路径的全部阶段，再加入来源的 stage 0。
+
+每个原始路径先独立匹配 source∪Index(all stages)，选择为 exact 或带斜杠边界的 prefix，没有 glob。重复与重叠选择去重，根选择覆盖全部已知版本路径。Index-only 使用词法选择，不探测实际工作文件的软链；实际 Work 修改交给 planner 检查，词法合法不代表可以覆盖未知内容。
+
+```mermaid
+flowchart TD
+    S[来源快照与完整 Index] --> P[每个参数匹配 / prefix 合并]
+    P --> I[若 staged: 替换选中 stage / 最终 Index 校验]
+    P --> W[若 Work: 来源 FileState 或缺失]
+    W --> O[旧 HEAD 与 Index 精确 owned 路径]
+    O --> B[共享 planner 捕获实际 before]
+    I --> T[一次 Transaction]
+    B --> T
+    T --> H[HEAD / refs / reflog 保持原位]
+```
+
+工作区覆盖授权为旧 HEAD∪Index 全阶段的精确文件路径，来源中独有的历史文件不自动获得覆盖当前未知文件的权限。D/F 转换须选择包含旧文件的范围：每个已知旧子文件都要显式删除，未知子项仍阻止整体转换。来源缺失与 empty Blob 不同；工作区单目的不清 Index，Index 单目的不读取实际文件内容，但成功的事务仍可写入元数据镜像 Blob；这不等于对象库完全不写入。
+
+来源与全部参数匹配先校验；需要更新 Index 时，再校验完整最终 Index，之后组合 Index 与 Work 的 caller-lock 计划，最后发布一次事务。无 HEAD 或日志移动规划。Index 全阶段限 100000 不同路径／300000 条记录，仍校验各预算与 typed Blob；共享 planner 还在捕获备份前检查 WorkChange 与已规划 MetadataChange 合计不超过 100000。来源串最多 4096 字节，原始路径每个最多 8192 字节、200000 参数／64 MiB；规范路径最多 4096 字节／128 分量，candidate、selected、owned 各限 200000 路径／64 MiB 名称。Restore 已通过子项验收，reset、rm、mv 仍未交付。
 
 ## WorktreeUpdate：把授权目标变为真实节点计划
 

@@ -16,6 +16,7 @@
 #include "minigit/reflog.hpp"
 #include "minigit/branches.hpp"
 #include "minigit/switch.hpp"
+#include "minigit/restore.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -59,6 +60,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  reflog [HEAD|branch]     Inspect local reference movements\n"
                      "  branch [-f] [name [revision]] | branch -d|-D name  Manage branches\n"
                      "  switch <branch> | switch -c <name> [start] | switch --detach [revision]\n"
+                     "  restore [-s revision] [-S] [-W] [--] <paths...>  Restore selected paths\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -317,6 +319,39 @@ int run(const std::vector<std::string_view>& args) {
         const auto head = minigit::switch_worktree(minigit::Repository::discover(), options);
         if (head.symbolic) std::cout << "Switched to branch " << minigit::quote_path(head.symbolic->substr(11)) << '\n';
         else std::cout << "HEAD detached at " << head.id->hex() << '\n';
+        return 0;
+    }
+    if (command == "restore") {
+        minigit::RestoreOptions options;
+        bool parse_options = true;
+        std::vector<std::filesystem::path> paths;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (parse_options && args[i] == "--") { parse_options = false; continue; }
+            if (parse_options && (args[i] == "--staged" || args[i] == "-S")) {
+                if (options.staged) throw UsageError("restore --staged may be specified once");
+                options.staged = true;
+                continue;
+            }
+            if (parse_options && (args[i] == "--worktree" || args[i] == "-W")) {
+                if (options.worktree) throw UsageError("restore --worktree may be specified once");
+                options.worktree = true;
+                continue;
+            }
+            if (parse_options && (args[i] == "--source" || args[i] == "-s" || args[i].starts_with("--source="))) {
+                if (options.source) throw UsageError("restore source may be specified once");
+                if (args[i].starts_with("--source=")) options.source = args[i].substr(9);
+                else {
+                    if (i + 1 == args.size()) throw UsageError("restore --source requires a revision");
+                    options.source = args[++i];
+                }
+                if (options.source->empty()) throw UsageError("restore --source requires a revision");
+                continue;
+            }
+            if (parse_options && args[i].starts_with('-')) throw UsageError("unknown restore option");
+            paths.emplace_back(args[i]);
+        }
+        if (paths.empty()) throw UsageError("restore requires paths");
+        minigit::restore_paths(minigit::Repository::discover(), paths, options);
         return 0;
     }
     if (command == "branch") {

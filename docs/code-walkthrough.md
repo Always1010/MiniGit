@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -71,9 +71,10 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 10 | Transaction、Reflog、Branches | 引用及日志怎样一起发布？分支管理为何不改变工作区？ |
 | 11 | WorktreeUpdate | 部分目标、精确授权与实际 before 怎样变成事务计划？ |
 | 12 | Switch | 四状态矩阵怎样保留兼容修改并拒绝覆盖？ |
-| 13 | Operations（计划） | 继续／中止怎样跨进程保持？ |
+| 13 | Restore | 来源、路径范围与 Work／Index 目的如何分开？ |
+| 14 | Operations（计划） | 继续／中止怎样跨进程保持？ |
 
-表中前十二项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，restore 等恢复业务仍为计划。依赖关系见 [架构](architecture.md)。
+表中前十三项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，reset 等业务仍为计划。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -219,3 +220,17 @@ execute_transaction(repo, std::move(plan));
 `new_branch` 与 detach 互斥；未出生且新分支没有显式来源时，desired.id 保持 nullopt，这条路径不尝试解析不存在的 HEAD Commit。Head equality 同时比较 symbolic 和 id，所以两条同 ID 分支依然是切换事件。
 
 [test_switch.cpp](../tests/unit/test_switch.cpp) 覆盖矩阵保留与拒绝、完整 Index 拓扑、模式／空文件／双向 D/F 转换、未知与忽略内容、原子 -c、unborn／detached／同名标签及损坏输入；[switch_cli.cmake](../tests/integration/switch_cli.cmake) 再核对真实进程和磁盘结果。相关定向检查、预算补充复验与切换实验的证据见进度页。
+
+## Restore：先匹配全部输入，再组合目的
+
+[restore.hpp](../include/minigit/restore.hpp) 的 RestoreOptions 分开 source、staged、worktree；[restore.cpp](../src/core/restore.cpp) 的 restore_paths 取得一次 RepoLock，先检查待恢复事务。来源选择内容，路径选择范围，两个标志选择发布目的；HEAD 本身在全部方向保持原位。
+
+实际调用链为 normalize_selectors → load_index／check_index → 选择来源 → select_paths → 必要的 next_index 预算／编码／排序校验 → Work 目标与 owned → plan_index_update／plan_worktree_update → 至多一次 execute_transaction。normalize_selectors 仅作词法规范化，支持相对当前目录与绝对路径；Index-only 因此不读取物理软链父目录或 FIFO。
+
+check_index 校验 100000 不同路径、300000 stage 记录及编码字节预算，按 ID 去重检查全部 typed Blob，同时分别收集 stage 0 来源与冲突路径。默认 Index 来源仅拒绝 selected 冲突，不让未选冲突阻止正常文件恢复；显式历史来源先验证完整快照，即使选择部分路径也不能忽略来源其他损坏对象。
+
+select_paths 用排序候选集的 exact 查找与 lower_bound(path + "/") 范围，保留分隔符边界。每个原参数先确认至少一个匹配，再合并重复及祖先范围，避免有效目录掩盖无效参数；排序的祖先检查跳过已覆盖扫描，不逐参数遍历所有文件。
+
+staged 目的从 next_index 移除 selected 全阶段，再加入来源 stage 0，保留 unselected 原条目；完整预算与 encode_index 先通过，随后按 path／stage 排序，才能比较是否无操作。工作区目标为来源 FileState 或 nullopt，owned 来自旧 HEAD 和原 Index 全阶段，文件内容捕获由共享 planner 完成。它不调用 plan_move_head，失败也不先公布部分 Index。成功的 Index-only 事务可保存元数据镜像 Blob，因此“不读取 Work”不能作为对象数量不变的依据；无操作与预算失败另有对应保护。
+
+[test_restore.cpp](../tests/unit/test_restore.cpp) 已写入八组场景，包含方向选择、词法路径、冲突范围、unborn、空文件／删除、双向 D/F、未知保护、对象／预算／最终拓扑及事务恢复；[restore_cli.cmake](../tests/integration/restore_cli.cmake) 核对真实参数和磁盘状态。[restore.sh](../examples/experiments/restore.sh) 重放独立来源／目的及 HEAD／日志不变。两种预设的相关测试与实验已通过，具体筛选及复验记录见进度页。

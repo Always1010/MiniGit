@@ -2,7 +2,7 @@
 
 MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
 
-Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，已形成差异引擎、diff/show 内容来源协调和短事务恢复机制；reflog 与 commit 的事务发布也已通过子项验收；branch 列表、创建及删除已通过子项验收；共享工作区与 Index 更新规划器已验收；switch 工作区切换已通过子项验收。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
+Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，已形成差异引擎、diff/show 内容来源协调和短事务恢复机制；reflog 与 commit 的事务发布也已通过子项验收；branch 列表、创建及删除已通过子项验收；共享工作区与 Index 更新规划器已验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
 
 ## 构建与运行
 
@@ -45,6 +45,7 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `branch -d [--] name`、`branch -D [--] name` | 安全删除／强制删除非当前分支及其分支日志 |
 | `switch [--] branch` | 切换已有短分支，保留兼容的暂存与工作区修改 |
 | `switch -c name [source]`、`switch --detach [revision]` | 创建并切换，或进入分离 HEAD；来源默认 HEAD |
+| `restore [--source revision] [--staged] [--worktree] [--] paths...` | 选择性恢复 Work／Index，来源与目的独立，HEAD 与日志不动 |
 
 对象 ID 必须为完整 64 位十六进制文本，尚不支持缩写。不带 `-w` 的摘要计算可以在仓库外执行；写入和读取需要当前目录或祖先存在有效 `.minigit` 仓库。当前文件读取上限为 64 MiB，软链接和非普通文件被拒绝。
 
@@ -61,6 +62,12 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 切换逐路径比较旧 HEAD、Index、实际工作区与目标。旧 HEAD 或 Index 已等于目标时保留该路径的暂存及工作文件；其他路径只有 Index 等于旧 HEAD 且工作文件等于 Index 才能更新。任何不兼容路径使整个操作拒绝；不提供 force、丢弃修改或前一分支选择器。未知、忽略文件及陌生目录子项仍受保护；冲突或损坏 Index 即使切回当前分支也拒绝。
 
 未出生 HEAD 下，不带显式来源的 `switch -c new` 只选择新的符号 HEAD，保留 Index 和实际文件，不创建空 ref 或 Commit；HEAD 日志记录缺失端点到缺失端点。新名称不能是当前分支或已有分支。切换当前未出生分支可无操作，其他不存在的分支拒绝；显式 HEAD 来源或 detach 无法解析尚不存在的提交。
+
+Restore 核心与 CLI 已通过子项验收，用于分别恢复工作文件和暂存内容，验证证据见进度页。默认从 Index 恢复选中工作文件；--staged 默认从 HEAD 恢复选中 Index；同时 --staged --worktree 默认用 HEAD 更新两者。显式 --source（-s，亦可 --source=revision）指定 Commit 来源，--staged／--worktree 的短形式为 -S／-W；路径可直接跟在命令后，-- 用于结束选项解析。
+
+选择按已知版本路径 exact／目录 prefix 匹配，不支持 glob；每个原始参数都必须在 source∪Index 中匹配，其他有效路径不能掩盖一个无效参数。来源没有的已选路径表示删除，空 Blob 表示零字节文件。默认 Index→Work 拒绝选中的冲突，未选冲突保留；显式 Commit→Work 保留 Index 阶段，只有 staged 目的清除所选冲突并写 stage 0。Index-only 不探测工作区软链，实际工作区恢复仍保护未知、忽略文件和陌生目录子项。
+
+Restore 不改变 HEAD、分支引用或 reflog；两个目的组合仍一次事务发布。[恢复实验](examples/experiments/restore.sh) 在两种预设下均已通过，解释及参数范围见架构与学习笔记。
 
 首次提交前设置显式身份。身份单独保存在 `.minigit/identity`，不改写仓库格式标识：
 
@@ -112,6 +119,7 @@ bash examples/experiments/show.sh ./build/debug/minigit
 bash examples/experiments/reflog.sh ./build/debug/minigit
 bash examples/experiments/branches.sh ./build/debug/minigit
 bash examples/experiments/switch.sh ./build/debug/minigit
+bash examples/experiments/restore.sh ./build/debug/minigit
 ```
 
 [提交实验](examples/experiments/commits.sh) 进一步检查暂存 B、工作区编辑为 C 后仍提交 B，以及下一次提交链接前一个 parent；还核对 status、log 和标签在分支前进后保持原提交。脚本创建临时仓库并在结束时自动清理，不调用系统 Git。测试结果以 [进度](docs/progress.md) 为准。
@@ -142,7 +150,7 @@ bash examples/experiments/switch.sh ./build/debug/minigit
 
 ## 共享更新规划器：核心接口已实现
 
-[worktree_update.hpp](include/minigit/worktree_update.hpp) 供 switch 复用，并为后续 restore、reset、rm、mv 准备共同机制，本子项不增加 CLI。调用者在同一 RepoLock 内提供“目标路径状态”和“允许改写的旧跟踪文件路径”；规划器检查实际文件与目录，捕获真实 before 字节和权限，再生成 TransactionPlan。HEAD 与日志的变化仍由业务层规划，最终由短事务一起执行。
+[worktree_update.hpp](include/minigit/worktree_update.hpp) 供 switch、restore 复用，并为后续 reset、rm、mv 准备共同机制，本子项不增加 CLI。调用者在同一 RepoLock 内提供“目标路径状态”和“允许改写的旧跟踪文件路径”；规划器检查实际文件与目录，捕获真实 before 字节和权限，再生成 TransactionPlan。HEAD 与日志的变化仍由业务层规划，最终由短事务一起执行。
 
 目标缺失与空文件分别表示，已有未授权文件、未知目录、软链和特殊文件受到保护。精确授权的旧文件位置若已变为空目录，可显式移除该空节点；授权不会延伸到陌生子文件或空子目录。部分路径更新保留未变化父目录与无关兄弟文件；目录改为文件时必须显式删除全部已授权的旧文件，不能递归清掉未知内容。规划可能保存不可变备份 Blob，但不会写工作文件或元数据。具体边界及 C++ 例子见架构、导读与学习笔记；构建与验证证据见进度页。
 
@@ -154,7 +162,7 @@ bash examples/experiments/switch.sh ./build/debug/minigit
 4. [学习笔记](docs/learning-notes.md)：可执行的观察实验、取舍与常见误区。
 5. [进度](docs/progress.md)：完成状态、验证证据、阶段验收与下一步。
 
-Phase 1 的暂存、提交与历史实验可直接运行。branch 管理已通过子项验收；switch 已实现，工作区恢复、合并及历史重写随后续阶段交付，当前状态统一由进度文档记录。
+Phase 1 的暂存、提交与历史实验可直接运行。branch 管理已通过子项验收；switch 与 restore 已通过子项验收，reset、rm、mv、合并及历史重写随后续阶段交付，当前状态统一由进度文档记录。
 
 ### 中断事务的恢复
 
