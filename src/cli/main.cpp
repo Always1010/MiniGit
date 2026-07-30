@@ -15,6 +15,7 @@
 #include "minigit/transaction.hpp"
 #include "minigit/reflog.hpp"
 #include "minigit/branches.hpp"
+#include "minigit/switch.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -57,6 +58,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  recover                  Recover an interrupted transaction\n"
                      "  reflog [HEAD|branch]     Inspect local reference movements\n"
                      "  branch [-f] [name [revision]] | branch -d|-D name  Manage branches\n"
+                     "  switch <branch> | switch -c <name> [start] | switch --detach [revision]\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -287,6 +289,34 @@ int run(const std::vector<std::string_view>& args) {
             output += formatted;
         }
         std::cout << output;
+        return 0;
+    }
+    if (command == "switch") {
+        minigit::SwitchOptions options;
+        bool parse_options = true;
+        std::optional<std::string_view> target;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (parse_options && args[i] == "--") { parse_options = false; continue; }
+            if (parse_options && args[i] == "--detach") {
+                if (options.detach) throw UsageError("switch --detach may be specified once");
+                options.detach = true;
+                continue;
+            }
+            if (parse_options && args[i] == "-c") {
+                if (options.new_branch || i + 1 == args.size()) throw UsageError("switch -c requires one branch name");
+                options.new_branch = std::string(args[++i]);
+                continue;
+            }
+            if ((parse_options && args[i].starts_with('-')) || target)
+                throw UsageError("switch accepts one branch or revision");
+            target = args[i];
+        }
+        if ((options.detach && options.new_branch) || (!options.detach && !options.new_branch && !target))
+            throw UsageError("switch requires a branch, -c name, or --detach");
+        if (target) options.target = *target;
+        const auto head = minigit::switch_worktree(minigit::Repository::discover(), options);
+        if (head.symbolic) std::cout << "Switched to branch " << minigit::quote_path(head.symbolic->substr(11)) << '\n';
+        else std::cout << "HEAD detached at " << head.id->hex() << '\n';
         return 0;
     }
     if (command == "branch") {

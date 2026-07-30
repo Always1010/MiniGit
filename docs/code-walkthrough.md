@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器核心实现已完成，工作区切换仍为计划。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -34,7 +34,7 @@ cmake --build --preset debug
 ctest --preset debug --output-on-failure
 ```
 
-Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版本格式、空参数、未知参数和多余参数，并检查输出失败的退出码。具体证据由 [进度](progress.md) 记录。
+Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版本格式、空参数、未知参数和多余参数，并检查输出失败的退出码。具体证据由 [进度](progress.md) 记录。当前 sanitized 使用 `-g -O1`，优化可能改变单步次序与局部变量可见性；编译参数核对及验证范围见 [构建与验证策略](testing.md)。
 
 ## 当前对象库阅读路线
 
@@ -70,9 +70,10 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 9 | Diff 与 Inspection | 差异怎样计算？历史、Index 与工作文件的内容来源如何区分？ |
 | 10 | Transaction、Reflog、Branches | 引用及日志怎样一起发布？分支管理为何不改变工作区？ |
 | 11 | WorktreeUpdate | 部分目标、精确授权与实际 before 怎样变成事务计划？ |
-| 12 | Operations（计划） | 继续／中止怎样跨进程保持？ |
+| 12 | Switch | 四状态矩阵怎样保留兼容修改并拒绝覆盖？ |
+| 13 | Operations（计划） | 继续／中止怎样跨进程保持？ |
 
-表中前十一项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；工作区切换与恢复业务仍为计划。依赖关系见 [架构](architecture.md)。
+表中前十二项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，restore 等恢复业务仍为计划。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -166,7 +167,7 @@ Index 增加独立的 `encode_index/decode_index`，`save_index/load_index` 复�
 
 `list_branches` 用 map 按名称排序，用 set 保存已经验证的 ObjectId。相同提交只展开一次 Snapshot，随后将 BranchInfo 移动到返回 vector。这展示了几个不同职责：map 管唯一名称与顺序，set 只管校验去重，vector 提供稳定返回序列。64 MiB 短名预算限制输入名称数据；它不表示必须长期持有所有分支的文件内容。
 
-`create_branch` 是自持锁的业务入口：解析目标 → `plan_create_branch` → `execute_transaction`。规划接口不再次加锁，先完成目标快照检查，再复制计划并追加 ref 和分支日志，成功才移动赋回；后续 switch -c 能复用它。当前分支保护先于“目标 ID 是否相同”的判断，非当前分支 same-ID 强制移动才是无操作。
+`create_branch` 是自持锁的业务入口：解析目标 → `plan_create_branch` → `execute_transaction`。规划接口不再次加锁，先完成目标快照检查，再复制计划并追加 ref 和分支日志，成功才移动赋回；switch -c 复用它。当前分支保护先于“目标 ID 是否相同”的判断，非当前分支 same-ID 强制移动才是无操作。
 
 `delete_branch` 的普通模式调用 `load_commit_graph` 收集 HEAD 闭包，再执行 `topological_order`，最后用 `graph.contains(branch_id)` 判断。发现集合负责去重，不能单靠它证明无环；拓扑校验因此不是多余的一步。强制模式只省略图可达性判断，仍进入同一事务验证，不能跳过旧 ref 和日志检查。
 
@@ -191,7 +192,7 @@ plan_index_update(repo, plan, Index{{"dir/note", "100644", blob}});
 execute_transaction(repo, std::move(plan));
 ```
 
-前两次调用只准备计划，工作区规划可以写不可变备份 Blob；最后一次才发布实际文件及 Index。这个例子没有移动 HEAD，不是尚未交付的 switch 命令。若目标改为删除普通文件，使用 WorktreeTarget{std::nullopt, std::nullopt}；同一计划若还包含它下面的新文件，该空目标允许旧文件被移除，再由必要父目录补齐把位置变成 Directory。若要保留零字节文件，应先保存空 Blob 再提供 FileState。多路径仓库需保留完整 Index 的其他条目，不能把部分 worktree targets 直接当作整个 Index。
+前两次调用只准备计划，工作区规划可以写不可变备份 Blob；最后一次才发布实际文件及 Index。这个例子没有移动 HEAD，并未调用 switch。若目标改为删除普通文件，使用 WorktreeTarget{std::nullopt, std::nullopt}；同一计划若还包含它下面的新文件，该空目标允许旧文件被移除，再由必要父目录补齐把位置变成 Directory。若要保留零字节文件，应先保存空 Blob 再提供 FileState。多路径仓库需保留完整 Index 的其他条目，不能把部分 worktree targets 直接当作整个 Index。
 
 所有调用共用外层 RepoLock，规划函数不重复取得锁；已有 metadata 可以继续组合，但 worktree 规划要求 plan.work 为空，Index 规划拒绝重复的 index MetadataChange。异常保护针对调用者的计划值，之前已经保存的备份对象不会被 C++ 容器回滚删除。
 
@@ -204,3 +205,17 @@ execute_transaction(repo, std::move(plan));
 所有变化路径先检查完，最后才逐项 `capture_work_node` 保存实际 before；捕获值须与此前 NodeImage 一致，否则拒绝期间发生的变化。`auto next = plan` 隔离可抛异常的追加，完成后 move 赋回。`plan_index_update` 再独立编码完整目标、读取精确旧字节、校验全部 stage 的 typed Blob，并拒绝已有 index 计划。函数没有发布动作，最终发布仍由 Transaction 执行。
 
 [test_worktree_update.cpp](../tests/unit/test_worktree_update.cpp) 直接调用这些 API：多文件及空 Blob、明确权限、新父目录、双向文件目录转换、未变父目录的未知兄弟保护、精确授权、Index 缺失与冲突 stage、格式和预算拒绝，以及 Prepared／Committed 后工作区与 Index 的联合恢复。Debug 定向检查已通过，完整验证证据见进度页；本项没有 CLI 用例或命令实验。已有事务的完整崩溃矩阵不由这里重新实现，新测试只验证规划结果能交给共享执行器。
+
+## Switch：组合策略与现有规划器
+
+先读 [switch.hpp](../include/minigit/switch.hpp) 的 SwitchOptions，再读 [switch.cpp](../src/core/switch.cpp) 的 `switch_worktree`。入口只取得一次 RepoLock：检查待恢复事务 → 选择目标 Head → 读取 A/D 快照与 Index → 第一遍 A/B/D 选择 → 完整目标 Index 预算与编码校验 → 第二遍更新路径 C 校验 → 组合各规划器 → execute_transaction。返回 Head 供 CLI 输出短分支或 detached 完整 ID。
+
+私有 `validate_index_budget` 同时限制原 Index 与最终组合 Index；`state_at` 返回 optional<FileState>，让 map 中无条目和零字节 Blob 区分；`checked_index` 对同 ID 去重校验 typed Blob，再拒绝任何非零 stage。因此底层 Index 规划支持冲突阶段，不代表 switch 可以携带冲突切换。即使目标 Head 没有变化，入口仍校验 Index 和快照。
+
+第一遍路径循环比较 `old == target || staged == target`，满足就 continue；其余要求 staged==old，并先构造 next_index 和 targets，不读取 C。完整目标 Index 随后校验 100000 条目／64 MiB 数据预算及编码中的 D/F 约束；两份合法输入的组合仍可能超限，不能把逐路径判断误当成全局证明。第二遍只为 targets 调用 read_worktree_entry 并要求工作状态等于原 B。这既保留无关修改，也让预算拒绝发生在工作区读取与备份捕获之前；需要覆盖的节点仍严格检查。
+
+调用顺序随后为可选 plan_create_branch → plan_move_head → 必要的 plan_index_update → plan_worktree_update。它们都是 caller-lock 规划接口，不能替换成会再次加锁的 create_branch。创建分支的 ref 已在 plan 中，HEAD 规划可据此核对目标；最后仅在计划确实有变化时 execute_transaction。备份对象可能在发布前写入，但 ref、Index 和工作文件不会逐步骤提前公布。
+
+`new_branch` 与 detach 互斥；未出生且新分支没有显式来源时，desired.id 保持 nullopt，这条路径不尝试解析不存在的 HEAD Commit。Head equality 同时比较 symbolic 和 id，所以两条同 ID 分支依然是切换事件。
+
+[test_switch.cpp](../tests/unit/test_switch.cpp) 覆盖矩阵保留与拒绝、完整 Index 拓扑、模式／空文件／双向 D/F 转换、未知与忽略内容、原子 -c、unborn／detached／同名标签及损坏输入；[switch_cli.cmake](../tests/integration/switch_cli.cmake) 再核对真实进程和磁盘结果。相关定向检查、预算补充复验与切换实验的证据见进度页。

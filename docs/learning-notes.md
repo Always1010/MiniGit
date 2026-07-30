@@ -182,7 +182,7 @@ bash examples/experiments/reflog.sh ./build/debug/minigit
 
 [脚本](../examples/experiments/reflog.sh) 在临时仓库提交 A、B，从分支引用取得实际完整 ID，再核对 `reflog` 的最新事件为 A→B、较旧事件为缺失→A，同时用 cmp 比较 HEAD 与 main 的 MGRL 字节。两个预设的实验和 reflog 子项验收已通过；详细证据见 [进度](progress.md)。提交 ID 由实际内容和业务元数据决定，实验不硬编码摘要或开发日期。
 
-在另一份临时仓库执行相同两次提交，再分别运行 `minigit log --oneline`、`minigit reflog`、`minigit reflog main`。log 根据 parent 读到 B、A；reflog 根据保存的事件逆序展示 A→B、缺失→A。为两个输出画两张图：前者的边连接 Commit，后者的边描述引用位置变化。未来 reset 和 switch 接入后，事件还可能出现 B→A 或 A→A，而已有 Commit 的 parent 不会随之改变。
+在另一份临时仓库执行相同两次提交，再分别运行 `minigit log --oneline`、`minigit reflog`、`minigit reflog main`。log 根据 parent 读到 B、A；reflog 根据保存的事件逆序展示 A→B、缺失→A。为两个输出画两张图：前者的边连接 Commit，后者的边描述引用位置变化。switch 已能产生 B→A 或 A→A 事件，未来 reset 也会复用它，而已有 Commit 的 parent 不会随之改变。
 
 C++ 学习练习是比较这两个类型：`CommitGraph` 用 map 去重并服务拓扑排序，`Reflog` 用 vector 保留发生顺序。若把事件存入 set 去重，同一位置的重复访问可能丢失；若把事件边塞进提交图，合法回退又可能被误判为 DAG 环。容器选择应来自数据含义，而不是只考虑哪个接口更方便。
 
@@ -210,8 +210,24 @@ C++ 学习练习：在 `delete_branch` 中找到 `graph.contains`，画出它前
 
 再把目标改成一个名为 dir 的文件。此时不检查目录内容就先 remove dir/a，再写 dir，会失败并留下部分删除；递归删除目录则可能丢掉 private。正确步骤是在任何工作区发布前证明所有旧文件已授权、所有删除均被明确请求，并将 dir、子项与新文件形成一个可恢复的完整计划。未知空目录也有用户意义，不能因为没有文件内容就自动移除。一个例外来自明确的位置授权：旧 tracked 文件路径本身变成空目录时，显式目标可以移除该空节点；它的陌生空子目录并未因此获得授权，仍会阻止操作。
 
-再画四列：HEAD=A、Index=B、work=C、target=D。目标表示这次选择，owned_paths 表示覆盖授权，before 则必须捕获 C。授权不是一份备份，也不证明 C 没有未提交修改；上层命令负责选择策略。若 Prepared 中断，恢复的是 C；若日志已 Committed，恢复的是 D。后续 switch 的真实实验将同时观察四列变化。
+再画四列：HEAD=A、Index=B、work=C、target=D。目标表示这次选择，owned_paths 表示覆盖授权，before 则必须捕获 C。授权不是一份备份，也不证明 C 没有未提交修改；上层命令负责选择策略。若 Prepared 中断，恢复的是 C；若日志已 Committed，恢复的是 D。下文 switch 的真实实验同时观察这些边界。
 
 C++ 练习从 WorktreeTarget 的两个 optional 开始：file=nullopt 表示移除普通文件；如果同一计划还要创建其子路径，该位置随后成为必要父目录。FileState 指向空 Blob 是零字节文件；permissions=nullopt 采用模式对应的默认值，显式完整权限必须与执行位一致。分别写出这几个构造，观察为什么不能用一个空 string 或全零 ID 混淆“没有文件”和“空文件”。单元测试直接调用核心 API，之后再由业务 CLI 测试组合它们。
 
 深路径还展示一种资源反例：输入各自满足 4096 字节／128 分量，几百条路径本身只有约 1 MiB，所有父前缀累加却可能超过 64 MiB。规划器因此分别限制输入集合与中间 desired／actual 的展开名称，每次新键插入前检查；只限制最终 WorkChange 数量，不能阻止中途先分配巨大的 map。资源预算测试可以在没有创建这些目录的临时仓库里直接验证拒绝边界。
+
+## 切换实验：保留修改与拒绝覆盖分别发生在哪里
+
+运行 [切换实验](../examples/experiments/switch.sh)：
+
+```sh
+bash examples/experiments/switch.sh ./build/debug/minigit
+```
+
+实验先让 main 保存 A，在新 topic 上提交 B，再切回 main；普通文件与 `show :note` 都应读到 A。然后分别暂存 staged、编辑为 working，尝试切到 topic：目标变化会覆盖本地版本，整操作拒绝，Index 与工作文件保留原值。接着 `switch -c carried` 从同一快照创建分支，A==D，因此 staged／working 都保留；这说明“有本地修改”本身不是统一拒绝条件。
+
+将 note 清理回 A 并 add 后再切 topic，文件变成 B；随后 `--detach` 选择首提交，HEAD 变成完整 ID，文件回 A。最后回 topic 并读 reflog，观察快照与符号绑定的不同变化。脚本配置显式身份、使用临时仓库并自动清理，不调用系统 Git；两种预设实验均通过。
+
+C++ 练习：给单文件填四列 A/B/C/D，逐条应用架构页矩阵。尤其检查 A=a、B=d、C=c、D=d 时为何保留 C；A=a、B=a、C=d、D=d 时为何拒绝——工作文件碰巧等于目标，也不能掩盖相对 Index 的未暂存修改。再加一个 staged 的 dir/child 和目标文件 dir，解释为何局部矩阵之后仍须验证完整 Index。
+
+未出生场景另见单元和 CLI 测试：`switch -c new` 保留已暂存文件，HEAD 指向不存在的 ref，事件为 null→null；直到首提交才建立 ref。区分“分支绑定变化”和“新 Commit 诞生”，避免用空树虚构首提交。

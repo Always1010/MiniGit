@@ -66,7 +66,7 @@ MiniGit 先剥离相同前后缀，将精确相等的行映射成相同整数，
 
 分支是可移动的提交引用；轻量标签通常保持指向选定对象。HEAD 可符号指向分支，也可直接指向提交，后者称为分离 HEAD。提交通过 parent 构成有向无环历史，分支名不存入 commit 内容，见 [Git References](https://git-scm.com/book/en/v2/Git-Internals-Git-References)。
 
-MiniGit 首次提交没有 parent，后续提交记录提交前的 HEAD。父关系让相同文件快照处于不同历史位置时仍有不同身份。分支引用保存一个 ID，移动分支只需更新很小的引用文件；树与 Blob 可以继续复用。当前 `create_commit` 已支持更新符号分支或分离 HEAD；branch 列表、创建及删除已通过子项验收，工作区切换仍待后续子项。
+MiniGit 首次提交没有 parent，后续提交记录提交前的 HEAD。父关系让相同文件快照处于不同历史位置时仍有不同身份。分支引用保存一个 ID，移动分支只需更新很小的引用文件；树与 Blob 可以继续复用。当前 `create_commit` 已支持更新符号分支或分离 HEAD；branch 列表、创建及删除已通过子项验收，switch 已接入工作区切换，验证状态见进度页。
 
 MiniGit 的 log 已遍历完整 parent 图，不能只沿第一父链。一份合并历史若 D 的父为 B、C，而 B、C 的父都为 A，需输出 D、B/C、A，且 A 只出现一次。具体 B/C 顺序采用对象 ID 排序，但 A 必须在 B 和 C 之后，这就是拓扑约束。作者时间由用户及运行环境决定，不能代替父关系。
 
@@ -88,7 +88,7 @@ MiniGit 的 `branch topic` 把当前提交 ID 写入 refs/heads/topic，同时�
 
 MiniGit 已接入自己的 MGRL 引用日志，验证状态见 [进度](progress.md)。连续提交 A、B 时，Commit B 的 parent 为 A，而初始分支日志记录“缺失→A”和“A→B”。前者回答 B 从哪里发展，后者回答本地引用经历了什么动作。未来 reset 将引用从 B 移回 A 时，无需改写 B 的 parent，也不会创建一个“反向 parent”；它会留下新的 B→A 事件。
 
-核心移动规划还能区分两条都指向 A 的分支。HEAD 从一条分支切到另一条，提交 ID 没变，符号绑定已变，所以 HEAD 日志可以记录 A→A。这样的自环是有效事件，却不能作为提交 DAG 的父边。branch 管理已通过子项验收，switch/reset 命令仍待后续交付，当前 commit 已实际记录事件。
+核心移动规划还能区分两条都指向 A 的分支。HEAD 从一条分支切到另一条，提交 ID 没变，符号绑定已变，所以 HEAD 日志可以记录 A→A。这样的自环是有效事件，却不能作为提交 DAG 的父边。branch 管理已通过子项验收，switch 与 commit 已实际记录事件，reset 仍待后续交付。
 
 ```mermaid
 flowchart LR
@@ -131,7 +131,15 @@ MiniGit 将当前分支引用、HEAD 日志和分支日志放入同一短事务�
 
 设 HEAD=A、Index=B、实际工作区=C，本次请求目标为 D。业务命令先决定 C 是否可以覆盖；获得授权后，规划器把 C 捕获为 before、D 作为 after。此时 Prepared 恢复必须回到 C，不能拿 A 或 B 代替“操作前实际文件”。这是短事务 rollback；未来 restore、reset 选择历史版本作为业务目标，又是另外一层语义。`minigit recover` 不让用户选择某个提交，它按已有事务状态完成恢复。
 
-部分更新也不能把未列出的路径当成删除。只要求改写 dir/a 时，dir/b 可以是未跟踪文件，已有 dir 目录无需加入计划。若目标改成一个名为 dir 的文件，就必须检查整个 dir，证明每个旧文件已授权且明确删除；未知内容和陌生空子目录会阻止转换。若原已授权文件位置本身变为空目录，可以按显式目标移除这个空节点；不能由父位置授权推导出子项也可删除。所有这些检查已由共享规划器实现；switch、restore 等 CLI 随后接入，验证证据见进度页。
+部分更新也不能把未列出的路径当成删除。只要求改写 dir/a 时，dir/b 可以是未跟踪文件，已有 dir 目录无需加入计划。若目标改成一个名为 dir 的文件，就必须检查整个 dir，证明每个旧文件已授权且明确删除；未知内容和陌生空子目录会阻止转换。若原已授权文件位置本身变为空目录，可以按显式目标移除这个空节点；不能由父位置授权推导出子项也可删除。所有这些检查已由共享规划器实现；switch 已接入，restore 等 CLI 随后接入，验证证据见进度页。
+
+## Switch 不要求切换后所有文件都等于目标
+
+分支名决定下次 commit 更新哪个 ref，提交快照决定目标 D。branch 只添加引用；switch 还协调 Index 与工作区，但会保留兼容的本地修改。设一个文件在旧 HEAD 和目标中都为 a，Index=b、work=c：目标没有要求改变它，b/c 可以保留。若旧 HEAD=a、Index=b、目标=d 且 b 不等于 d，即使 work=b，也拒绝覆盖已暂存 b。完整判断矩阵见架构页。
+
+所以成功切换不证明工作区干净，切换也不是把所有路径强行替换为历史版本。文件模式参与比较；局部规则通过后，最终 Index 还须满足文件与目录不能占据同一前缀的约束。Prepared 的恢复仍回真实 work，而不是回旧 HEAD。
+
+符号 HEAD 可以指向尚不存在的 refs/heads/new，表示首提交将建立哪条分支。未出生 switch -c 只改变这个绑定，null→null 日志仍有有效事件；它没有造出空 Commit。Detached HEAD 则直接保存 Commit ID，后续 commit 移动 HEAD 本身。MiniGit 明确使用自己的保护矩阵与简化选项，未实现 Git 的全部 checkout/switch 行为。
 
 ## MiniGit 如何处理更新中断
 
