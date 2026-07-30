@@ -379,3 +379,56 @@ TEST_CASE("Transaction preserves semantic roots and safely prunes deleted refere
         REQUIRE(read_file(fixture.repo.metadata() / "index") == old_index);
     }
 }
+TEST_CASE("Transaction pure budget validates combined counts payloads paths and journal without repository IO", "[transaction]") {
+    TransactionPlan plan;
+    SECTION("budget accepts unsaved hashes and unvalidated schemas without repository access") {
+        plan.work.push_back({"../not-a-repository-path", {NodeKind::File, ObjectId{}, 0644}, {}});
+        plan.metadata.push_back({"unknown-metadata", to_bytes("not a metadata schema"), Bytes{}});
+        REQUIRE_NOTHROW(validate_transaction_budget(plan));
+        REQUIRE(plan.work.front().before.blob == ObjectId{});
+        REQUIRE(plan.metadata.front().after->empty());
+    }
+    SECTION("work and metadata count together and guard subtraction") {
+        plan.work.resize(100000);
+        REQUIRE_NOTHROW(validate_transaction_budget(plan));
+        plan.metadata.push_back({"", std::nullopt, std::nullopt});
+        REQUIRE_THROWS_AS(validate_transaction_budget(plan), Error);
+        plan.metadata.clear();
+        plan.work.resize(100001);
+        REQUIRE_THROWS_AS(validate_transaction_budget(plan), Error);
+    }
+    SECTION("before and after metadata payloads share the byte budget") {
+        plan.metadata.push_back({"index", std::nullopt, std::nullopt});
+        auto& change = plan.metadata.front();
+        change.before.emplace(max_file_size / 2, 0);
+        change.after.emplace(max_file_size / 2 + 1, 0);
+        REQUIRE_THROWS_AS(validate_transaction_budget(plan), Error);
+        REQUIRE(change.after->size() == max_file_size / 2 + 1);
+        change.after->pop_back();
+        REQUIRE_NOTHROW(validate_transaction_budget(plan));
+    }
+    SECTION("journal overhead and optional empty payloads count even below the path byte cap") {
+        plan.work.push_back({"", {NodeKind::File, ObjectId{}, 0644}, {NodeKind::File, ObjectId{}, 0644}});
+        auto& path = plan.work.front().path;
+        // A single deliberately invalid schema keeps the size boundary test
+        // small in entry count, with no duplicate encoded buffer or IO.
+        path.reserve(max_file_size + 1);
+        path.assign(max_file_size - 129, 'p'); // 49 header + 4 + 2*(6+32).
+        REQUIRE_NOTHROW(validate_transaction_budget(plan));
+        plan.metadata.push_back({"", Bytes{}, std::nullopt});
+        try {
+            validate_transaction_budget(plan);
+            FAIL("a present empty metadata payload still adds a journal Blob ID");
+        } catch (const Error& error) {
+            REQUIRE(std::string(error.what()).find("journal") != std::string::npos);
+        }
+        path.resize(max_file_size);
+        plan.metadata.front().path = "x";
+        try {
+            validate_transaction_budget(plan);
+            FAIL("work and metadata paths must share one byte budget");
+        } catch (const Error& error) {
+            REQUIRE(std::string(error.what()).find("事务数据超过") != std::string::npos);
+        }
+    }
+}

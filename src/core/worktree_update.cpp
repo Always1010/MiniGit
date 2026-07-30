@@ -170,11 +170,18 @@ void plan_worktree_update(const Repository& repo, TransactionPlan& plan,
         if (changed.size() > max_changes) throw Error("工作区更新改动超过限制");
     }
     auto next = plan;
+    // The journal limit covers both kinds of changes. Check before capturing
+    // immutable backups, as metadata may already have been added by the caller.
+    if (next.metadata.size() > max_changes || changed.size() > max_changes - next.metadata.size())
+        throw Error("工作区与元数据更新总数超过事务限制");
     next.work.reserve(changed.size());
-    for (const auto& path : changed) {
-        auto before = capture_work_node(repo, path);
-        if (before != actual.at(path)) throw Error("工作区更新捕获时节点已变化: " + path);
-        next.work.push_back({path, std::move(before), desired.at(path)});
+    for (const auto& path : changed)
+        next.work.push_back({path, actual.at(path), desired.at(path)});
+    validate_transaction_budget(next);
+    for (auto& change : next.work) {
+        auto before = capture_work_node(repo, change.path);
+        if (before != change.before) throw Error("工作区更新捕获时节点已变化: " + change.path);
+        change.before = std::move(before);
     }
     plan = std::move(next);
 }

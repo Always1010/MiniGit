@@ -226,6 +226,27 @@ TEST_CASE("WorktreeUpdate rejects invalid schemas unsafe types budgets and confl
         update_same_plan(plan, occupied);
         plan.work.clear();
     }
+    SECTION("total work and metadata budget is rejected before writing backup blobs") {
+        auto crowded = plan;
+        crowded.metadata.resize(100000, plan.metadata.front());
+        const auto crowded_before = crowded;
+        try {
+            plan_worktree_update(repo, crowded, {{"file", valid}}, {"file"});
+            FAIL("combined journal change budget must reject the plan");
+        } catch (const Error& error) {
+            REQUIRE(std::string(error.what()).find("总数超过事务限制") != std::string::npos);
+        }
+        update_same_plan(crowded, crowded_before);
+        REQUIRE(update_object_count(repo) == count);
+    }
+    SECTION("combined metadata image bytes are rejected before writing backup blobs") {
+        TransactionPlan oversized;
+        oversized.metadata.push_back({"index", Bytes(max_file_size / 2, 'a'), Bytes(max_file_size / 2 + 1, 'b')});
+        const auto oversized_before = oversized;
+        REQUIRE_THROWS_AS(plan_worktree_update(repo, oversized, {{"file", valid}}, {"file"}), Error);
+        update_same_plan(oversized, oversized_before);
+        REQUIRE(update_object_count(repo) == count);
+    }
     update_same_plan(plan, saved);
     REQUIRE(update_object_count(repo) == count);
     REQUIRE(to_string(read_file(repo.root() / "file")) == "before");

@@ -16,6 +16,8 @@ using WorktreeTargets = std::map<std::string, WorktreeTarget>;
 // Targets and owned paths each allow 200000 paths / 64 MiB of path bytes. The
 // expanded desired-node map and actual-node cache each obey those same limits,
 // incrementally before inserting or inspecting a new path.
+// Work and preplanned metadata together obey all transaction size budgets;
+// checked before capturing any new worktree backup objects.
 // Existing unchanged parent directories are omitted; leaf deletion keeps empty
 // parent directories. Planning may write immutable backup blobs, never metadata
 // or worktree files, and exceptions leave the supplied plan unchanged.
