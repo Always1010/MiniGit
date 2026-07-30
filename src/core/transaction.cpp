@@ -138,7 +138,7 @@ void validate_metadata_bytes(const Repository& repo, const MetadataChange& chang
     keep(ObjectId::from_hex(std::string_view(text).substr(0, 64)), ObjectType::Commit);
 }
 void validate_plan(const Repository& repo, const TransactionPlan& plan) {
-    if (plan.work.size() > max_changes || plan.metadata.size() > max_changes - plan.work.size()) throw Error("事务改动超过限制");
+    validate_transaction_budget(plan);
     const auto ordered = [](const auto& a, const auto& b) { return a.path < b.path; };
     if (!std::is_sorted(plan.work.begin(), plan.work.end(), ordered) || !std::is_sorted(plan.metadata.begin(), plan.metadata.end(), ordered))
         throw Error("事务 journal 路径顺序非法");
@@ -507,6 +507,39 @@ void apply(const Repository& repo, const Journal& journal, bool after, Steps& st
         if (!bytes) { prune_metadata_parent(repo, change.path, steps); sync_parents(repo.metadata(), change.path); }
     }
 }
+}
+void validate_transaction_budget(const TransactionPlan& plan) {
+    if (plan.work.size() > max_changes || plan.metadata.size() > max_changes - plan.work.size())
+        throw Error("事务改动超过限制");
+    std::size_t path_bytes = 0, metadata_bytes = 0;
+    for (const auto& change : plan.work) add_budget(path_bytes, change.path.size());
+    for (const auto& change : plan.metadata) {
+        add_budget(path_bytes, change.path.size());
+        for (const auto* bytes : {&change.before, &change.after})
+            if (*bytes) add_budget(metadata_bytes, (**bytes).size());
+    }
+    // MGTR v1: magic/version/state/counts plus the final SHA-256 checksum.
+    std::size_t journal_bytes = 49;
+    auto add_journal = [&](std::size_t count) {
+        if (count > max_file_size - journal_bytes) throw Error("事务 journal 超过 64 MiB 限制");
+        journal_bytes += count;
+    };
+    for (const auto& change : plan.work) {
+        add_journal(4); // Path length.
+        add_journal(change.path.size());
+        for (const auto* image : {&change.before, &change.after}) {
+            add_journal(6); // Kind, permissions, and optional Blob presence.
+            if (image->blob) add_journal(32);
+        }
+    }
+    for (const auto& change : plan.metadata) {
+        add_journal(4);
+        add_journal(change.path.size());
+        for (const auto* bytes : {&change.before, &change.after}) {
+            add_journal(1); // The payload is stored separately as a Blob.
+            if (*bytes) add_journal(32);
+        }
+    }
 }
 NodeImage capture_work_node(const Repository& repo, std::string_view path) {
     require_no_transaction(repo);

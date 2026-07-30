@@ -29,6 +29,10 @@ struct TransactionPlan {
     std::vector<WorkChange> work;
     std::vector<MetadataChange> metadata;
 };
+// Pure size checks: 100000 combined changes, 64 MiB combined path bytes,
+// metadata before/after bytes, and encoded MGTR journal. Does not validate
+// schemas or read filesystem/object data; before Blob IDs may be unsaved hashes.
+void validate_transaction_budget(const TransactionPlan& plan);
 // Test-only injection by API callers. Steps start at one; production callers omit.
 using TransactionHook = std::function<void(std::size_t, std::string_view)>;
 // All operations require caller-held RepoLock. Capture saves the actual worktree
