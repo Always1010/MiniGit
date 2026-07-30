@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器核心实现已完成；Phase 2 尚未整体验收；继续逐项推进至 Phase 4。
+Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；Phase 2 尚未整体验收；继续逐项推进至 Phase 4。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 91 个单元及 12 个 CLI 用例，共 103 项 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 99 个单元及 13 个 CLI 用例，共 112 项 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
 | 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
 | Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
@@ -27,6 +27,7 @@ Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/
 | Phase 2 子项：reflog 与 commit 事务发布 | 已验收 | 两种预设各 22 项定向检查及各 1 项新增语义根复验通过；引用日志实验通过 |
 | Phase 2 子项：branch 列表、创建及删除 | 已验收 | 两种预设各 23 项定向检查通过，无编译警告及 ASan/UBSan 报告；分支实验通过 |
 | Phase 2 子项：共享工作区与 Index 更新规划器 | 已验收 | 两种预设构建无警告，Debug 16 项及受影响 1 项复验通过；完整验证证据见下文，无新增 CLI |
+| Phase 2 子项：switch 工作区切换 | 已验收 | 原定向每种预设 25 项、预算补充后 Debug 10 项及优化 sanitized 全量 112 项通过；切换实验通过 |
 | Phase 2 其余及 Phase 3 至 Phase 4 | 计划 | 尚未实现或验收 |
 
 已执行的 Debug 验证：
@@ -153,7 +154,7 @@ MGRL v1 编解码、纯移动规划与只读 reflog CLI 已接入。日志有 8 
 
 branch 核心接口、CLI 和 [分支实验](../examples/experiments/branches.sh) 已接入。列表按短名排序，标记当前符号分支并包含 unborn，detached 不标任何分支；相同 Commit 的 Snapshot 去重校验，短名总预算为 64 MiB。默认创建来源为 HEAD，未出生 HEAD 拒绝；创建／强制移动只改分支 ref 与日志，保持 HEAD、Index 和工作区。
 
-当前符号分支不能被覆盖或删除，非当前分支 same-ID 强制移动在目标验证后无操作。`-d` 用 HEAD 全 parent 闭包与拓扑校验判断 tip 可达；`-D` 跳过祖先要求，仍校验原 tip 快照、日志结构及 Commit 根。删除 ref 与分支日志同事务发布，HEAD 日志保留，空命名空间父链安全清理；不永久保留已删分支日志。公共纯规划接口为后续 switch -c 复用，switch 尚未实现。
+当前符号分支不能被覆盖或删除，非当前分支 same-ID 强制移动在目标验证后无操作。`-d` 用 HEAD 全 parent 闭包与拓扑校验判断 tip 可达；`-D` 跳过祖先要求，仍校验原 tip 快照、日志结构及 Commit 根。删除 ref 与分支日志同事务发布，HEAD 日志保留，空命名空间父链安全清理；不永久保留已删分支日志。branch 子项验收时 switch 尚未实现；公共纯规划接口已在后续 switch -c 中复用。
 
 验证证据：Debug 与 sanitized 配置、构建通过，GCC 无警告。`ctest --preset debug -R 'unit\.Branch|unit\.References|unit\.DAG|unit\.Reflog (HEAD|transaction recovery)|branches_cli|recovery_cli|reflog_cli|commits_cli|log_cli|cli_basics' --output-on-failure` 与对应 sanitized 命令各 23 项全部通过，无 ASan/UBSan 报告。branch 新增 7 个单元及 1 个 CLI，当前总注册 84 单元、12 CLI，共 96 项；该数量是注册规模，本轮执行的是上述定向检查。上一 reflog 子项的 77 单元、11 CLI 为当时证据。
 
@@ -165,11 +166,25 @@ caller-lock 核心接口已确定：WorktreeTargets 表达部分路径的可选 
 
 规划捕获实际 before 字节与权限，可能保存不可变备份 Blob，但不发布工作文件或元数据；异常原计划不变，逐文件释放内容。Targets 与 owned_paths 各 200000 路径／64 MiB，desired／actual 中间缓存也各限 200000 节点／64 MiB 展开名称并在新键插入前检查；路径 4096 字节／128 分量，工作改动最多 100000 项。Index 规划校验全部 stages 与 typed Blob，保存精确 before 字节，拒绝损坏或重复 Index 计划，精确字节相同才无操作。
 
-本项无新 CLI 或新增命令实验，后续 switch 目的再提供端到端命令实验。新增 7 个 WorktreeUpdate 单元测试组，当前总注册为 91 单元、12 CLI，共 103 项；此数量是注册规模，本轮执行的是定向检查。上一 branch 子项的 84 单元、12 CLI 为当时证据。
+本项无新 CLI 或新增命令实验；后续 switch 子项已提供端到端命令实验。新增 7 个 WorktreeUpdate 单元测试组，当前总注册为 91 单元、12 CLI，共 103 项；此数量是注册规模，本轮执行的是定向检查。上一 branch 子项的 84 单元、12 CLI 为当时证据。
 
 验证证据：Debug 与 sanitized 构建均通过，无编译警告。`ctest --preset debug -R 'unit\.WorktreeUpdate|unit\.Index|unit\.Invalid index|unit\.Transaction (captures|validates|preserves)|cli_basics|staging_cli|recovery_cli' --output-on-failure` 共 16 项全部通过；预算 fixture 构造优化后，受影响的 1 项再次通过。优化只将已排序的 200001 个 set 键改用 end hint 插入，保留超数量边界。展开路径预算另以 258 条合法深路径覆盖：输入 1056510 字节，推导名称 68128512 字节，验证拒绝原因、原计划及对象数不变。只读审查通过；六份文档 137 个相对链接、代码围栏及 `git diff --check` 通过。
 
 sanitized 对应筛选的 16 项均已通过：15 项在定向运行中通过，恢复 CLI 在隔离后续功能的检查增量后单独复验通过；Debug 恢复 CLI 同样复验通过。无 ASan/UBSan 报告。大预算用例 sanitized 用时约 311 秒，涉及 200001 条输入和超过 64 MiB 的展开名称，其他检查不重复执行该重型用例。
+
+### Switch 工作区切换：已验收
+
+switch 核心、CLI 与切换实验已接入。普通形式只选择短分支，--detach 才解析修订，-c 同事务创建并切换。未出生 -c 无显式来源仅移动符号 HEAD，不创建空 ref，保留 Index 和工作文件；同 Head 无操作仍检查完整 Index，不同 symbolic 同 ID 仍记录 HEAD 事件。
+
+逐路径使用旧 HEAD A、Index B、实际工作区 C、目标 D 的保护矩阵：A==D 或 B==D 保留 B/C，否则只有 B==A 且 C==B 才更新，其余整操作拒绝。先仅按 A/B/D 选择并校验完整最终 Index 的预算与 D/F 拓扑，再读取更新路径的 C；共享 planner 保护未知、忽略及陌生目录子项。Index、实际工作文件、可选新分支与日志、HEAD 与日志统一事务发布，不提供 force、丢弃修改或前一分支选择器。
+
+新增 8 个单元与 1 个 CLI 用例，当前总注册 99 单元、13 CLI，共 112 项；该数量是注册规模，原轮执行相关定向验证，最后的编译选项调整另执行 sanitized 全量回归。两种预设构建均无警告；预算补充前，Debug 与未优化 sanitized 各 25 项相关检查验证通过：首轮 24 项通过，未出生测试基线漏掉永久 write.lock，修正为先取锁再捕获基线后，受影响 1 项分别复验通过。生产代码未因该修正变化，无 ASan/UBSan 报告。定向筛选为 `-R 'unit\.Switch|unit\.WorktreeUpdate (plans|supports|preserves|requires|index|transaction)|unit\.Reflog HEAD|unit\.Branch create|switch_cli|branches_cli|commits_cli|recovery_cli|status_cli|diff_cli|show_cli|cli_basics' --output-on-failure`，分别使用 debug 与 sanitized 预设。
+
+`bash examples/experiments/switch.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，覆盖干净快照切换、重叠修改拒绝、兼容修改保留、-c、detached HEAD 与 reflog。未出生、同名标签、模式／空文件、双向 D/F 转换、冲突和损坏输入、pending guard 另由单元与 CLI 覆盖。最终组合 Index 增补与原输入相同的 100000 项／64 MiB 路径及条目预算；两遍矩阵先校验组合结果，再读取 C，最后规划和捕获备份。回归用空 A、100000 个同 Blob 的 staged 条目 B 与一个新文件 D 产生 100001 项，并在新文件位置放 FIFO；校验错误来自预算，证明尚未读取 C，元数据、FIFO 和无 journal 状态保持。补充后两种预设构建无警告，只读审查通过；`ctest --preset debug -R '^unit\.Switch|^switch_cli$|^recovery_cli$' --output-on-failure` 的受影响 10 项全部通过。六份文档 147 个相对链接、代码围栏、切换脚本 `bash -n` 与 `git diff --check` 通过。
+
+预算补充后未优化 sanitized 的 10 项轮次中途取消，不计通过。随后独立构建改进将 sanitized 调试参数改为 `-g -O1`，保留 ASan／UBSan、帧指针及已验证的非 PIE 配置；影响全部编译单元，故执行 `ctest --preset sanitized --output-on-failure` 全量安全回归：112 项全部通过，用时 298.68 秒，无 ASan/UBSan 报告。39 个实际编译单元的优化、调试及 sanitizer 参数和 libasan／libubsan 链接均核对；策略依据与复用命令见 [构建与验证策略](testing.md)。
+
+真实 100001 条目组合预算回归用时 107.29 秒，WorktreeUpdate 大预算 33.21 秒（未优化曾为 311.16 秒），纯 Reflog 100000 项用例 21.23 秒（未优化曾为 191.66 秒）；边界 fixture 和检查均保留。新优化构建的 switch.sh 再次通过，Debug 实验沿用此前通过结果。全量运行用于验证编译参数的共同影响，不代表 Phase 2 整体验收：restore、reset、rm、mv 仍未交付。
 
 ## Phase 3：可恢复的合并与应用
 
@@ -185,4 +200,4 @@ sanitized 对应筛选的 16 项均已通过：15 项在定向运行中通过，
 
 ## 下一步
 
-Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，下一步逐项实现 switch 及恢复命令，持续推进至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，下一步逐项实现 restore 等恢复命令，持续推进至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。

@@ -26,6 +26,7 @@ add_library(minigit_core
     src/core/transaction.cpp
     src/core/reflog.cpp
     src/core/branches.cpp
+    src/core/switch.cpp
     src/core/index.cpp
     src/core/worktree.cpp
     src/core/worktree_update.cpp
@@ -59,6 +60,7 @@ if(BUILD_TESTING)
         tests/unit/test_transaction.cpp
         tests/unit/test_reflog.cpp
         tests/unit/test_branches.cpp
+        tests/unit/test_switch.cpp
         tests/unit/test_repository.cpp
         tests/unit/test_staging.cpp
         tests/unit/test_worktree_update.cpp
@@ -98,4 +100,6 @@ if(BUILD_TESTING)
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/reflog_cli.cmake)
     add_test(NAME branches_cli COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/branches_cli.cmake)
+    add_test(NAME switch_cli COMMAND ${CMAKE_COMMAND}
+        -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/switch_cli.cmake)
 endif()

@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器核心实现已完成，工作区切换及后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收，restore 等后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -11,6 +11,10 @@ flowchart TD
     CLI[CLI 参数与输出] --> Commands[Commands 命令协调]
     Commands --> Repo[Repository 仓库发现与初始化上下文]
     Commands --> Worktree[Worktree 路径检查与文件读写]
+    Commands --> Switch[Switch 四状态覆盖策略]
+    Switch --> WorktreeUpdate
+    Switch --> Branches
+    Switch --> Reflog
     Commands --> WorktreeUpdate[WorktreeUpdate 目标与授权规划]
     WorktreeUpdate --> Worktree
     WorktreeUpdate --> Snapshot
@@ -197,7 +201,7 @@ flowchart TD
     K --> R
 ```
 
-当前符号 HEAD 下的 commit 改变分支 ref，并规划 `logs/HEAD` 与 `logs/refs/heads/<分支>`；HEAD 的符号文本本身保持同一分支。分离 HEAD 下的 commit 规划 HEAD 文件和 `logs/HEAD`。规划器还能处理未来分支切换：不同分支即使指向同一个 ID，符号名称的变化也生成 HEAD 事件；目标分支没有移动时无需改写其分支日志。相同 Head 状态则不产生移动事件。目前没有 switch CLI。
+当前符号 HEAD 下的 commit 改变分支 ref，并规划 `logs/HEAD` 与 `logs/refs/heads/<分支>`；HEAD 的符号文本本身保持同一分支。分离 HEAD 下的 commit 规划 HEAD 文件和 `logs/HEAD`。switch 复用规划器处理分支切换：不同分支即使指向同一个 ID，符号名称的变化也生成 HEAD 事件；目标分支没有移动时无需改写其分支日志。相同 Head 状态则不产生移动事件。
 
 `plan_append_reflog` 与 `plan_move_head` 只准备内存中的 MetadataChange，不写文件；已有日志尾项的 new 必须与追加事件的 old 连续。实现先复制计划，在副本中完成检查与编码，再移动赋回，因此异常不会留下半个日志规划。执行器将日志 before/after 存为备份 Blob，与引用一起恢复；recover 不再次调用 append，避免一次中断增加两次事件。
 
@@ -207,7 +211,7 @@ flowchart TD
 
 [branches.hpp](../include/minigit/branches.hpp) 提供 `BranchInfo`、名称转换、列表、纯创建规划和创建／删除业务入口。`BranchInfo::id` 为空表示当前未出生分支，不意味着对应文件损坏；分离 HEAD 不属于任何当前分支。列表使用名称排序，按唯一 Commit ID 校验完整 Snapshot，避免多条分支指向同一提交时重复展开；短名总字节预算为 64 MiB。
 
-`branch_ref` 只接收短名，拒绝 HEAD、refs/ 前缀和纯 64 位十六进制 ID，随后校验完整 refs/heads 名称与日志路径的 4096 字节／128 分量边界。`list_branches/create_branch/delete_branch` 各自取得 RepoLock 并检查待恢复事务；`plan_create_branch` 要求调用者已持锁，以供未来 switch -c 将“创建引用”和“切换工作区”合在一个计划里。目前没有 switch 命令。
+`branch_ref` 只接收短名，拒绝 HEAD、refs/ 前缀和纯 64 位十六进制 ID，随后校验完整 refs/heads 名称与日志路径的 4096 字节／128 分量边界。`list_branches/create_branch/delete_branch` 各自取得 RepoLock 并检查待恢复事务；`plan_create_branch` 要求调用者已持锁，供 switch -c 将“创建引用”和“切换工作区”合在一个计划里。
 
 ```mermaid
 flowchart TD
@@ -228,6 +232,37 @@ flowchart TD
 安全删除的定义是“分支 tip 在当前 HEAD 的 parent 闭包中”，包含 HEAD 本身及所有父边，不以名称、时间或相同文件内容推断。先用 DAG 的拓扑校验拒绝损坏闭包与环，再检查包含关系。`-D` 跳过祖先判断，仍要求待删 ref 的完整快照及原日志结构、Commit 根有效；强制参数不绕过持久化协议。
 
 删除将 ref 和该分支日志的 after 都设为缺失，在同一事务中发布；HEAD 日志不删除。只清理相关命名空间中的空父目录，保留 refs/heads 与 logs/refs/heads，并支持删除 topic/sub 后创建 topic。事务备份可用于未完成删除的回滚，完成删除后不会永久留一份分支日志。对象回收仍是后续阶段的独立职责。
+
+## Switch：先证明可覆盖，再统一发布
+
+[switch.hpp](../include/minigit/switch.hpp) 的 SwitchOptions 提供 new_branch、detach 与 target，`switch_worktree` 自行取得一次 RepoLock。普通目标经 branch_ref 选择短分支；detach 或新分支来源经 resolve_commit 解析。旧 HEAD 与目标的完整快照、完整 Index 编码和所有 Blob 均先校验，未解决 stages 拒绝。
+
+令 A 为旧 HEAD、B 为 stage 0 Index、C 为实际工作文件、D 为目标。单路径状态包含模式和 Blob ID，缺失与空文件不同；按下表顺序判断：
+
+| 条件 | 该路径的 Index 与 Work |
+| --- | --- |
+| A == D | 保留 B、C |
+| 否则 B == D | 保留 B、C |
+| 否则 B == A 且 C == B | 更新到 D |
+| 其余 | 整个操作拒绝 |
+
+实现分两遍判断：第一遍只看 A/B/D，确定保留或更新路径，并拒绝不兼容的 staged 状态；先校验完整最终 Index 的预算与 D/F 拓扑，才为更新路径读取 C 并要求 C==B。前两种保留情况不读取 C，因此不扫描无关文件，也不因未变化路径上的软链而失败；需要改写的软链和特殊节点拒绝。路径并集为 A∪B∪D，精确 owned 为 A∪B。全局校验防止保留的 staged 子文件与新目标父文件冲突；实际目录中的未知子项由共享 planner 继续检查。
+
+```mermaid
+flowchart TD
+    S[旧 HEAD A / Index B / 目标 D] --> M[第一遍 A/B/D: 保留或选更新路径]
+    M --> V[完整最终 Index 预算与 D/F 校验]
+    V --> C[第二遍: 只读更新路径 C 并要求 C==B]
+    C --> N[可选 plan_create_branch]
+    N --> H[plan_move_head: HEAD 与日志]
+    H --> P[plan_index_update / plan_worktree_update]
+    P --> T[统一 execute_transaction]
+    T --> R[Prepared 回实际 before / Committed 到 after]
+```
+
+业务入口不在持锁期间调用 self-lock create_branch，而组合 caller-lock 规划函数。普通 switch 不移动目标分支 tip；-c 才创建 ref 与分支日志。未出生且 -c 没有显式来源时，仅改变符号 HEAD 并记录 null→null 事件，不创建空 ref，保留已暂存和实际文件。Head 同值无操作仍先校验 Index；symbolic 不同但 ID 相同则仍记录切换。
+
+工作区路径并集最多 200000 项／64 MiB 名称；原始与最终组合 Index 快照均限 100000 项／64 MiB 路径及条目数据，后续规划与事务继续遵循各自预算。完整权限用实际 before 备份，新写文件采用模式默认权限。核心与 CLI 已通过子项验收，验证证据见进度页；无强制丢弃修改、前一分支或远端追踪选择，不承诺原生 Git 全部 switch 策略兼容。
 
 ## WorktreeUpdate：把授权目标变为真实节点计划
 
@@ -265,7 +300,7 @@ flowchart TD
 
 展开预算覆盖推导父目录与递归清单，roots 从受限 desired 复制；输入合法不意味着所有展开结果都能保留。该预算限制名称和节点数量，不将文件内容累计为总文件大小上限。
 
-本子项核心实现已完成，验证入口是核心单元测试，构建与验证证据见进度页；后续 switch 会提供真实 CLI 学习实验。共享规划机制已实现，不代表各业务命令的覆盖策略已经交付。
+本子项核心实现已完成，验证入口是核心单元测试，构建与验证证据见进度页；switch 已提供真实 CLI 学习实验。共享规划机制已实现，不代表各业务命令的覆盖策略已经交付。
 
 ## 工作区短事务与恢复
 

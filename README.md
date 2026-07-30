@@ -2,11 +2,13 @@
 
 MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
 
-Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，已形成差异引擎、diff/show 内容来源协调和短事务恢复机制；reflog 与 commit 的事务发布也已通过子项验收；branch 列表、创建及删除已通过子项验收；共享工作区与 Index 更新规划器核心实现已完成。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
+Phase 0 构建与 CLI 基础已完成，当前版本为 `0.1.0`。Phase 1 的本地快照闭环已验收，Debug 与 sanitized 各 54 项检查全部通过；Phase 2 正在逐项推进，已形成差异引擎、diff/show 内容来源协调和短事务恢复机制；reflog 与 commit 的事务发布也已通过子项验收；branch 列表、创建及删除已通过子项验收；共享工作区与 Index 更新规划器已验收；switch 工作区切换已通过子项验收。详细范围与后续分支、工作区更新、合并及历史重写验收见 [进度](docs/progress.md)。
 
 ## 构建与运行
 
 需要 CMake 3.20 或更高版本、支持 C++20 的编译器、OpenSSL 3、zlib 和 Catch2 v3。CLI 集成检查通过 CMake 脚本注册到 CTest，核心单元测试使用 Catch2。预设负责配置项目，依赖由环境提供，不在构建过程中隐式安装系统软件。
+
+普通 Debug 保留未优化调试构建；sanitized 使用 `-g -O1` 并保留 ASan／UBSan 与帧指针。定向检查和全量回归的选择见 [构建与验证策略](docs/testing.md)。
 
 ```sh
 cmake --preset debug
@@ -41,6 +43,8 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `tag`、`tag [-f] name [revision]`、`tag -d name` | 列出、创建／强制移动或删除指向 Commit 的轻量标签 |
 | `branch`、`branch [-f] [--] name [revision]` | 列出分支，或从修订创建／强制移动分支，默认来源 HEAD |
 | `branch -d [--] name`、`branch -D [--] name` | 安全删除／强制删除非当前分支及其分支日志 |
+| `switch [--] branch` | 切换已有短分支，保留兼容的暂存与工作区修改 |
+| `switch -c name [source]`、`switch --detach [revision]` | 创建并切换，或进入分离 HEAD；来源默认 HEAD |
 
 对象 ID 必须为完整 64 位十六进制文本，尚不支持缩写。不带 `-w` 的摘要计算可以在仓库外执行；写入和读取需要当前目录或祖先存在有效 `.minigit` 仓库。当前文件读取上限为 64 MiB，软链接和非普通文件被拒绝。
 
@@ -51,6 +55,12 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 `branch` 按名称列出短名与完整提交 ID，当前符号分支标 `*`，未出生分支显示 `(unborn)`；分离 HEAD 时没有分支被标为当前。创建默认从 HEAD 取目标，未出生 HEAD 不能提供默认目标。创建或强制移动只更新分支引用和它的 reflog，不切换 HEAD，也不改 Index 或工作文件。分支短名禁止 HEAD、refs/ 前缀和纯 64 位十六进制 ID，并遵循严格引用名称规则；可用 `branch -- -topic` 传入选项样式名称。
 
 已有分支默认拒绝覆盖，`-f` 明确移动；`-f` 只用于创建／移动，不与 `-d`、`-D` 组合，强制删除使用 `-D`。当前符号分支始终拒绝覆盖或删除，即使目标 ID 相同。非当前分支强制移动到原 ID 时，验证目标后不追加日志。`-d` 要求该分支提交位于当前 HEAD 的完整 parent 闭包内；多父图会完整校验，不能只查第一父链。`-D` 跳过这项可达性要求，仍校验原分支快照、日志格式与日志引用的 Commit。删除同时移除分支 ref 与分支日志，HEAD 日志保留；尚无永久保存已删分支日志的功能。
+
+`switch` 普通形式只选择已有短分支，同名标签不会造成歧义；`--detach` 才解析修订，标签与分支同名时需给完整引用。`-c` 创建新分支并切换，分支引用与日志、HEAD 与日志、Index 和实际文件在同一事务中发布。不同分支即使指向同一提交，也记录 HEAD 切换事件。可用 `switch -- -topic` 选择选项样式名称。
+
+切换逐路径比较旧 HEAD、Index、实际工作区与目标。旧 HEAD 或 Index 已等于目标时保留该路径的暂存及工作文件；其他路径只有 Index 等于旧 HEAD 且工作文件等于 Index 才能更新。任何不兼容路径使整个操作拒绝；不提供 force、丢弃修改或前一分支选择器。未知、忽略文件及陌生目录子项仍受保护；冲突或损坏 Index 即使切回当前分支也拒绝。
+
+未出生 HEAD 下，不带显式来源的 `switch -c new` 只选择新的符号 HEAD，保留 Index 和实际文件，不创建空 ref 或 Commit；HEAD 日志记录缺失端点到缺失端点。新名称不能是当前分支或已有分支。切换当前未出生分支可无操作，其他不存在的分支拒绝；显式 HEAD 来源或 detach 无法解析尚不存在的提交。
 
 首次提交前设置显式身份。身份单独保存在 `.minigit/identity`，不改写仓库格式标识：
 
@@ -90,7 +100,7 @@ log 与 show 共用提交文本格式化；单个格式化提交条目及完整 
 
 `reflog` 观察引用曾怎样移动，与沿 parent 读取的 `log` 分开。当前 commit 将分支引用、HEAD 日志与分支日志放进同一个短事务；分离 HEAD 则发布 HEAD 与它的日志。输出用完整 ID 显示 `old -> new reason`，缺失端点为 `-`；文件缺失时显示空日志，标签不支持 reflog。`HEAD@{0}` 等是显示位置，尚不能作为修订选择串使用。带选项样式的分支名可用 `reflog -- name`。
 
-Reflog 使用自有 MGRL v1 格式，每份日志最多 8 MiB、100000 个事件；原因是非空单行 UTF-8，最多 4096 字节。完整 CLI 输出预检为 64 MiB，待恢复事务会阻止查询。当前没有 actor、时间、过期清理、选择器或 reflog 撤销命令；branch 已通过子项验收，switch 尚未交付，核心已能规划不同分支指向同一提交时的 HEAD 切换事件。接入验证状态见进度页。
+Reflog 使用自有 MGRL v1 格式，每份日志最多 8 MiB、100000 个事件；原因是非空单行 UTF-8，最多 4096 字节。完整 CLI 输出预检为 64 MiB，待恢复事务会阻止查询。当前没有 actor、时间、过期清理、选择器或 reflog 撤销命令；branch 已通过子项验收，switch 已接入不同分支指向同一提交时的 HEAD 切换事件。接入验证状态见进度页。
 
 构建后可运行 [对象观察实验](examples/experiments/objects.sh)：
 
@@ -101,6 +111,7 @@ bash examples/experiments/diff.sh ./build/debug/minigit
 bash examples/experiments/show.sh ./build/debug/minigit
 bash examples/experiments/reflog.sh ./build/debug/minigit
 bash examples/experiments/branches.sh ./build/debug/minigit
+bash examples/experiments/switch.sh ./build/debug/minigit
 ```
 
 [提交实验](examples/experiments/commits.sh) 进一步检查暂存 B、工作区编辑为 C 后仍提交 B，以及下一次提交链接前一个 parent；还核对 status、log 和标签在分支前进后保持原提交。脚本创建临时仓库并在结束时自动清理，不调用系统 Git。测试结果以 [进度](docs/progress.md) 为准。
@@ -112,6 +123,8 @@ bash examples/experiments/branches.sh ./build/debug/minigit
 [引用日志实验](examples/experiments/reflog.sh) 连续提交 A、B，核对缺失端点→A→B 的事件及 HEAD／main 两份日志字节一致。它展示的是引用事件，不是提交父图；两种预设的实验及 reflog 子项验收已通过。
 
 [分支实验](examples/experiments/branches.sh) 创建 topic 指向 A，再让 main 提交 B，证明创建分支不切换工作区且 topic 仍固定 A；随后安全删除祖先分支，验证 topic/sub 删除后 topic 名称可复用。两种预设的实验已通过，详细验证见进度页。
+
+[切换实验](examples/experiments/switch.sh) 创建 topic 并提交 B，再回 main 读取 A；重叠的 staged／working 修改阻止切换，同快照新分支保留两份修改，随后展示干净切换、detached HEAD 与 reflog。两个预设实验已通过，定向测试的完整验收状态见进度页。
 
 ## 设计范围
 
@@ -129,7 +142,7 @@ bash examples/experiments/branches.sh ./build/debug/minigit
 
 ## 共享更新规划器：核心接口已实现
 
-[worktree_update.hpp](include/minigit/worktree_update.hpp) 为后续 switch、restore、reset、rm、mv 准备共同机制，本子项不增加 CLI。调用者在同一 RepoLock 内提供“目标路径状态”和“允许改写的旧跟踪文件路径”；规划器检查实际文件与目录，捕获真实 before 字节和权限，再生成 TransactionPlan。HEAD 与日志的变化仍由业务层规划，最终由短事务一起执行。
+[worktree_update.hpp](include/minigit/worktree_update.hpp) 供 switch 复用，并为后续 restore、reset、rm、mv 准备共同机制，本子项不增加 CLI。调用者在同一 RepoLock 内提供“目标路径状态”和“允许改写的旧跟踪文件路径”；规划器检查实际文件与目录，捕获真实 before 字节和权限，再生成 TransactionPlan。HEAD 与日志的变化仍由业务层规划，最终由短事务一起执行。
 
 目标缺失与空文件分别表示，已有未授权文件、未知目录、软链和特殊文件受到保护。精确授权的旧文件位置若已变为空目录，可显式移除该空节点；授权不会延伸到陌生子文件或空子目录。部分路径更新保留未变化父目录与无关兄弟文件；目录改为文件时必须显式删除全部已授权的旧文件，不能递归清掉未知内容。规划可能保存不可变备份 Blob，但不会写工作文件或元数据。具体边界及 C++ 例子见架构、导读与学习笔记；构建与验证证据见进度页。
 
@@ -141,7 +154,7 @@ bash examples/experiments/branches.sh ./build/debug/minigit
 4. [学习笔记](docs/learning-notes.md)：可执行的观察实验、取舍与常见误区。
 5. [进度](docs/progress.md)：完成状态、验证证据、阶段验收与下一步。
 
-Phase 1 的暂存、提交与历史实验可直接运行。branch 管理已通过子项验收；切换分支、工作区恢复、合并及历史重写随后续阶段交付，当前状态统一由进度文档记录。
+Phase 1 的暂存、提交与历史实验可直接运行。branch 管理已通过子项验收；switch 已实现，工作区恢复、合并及历史重写随后续阶段交付，当前状态统一由进度文档记录。
 
 ### 中断事务的恢复
 
