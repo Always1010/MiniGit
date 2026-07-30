@@ -231,3 +231,17 @@ bash examples/experiments/switch.sh ./build/debug/minigit
 C++ 练习：给单文件填四列 A/B/C/D，逐条应用架构页矩阵。尤其检查 A=a、B=d、C=c、D=d 时为何保留 C；A=a、B=a、C=d、D=d 时为何拒绝——工作文件碰巧等于目标，也不能掩盖相对 Index 的未暂存修改。再加一个 staged 的 dir/child 和目标文件 dir，解释为何局部矩阵之后仍须验证完整 Index。
 
 未出生场景另见单元和 CLI 测试：`switch -c new` 保留已暂存文件，HEAD 指向不存在的 ref，事件为 null→null；直到首提交才建立 ref。区分“分支绑定变化”和“新 Commit 诞生”，避免用空树虚构首提交。
+
+## 恢复实验：同一内容来源可以写到两个不同目的
+
+[恢复实验](../examples/experiments/restore.sh) 在 Debug 与 sanitized 下均已通过。构建后可重复运行：
+
+```sh
+bash examples/experiments/restore.sh ./build/debug/minigit
+```
+
+实验先保存提交 A 和 D，随后制造 Index=B、work=C。默认恢复工作文件到 B；staged 单目的恢复 Index 到 D、保留 C；同时两目的恢复为 D。再用提交 A 分别写 Work、Index 及两者，观察 source 与目的并不是同一个开关。选项样式文件名用 --，普通 note 参数无需分隔符。
+
+历史 A 中 dir 是目录，当前 D 中 dir 是普通文件；根／目录 prefix 选择让全部旧节点进入转换计划。加入 dir/private 后，再恢复 D 必须拒绝并保持 Index 与文件，而不是因为选择了 dir 就删除陌生 child。来源缺少 obsolete 时删除已选旧文件，empty 的零字节 Blob 仍存在。另在仅历史来源有的 obsolete 位置放未知文件，显式 source 也不能覆盖它。
+
+脚本最后 cmp HEAD、当前分支 ref、两份 reflog 和 identity，确认恢复没有改变历史位置。C++ 练习再画冲突 stages：显式历史只恢复 Work 时阶段还在，staged 目的才清除所选阶段；未选中冲突必须原样保留。相关测试、实验与复验的执行证据见进度页。
