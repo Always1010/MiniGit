@@ -18,6 +18,7 @@
 #include "minigit/switch.hpp"
 #include "minigit/restore.hpp"
 #include "minigit/reset.hpp"
+#include "minigit/remove.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -63,6 +64,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  switch <branch> | switch -c <name> [start] | switch --detach [revision]\n"
                      "  restore [-s revision] [-S] [-W] [--] <paths...>  Restore selected paths\n"
                      "  reset [--soft|--mixed|--hard] [revision]  Reset HEAD and optional state\n"
+                     "  rm [-r] [-f] [--cached] [--] <paths...>  Remove tracked paths\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -321,6 +323,34 @@ int run(const std::vector<std::string_view>& args) {
         const auto head = minigit::switch_worktree(minigit::Repository::discover(), options);
         if (head.symbolic) std::cout << "Switched to branch " << minigit::quote_path(head.symbolic->substr(11)) << '\n';
         else std::cout << "HEAD detached at " << head.id->hex() << '\n';
+        return 0;
+    }
+    if (command == "rm") {
+        minigit::RemoveOptions request;
+        bool options = true;
+        std::vector<std::filesystem::path> paths;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (options && args[i] == "--") { options = false; continue; }
+            if (options && (args[i] == "-r" || args[i] == "--recursive")) {
+                if (request.recursive) throw UsageError("rm recursive flag may be specified once");
+                request.recursive = true;
+                continue;
+            }
+            if (options && (args[i] == "-f" || args[i] == "--force")) {
+                if (request.force) throw UsageError("rm force flag may be specified once");
+                request.force = true;
+                continue;
+            }
+            if (options && args[i] == "--cached") {
+                if (request.cached) throw UsageError("rm cached flag may be specified once");
+                request.cached = true;
+                continue;
+            }
+            if (options && args[i].starts_with('-')) throw UsageError("unknown rm option");
+            paths.emplace_back(args[i]);
+        }
+        if (paths.empty()) throw UsageError("rm requires tracked paths");
+        minigit::remove_paths(minigit::Repository::discover(), paths, request);
         return 0;
     }
     if (command == "reset") {

@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收，rm、mv 等后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 等后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -292,7 +292,7 @@ flowchart TD
 
 工作区覆盖授权为旧 HEAD∪Index 全阶段的精确文件路径，来源中独有的历史文件不自动获得覆盖当前未知文件的权限。D/F 转换须选择包含旧文件的范围：每个已知旧子文件都要显式删除，未知子项仍阻止整体转换。来源缺失与 empty Blob 不同；工作区单目的不清 Index，Index 单目的不读取实际文件内容，但成功的事务仍可写入元数据镜像 Blob；这不等于对象库完全不写入。
 
-来源与全部参数匹配先校验；需要更新 Index 时，再校验完整最终 Index，之后组合 Index 与 Work 的 caller-lock 计划，最后发布一次事务。无 HEAD 或日志移动规划。Index 全阶段限 100000 不同路径／300000 条记录，仍校验各预算与 typed Blob；共享 planner 还在捕获备份前检查 WorkChange 与已规划 MetadataChange 合计不超过 100000。来源串最多 4096 字节，原始路径每个最多 8192 字节、200000 参数／64 MiB；规范路径最多 4096 字节／128 分量，candidate、selected、owned 各限 200000 路径／64 MiB 名称。Restore 已通过子项验收，Reset 已通过子项验收，rm／mv 仍未交付。
+来源与全部参数匹配先校验；需要更新 Index 时，再校验完整最终 Index，之后组合 Index 与 Work 的 caller-lock 计划，最后发布一次事务。无 HEAD 或日志移动规划。Index 全阶段限 100000 不同路径／300000 条记录，仍校验各预算与 typed Blob；共享 planner 还在捕获备份前检查 WorkChange 与已规划 MetadataChange 合计不超过 100000。来源串最多 4096 字节，原始路径每个最多 8192 字节、200000 参数／64 MiB；规范路径最多 4096 字节／128 分量，candidate、selected、owned 各限 200000 路径／64 MiB 名称。Restore、Reset 与 Rm 已通过子项验收，mv 仍未交付。
 
 ## Reset：整体改变当前位置，按模式扩大发布范围
 
@@ -321,7 +321,36 @@ flowchart TD
 
 hard 不能借父路径授权删除陌生后代。D/F 转换列出全部已知旧文件，未知／忽略子文件、陌生空子目录、软链或 FIFO 阻止需要的改写；删除叶文件可保留空父目录。完全相同的未知普通文件若字节和完整权限都无需改变，可被共享 planner 当作无操作，不能据此授权不同内容覆盖。实际 before 必须可读取和保存，hard 不跳过权限、同设备与恢复边界。
 
-hard 的 union／owned 各最多 200000 路径／64 MiB 名称，路径4096字节／128分量，revision4096字节。共享纯预算 API 已实现，合计 Work／metadata 数量、路径、元数据前后镜像及 journal 预算在备份捕获前校验；两份合法 Index 也可能因为同时存入 journal 超限。Reset 已通过子项验收；rm／mv 尚未交付，Phase 2 仍未整体验收。
+hard 的 union／owned 各最多 200000 路径／64 MiB 名称，路径4096字节／128分量，revision4096字节。共享纯预算 API 已实现，合计 Work／metadata 数量、路径、元数据前后镜像及 journal 预算在备份捕获前校验；两份合法 Index 也可能因为同时存入 journal 超限。Reset 与 Rm 已通过子项验收；mv 尚未交付，Phase 2 仍未整体验收。
+
+## Remove：删除范围与丢弃内容的授权分开检查
+
+Rm 已通过子项验收，[remove.hpp](../include/minigit/remove.hpp) 提供 RemoveOptions{cached, force, recursive} 与自取一次 RepoLock 的 remove_paths。A 为当前 HEAD 快照，B 为 Index stage 0，C 为实际工作文件；缺失 C 必须是真正 Absent，不能把 Directory 或被祖先 File 遮挡的后代当成正常缺失。
+
+| 模式 | 所选正常路径的条件 | 所选冲突 | Work 处理 |
+| --- | --- | --- | --- |
+| 普通 | B==A 且（C==B 或 C 真正缺失） | 拒绝 | 安全检查后删除 |
+| cached | B==A 或 B==C | 拒绝 | B==A 时不探测，否则只读 C；不删除 |
+| force | 跳过内容一致性判断 | 清所选全部 stages | 共享 planner 删除精确已授权节点 |
+| cached + force | 跳过内容一致性判断 | 清所选全部 stages | 完全不探测或删除 Work |
+
+候选只取 Index 所有阶段，不把 HEAD 独有或实际未跟踪路径加入选择。每个参数独立匹配后去重合并；有后代的 prefix／根选择要求 recursive，即使冲突同时包含 exact 父路径。完整 Index 全阶段 typed Blob、HEAD 快照、最终 Index 编码与预算仍须有效，force 不绕过这些检查。
+
+```mermaid
+flowchart TD
+    I[完整 Index 已知路径与阶段] --> S[每个参数匹配 / recursive 判定]
+    S --> N[最终 Index 移除所选全部阶段 / schema预算]
+    N --> P[普通 / cached 安全矩阵或明确 force]
+    P --> C[plan_index_update]
+    C --> W[非 cached: selected null targets / exact owned]
+    W --> V[共享 planner 验证 / 捕获真实 before]
+    V --> T[一次 Transaction: Index + 必要 Work]
+    T --> H[HEAD / refs / reflog 不变]
+```
+
+目录 prefix 通常只生成叶文件的删除目标，已有父目录不改，从而保留未知／忽略兄弟与空目录。只有选中的 tracked File 实际变为 Directory，才需要检查其完整目录内容；精确位置授权不继承给陌生 child。普通模式视此为本地改动，force 仍保护未知子项和软链／特殊文件。
+
+非 force 的工作区安全判断与后续 planner 必须使用一致的真实 C：规划结果的 before 再与先前内容／完整权限比较，避免长准备过程中用新 dirty 内容替换原判断。cached 的 B==C 只读校验不产生 WorkChange，也不锁外部编辑器。词法选择、有界路径集合与 Index 类型／编码预算已提取到 core-private [checkout_support.hpp](../src/core/checkout_support.hpp)／[checkout_support.cpp](../src/core/checkout_support.cpp)，Restore、Reset 和 Remove 调用同一组纯检查；没有新公共 Repository 路径接口，尚未验收 mv。
 
 ## WorktreeUpdate：把授权目标变为真实节点计划
 

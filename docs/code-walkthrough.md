@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -73,9 +73,10 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 12 | Switch | 四状态矩阵怎样保留兼容修改并拒绝覆盖？ |
 | 13 | Restore | 来源、路径范围与 Work／Index 目的如何分开？ |
 | 14 | Reset | 模式如何扩大发布范围，同 ID 为何仍处理 Index／Work？ |
-| 15 | Operations（计划） | 继续／中止怎样跨进程保持？ |
+| 15 | Remove（已验收） | 为何 cached 有两条安全路径，force 仍保护未知内容？ |
+| 16 | Operations（计划） | 继续／中止怎样跨进程保持？ |
 
-表中前十四项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，rm／mv 仍为计划。依赖关系见 [架构](architecture.md)。
+表中前十五项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，mv 仍为计划。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -226,11 +227,11 @@ execute_transaction(repo, std::move(plan));
 
 [restore.hpp](../include/minigit/restore.hpp) 的 RestoreOptions 分开 source、staged、worktree；[restore.cpp](../src/core/restore.cpp) 的 restore_paths 取得一次 RepoLock，先检查待恢复事务。来源选择内容，路径选择范围，两个标志选择发布目的；HEAD 本身在全部方向保持原位。
 
-实际调用链为 normalize_selectors → load_index／check_index → 选择来源 → select_paths → 必要的 next_index 预算／编码／排序校验 → Work 目标与 owned → plan_index_update／plan_worktree_update → 至多一次 execute_transaction。normalize_selectors 仅作词法规范化，支持相对当前目录与绝对路径；Index-only 因此不读取物理软链父目录或 FIFO。
+实际调用链为 checkout_support::normalize_selectors → load_index／check_index → 选择来源 → select_paths → 必要的 next_index 预算／编码／排序校验 → Work 目标与 owned → plan_index_update／plan_worktree_update → 至多一次 execute_transaction。共享 normalize_selectors 仅作词法规范化，支持相对当前目录与绝对路径；Index-only 因此不读取物理软链父目录或 FIFO。
 
-check_index 校验 100000 不同路径、300000 stage 记录及编码字节预算，按 ID 去重检查全部 typed Blob，同时分别收集 stage 0 来源与冲突路径。默认 Index 来源仅拒绝 selected 冲突，不让未选冲突阻止正常文件恢复；显式历史来源先验证完整快照，即使选择部分路径也不能忽略来源其他损坏对象。
+Restore 私有 check_index 先调用共享 check_index_objects，校验 100000 不同路径、300000 stage 记录及编码字节预算，按 ID 去重检查全部 typed Blob，再分别收集 stage 0 来源与冲突路径。默认 Index 来源仅拒绝 selected 冲突，不让未选冲突阻止正常文件恢复；显式历史来源先验证完整快照，即使选择部分路径也不能忽略来源其他损坏对象。
 
-select_paths 用排序候选集的 exact 查找与 lower_bound(path + "/") 范围，保留分隔符边界。每个原参数先确认至少一个匹配，再合并重复及祖先范围，避免有效目录掩盖无效参数；排序的祖先检查跳过已覆盖扫描，不逐参数遍历所有文件。
+Restore 私有 select_paths 组合 source∪Index 候选，再调用共享 select_known_paths；它用排序候选集的 exact 查找与 lower_bound(path + "/") 范围，保留分隔符边界。每个原参数先确认至少一个匹配，再合并重复及祖先范围，避免有效目录掩盖无效参数；排序的祖先检查跳过已覆盖扫描，不逐参数遍历所有文件。
 
 staged 目的从 next_index 移除 selected 全阶段，再加入来源 stage 0，保留 unselected 原条目；完整预算与 encode_index 先通过，随后按 path／stage 排序，才能比较是否无操作。工作区目标为来源 FileState 或 nullopt，owned 来自旧 HEAD 和原 Index 全阶段，文件内容捕获由共享 planner 完成。它不调用 plan_move_head，失败也不先公布部分 Index。成功的 Index-only 事务可保存元数据镜像 Blob，因此“不读取 Work”不能作为对象数量不变的依据；无操作与预算失败另有对应保护。
 
@@ -240,8 +241,22 @@ staged 目的从 next_index 移除 selected 全阶段，再加入来源 stage 0�
 
 从 [reset.hpp](../include/minigit/reset.hpp) 的 enum class 与 optional revision，读到 [reset.cpp](../src/core/reset.cpp) 的 reset_repository。入口一次锁和 pending guard 后，校验模式 → check_index → 选择 target_id 并完整读取 target → mixed／hard 的 after_index 预算与编码 → hard 的 paths／owned／targets → plan_move_head／Index／Work 规划 → 非空计划 execute_transaction。
 
-check_index 先对全部 stages 的 ID 去重检查 typed Blob，soft 再拒绝非零 stage；不能因为 soft 不改 Index 就跳过损坏校验。硬重置的 BoundedPaths 按新键检查数量和字节预算，旧 HEAD 与 Index 加入 owned，目标独有路径只加入目标，不自动得到覆盖许可。
+Reset 私有 check_index 先调用共享 check_index_objects，对全部 stages 的 ID 去重检查 typed Blob，soft 再拒绝非零 stage；不能因为 soft 不改 Index 就跳过损坏校验。硬重置的 BoundedPaths 按新键检查数量和字节预算，旧 HEAD 与 Index 加入 owned，目标独有路径只加入目标，不自动得到覆盖许可。
 
 plan_move_head 使用原 before_head.symbolic 与 target_id，保留当前分支名称／detached 状态。只有 Head 真正变化才写日志；没有按 ID 提前返回，after_index 与实际工作目标仍独立比较。空 optional target_id 只来自默认 unborn，显式 HEAD 走 resolve_commit 并报错。共享 planner 先做完整预算与拓扑检查，再捕获真实编辑文件，最后一次事务发布。
 
 [reset.sh](../examples/experiments/reset.sh) 已准备模式、默认、unborn、detached、same-ID dirty 以及 D/F 未知保护的实际 CLI 重放；拒绝场景先保存 Index、HEAD、ref、日志和文件快照，再 cmp 验证原状。[test_reset.cpp](../tests/unit/test_reset.cpp) 已写入八组语义测试，[reset_cli.cmake](../tests/integration/reset_cli.cmake) 重放真实参数与磁盘状态；两种预设的相关测试与实验均通过，具体命令和实际范围见进度页。
+
+## Remove：共享纯检查，不共享业务安全策略
+
+[remove.hpp](../include/minigit/remove.hpp) 的 RemoveOptions 使用三个 bool 保存 cached、force、recursive，remove_paths 在 [remove.cpp](../src/core/remove.cpp) 自取一次锁。核心与实验已通过子项验收；CLI 参数重放见 [remove_cli.cmake](../tests/integration/remove_cli.cmake)。此次 core-private [checkout_support.hpp](../src/core/checkout_support.hpp)／[checkout_support.cpp](../src/core/checkout_support.cpp) 提取 Restore／Reset 已重复的词法选择、有界集合、Index 预算与 typed Blob 校验；A/B/C 删除策略仍留 Remove。
+
+实际顺序为 normalize_selectors → load_index／check_index_objects → HEAD 完整快照 → select_known_paths／has_descendants 的 recursive 判定 → 最终 Index 预算与 encode → 安全矩阵 → plan_index_update → 非 cached 的 plan_worktree_update／check_observations → execute_transaction。共享 helper 没有命令模式开关：同一候选算法接收 Restore 的 source∪Index 或 Remove 的 Index，业务分别决定如何授权。
+
+阅读时区分两个 short-circuit：cached 先 B==A，可以不读 C；否则必须证明 B==C。普通模式还要求真正 Absent 或 C==B。私有 observe_work 逐祖先用 symlink_status 检查，并由同 fd 的 read_worktree_file 取得 File 的 ID 与完整权限；不能把 read_worktree_entry 的 nullopt（也可能是 Directory）直接当缺失。force 的 selected conflict 清理与正常路径 stage 0 比较分开，避免缺失阶段产生 null==null 绕过。
+
+最终 Index 保留 unselected 全阶段，只移除 selected；非 cached 为所选 Index 路径生成 null WorktreeTargets，并用同一组精确 owned 调共享 planner。私有 check_observations 将安全检查取得的 NodeImage 与 planner before 比较，后来的内容变化不能偷偷成为合法 before。cached 不创建假 WorkChange，HEAD 和日志不调用移动规划。
+
+[remove.sh](../examples/experiments/remove.sh) 已准备 clean／真实缺失、staged-only／dirty拒绝、cached 两条件／force、目录 -r、未知 child、选项样名称及 HEAD／日志不变。每个失败先保存元数据 baseline，实际文件也在操作前复制再 cmp；两种预设均已运行通过。
+
+[test_remove.cpp](../tests/unit/test_remove.cpp) 的七组语义用例覆盖普通批次原子保护、cached 短路与 force、词法范围与 -r、所选／未选冲突、真实缺失与未知目录保护、unborn／detached／坏输入及 Prepared／Committed 两个恢复边界。本轮还复验共享提取影响的 Restore、Reset 和关联 CLI；实际筛选与注册规模分别记录在进度页。

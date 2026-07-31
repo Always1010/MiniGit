@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；Phase 2 尚未整体验收；继续逐项推进至 Phase 4。
+Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；Phase 2 尚未整体验收；继续逐项推进至 Phase 4。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
@@ -30,6 +30,7 @@ Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/
 | Phase 2 子项：switch 工作区切换 | 已验收 | 原定向每种预设 25 项、预算补充后 Debug 10 项及优化 sanitized 全量 112 项通过；切换实验通过 |
 | Phase 2 子项：restore 内容恢复 | 已验收 | Debug 首轮 12 项及失败 fixture 修正后 1 项复验、sanitized 13 项通过；两种预设恢复实验通过 |
 | Phase 2 子项：reset 三模式重置 | 已验收 | 两种预设各 18 项定向检查与重置实验通过，无编译警告或 ASan/UBSan 报告 |
+| Phase 2 子项：rm 删除与取消暂存 | 已验收 | 删除矩阵、精确授权、共享检查及事务恢复；两种预设各 33 项定向检查与实验通过 |
 | Phase 2 其余及 Phase 3 至 Phase 4 | 计划 | 尚未实现或验收 |
 
 已执行的 Debug 验证：
@@ -210,7 +211,19 @@ Reset 新增 8 个单元与 1 个 CLI 用例，CTest JSON 注册清单核对当�
 
 `ctest --preset debug -R '^unit\.Reset|^(reset_cli|recovery_cli|reflog_cli|branches_cli|switch_cli|restore_cli|status_cli|diff_cli|show_cli|cli_basics)$' --output-on-failure` 与 sanitized 对应命令，各 18 项全部通过，分别用时 25.98／40.78 秒；实际范围为 8 个新单元与 10 个关联 CLI，无 ASan/UBSan 报告。
 
-`bash examples/experiments/reset.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，验证 A/B/C/D 三模式、默认 mixed、同 ID dirty 恢复、unborn／detached、双向 D/F、未知子项拒绝前后快照及引用日志事件。七份文档 166 个相对链接、代码围栏、脚本 `bash -n` 与 `git diff --check` 通过。未执行全部 131 项，Phase 2 尚未整体验收；rm／mv 随后推进。
+`bash examples/experiments/reset.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，验证 A/B/C/D 三模式、默认 mixed、同 ID dirty 恢复、unborn／detached、双向 D/F、未知子项拒绝前后快照及引用日志事件。七份文档 166 个相对链接、代码围栏、脚本 `bash -n` 与 `git diff --check` 通过。该 Reset 验收轮未执行全部 131 项，Phase 2 尚未整体验收；当时 rm／mv 尚未交付，Rm 随后接入见下一子项。
+
+### Rm 删除与取消暂存：已验收
+
+CLI 为 rm [-r／--recursive] [-f／--force] [--cached] [--] paths...，成功静默，每个模式标志最多一次。候选仅 Index all stages，exact／prefix、每个参数必须匹配，有后代的 prefix 要求 -r。普通 B==A 且（C==B 或真正 Absent）；cached B==A 或 B==C，前者不探测 Work；force 清所选冲突，cached force 完全不探测 Work。
+
+所有路径、Index 全阶段对象、HEAD、最终编码与预算先校验；非 cached 删除精确所选叶文件，保留空父目录与未知兄弟，原 tracked File 变目录时仍拒绝陌生内容。安全判断的 C 与规划 before 比较，Index／Work 一次事务，不移动 HEAD/ref/reflog。Restore／Reset 的词法选择、有界路径集合、Index 预算与 typed Blob 校验已提取到 core-private checkout_support；Remove 业务观察真实 C 并与 planner before 比较，共享提取不改变 Restore／Reset 的业务策略。
+
+Rm 新增 7 个单元与 1 个 CLI 用例，CTest JSON 注册清单核对当前为 123 单元、16 CLI，共 139 项；注册规模不表示本轮全量执行。两种预设 configure／build 均通过，无编译警告，独立完整审查通过。
+
+`ctest --preset debug -R '^unit\.(Remove|Restore|Reset)|^(remove_cli|restore_cli|reset_cli|recovery_cli|reflog_cli|staging_cli|status_cli|diff_cli|show_cli|cli_basics)$' --output-on-failure` 与 sanitized 对应命令，各 33 项全部通过，分别用时 49.06／66.48 秒；范围为 7 个 Remove、8 个 Restore、8 个 Reset 单元和 10 个关联 CLI，无 ASan/UBSan 报告。
+
+`bash examples/experiments/remove.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，验证普通／cached／force 矩阵、目录递归、未知保护、选项样名称及 HEAD／ref／日志／identity 原字节不变。脚本语法、七份文档 178 个相对链接、代码围栏与 `git diff --check` 通过。未执行全部 139 项；Mv 尚未交付，Phase 2 仍未整体验收，继续推进至 Phase 4。
 
 ## Phase 3：可恢复的合并与应用
 
@@ -226,4 +239,4 @@ Reset 新增 8 个单元与 1 个 CLI 用例，CTest JSON 注册清单核对当�
 
 ## 下一步
 
-Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，下一步逐项推进 rm、mv，持续推进至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，随后推进 Mv，持续推进至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
