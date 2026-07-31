@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -72,9 +72,10 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 11 | WorktreeUpdate | 部分目标、精确授权与实际 before 怎样变成事务计划？ |
 | 12 | Switch | 四状态矩阵怎样保留兼容修改并拒绝覆盖？ |
 | 13 | Restore | 来源、路径范围与 Work／Index 目的如何分开？ |
-| 14 | Operations（计划） | 继续／中止怎样跨进程保持？ |
+| 14 | Reset | 模式如何扩大发布范围，同 ID 为何仍处理 Index／Work？ |
+| 15 | Operations（计划） | 继续／中止怎样跨进程保持？ |
 
-表中前十三项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，reset 等业务仍为计划。依赖关系见 [架构](architecture.md)。
+表中前十四项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，rm／mv 仍为计划。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -234,3 +235,13 @@ select_paths 用排序候选集的 exact 查找与 lower_bound(path + "/") 范�
 staged 目的从 next_index 移除 selected 全阶段，再加入来源 stage 0，保留 unselected 原条目；完整预算与 encode_index 先通过，随后按 path／stage 排序，才能比较是否无操作。工作区目标为来源 FileState 或 nullopt，owned 来自旧 HEAD 和原 Index 全阶段，文件内容捕获由共享 planner 完成。它不调用 plan_move_head，失败也不先公布部分 Index。成功的 Index-only 事务可保存元数据镜像 Blob，因此“不读取 Work”不能作为对象数量不变的依据；无操作与预算失败另有对应保护。
 
 [test_restore.cpp](../tests/unit/test_restore.cpp) 已写入八组场景，包含方向选择、词法路径、冲突范围、unborn、空文件／删除、双向 D/F、未知保护、对象／预算／最终拓扑及事务恢复；[restore_cli.cmake](../tests/integration/restore_cli.cmake) 核对真实参数和磁盘状态。[restore.sh](../examples/experiments/restore.sh) 重放独立来源／目的及 HEAD／日志不变。两种预设的相关测试与实验已通过，具体筛选及复验记录见进度页。
+
+## Reset：枚举模式与可选修订避免混淆无操作
+
+从 [reset.hpp](../include/minigit/reset.hpp) 的 enum class 与 optional revision，读到 [reset.cpp](../src/core/reset.cpp) 的 reset_repository。入口一次锁和 pending guard 后，校验模式 → check_index → 选择 target_id 并完整读取 target → mixed／hard 的 after_index 预算与编码 → hard 的 paths／owned／targets → plan_move_head／Index／Work 规划 → 非空计划 execute_transaction。
+
+check_index 先对全部 stages 的 ID 去重检查 typed Blob，soft 再拒绝非零 stage；不能因为 soft 不改 Index 就跳过损坏校验。硬重置的 BoundedPaths 按新键检查数量和字节预算，旧 HEAD 与 Index 加入 owned，目标独有路径只加入目标，不自动得到覆盖许可。
+
+plan_move_head 使用原 before_head.symbolic 与 target_id，保留当前分支名称／detached 状态。只有 Head 真正变化才写日志；没有按 ID 提前返回，after_index 与实际工作目标仍独立比较。空 optional target_id 只来自默认 unborn，显式 HEAD 走 resolve_commit 并报错。共享 planner 先做完整预算与拓扑检查，再捕获真实编辑文件，最后一次事务发布。
+
+[reset.sh](../examples/experiments/reset.sh) 已准备模式、默认、unborn、detached、same-ID dirty 以及 D/F 未知保护的实际 CLI 重放；拒绝场景先保存 Index、HEAD、ref、日志和文件快照，再 cmp 验证原状。[test_reset.cpp](../tests/unit/test_reset.cpp) 已写入八组语义测试，[reset_cli.cmake](../tests/integration/reset_cli.cmake) 重放真实参数与磁盘状态；两种预设的相关测试与实验均通过，具体命令和实际范围见进度页。

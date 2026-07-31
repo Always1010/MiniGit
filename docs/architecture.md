@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收，reset、rm、mv 等后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收，rm、mv 等后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -292,7 +292,36 @@ flowchart TD
 
 工作区覆盖授权为旧 HEAD∪Index 全阶段的精确文件路径，来源中独有的历史文件不自动获得覆盖当前未知文件的权限。D/F 转换须选择包含旧文件的范围：每个已知旧子文件都要显式删除，未知子项仍阻止整体转换。来源缺失与 empty Blob 不同；工作区单目的不清 Index，Index 单目的不读取实际文件内容，但成功的事务仍可写入元数据镜像 Blob；这不等于对象库完全不写入。
 
-来源与全部参数匹配先校验；需要更新 Index 时，再校验完整最终 Index，之后组合 Index 与 Work 的 caller-lock 计划，最后发布一次事务。无 HEAD 或日志移动规划。Index 全阶段限 100000 不同路径／300000 条记录，仍校验各预算与 typed Blob；共享 planner 还在捕获备份前检查 WorkChange 与已规划 MetadataChange 合计不超过 100000。来源串最多 4096 字节，原始路径每个最多 8192 字节、200000 参数／64 MiB；规范路径最多 4096 字节／128 分量，candidate、selected、owned 各限 200000 路径／64 MiB 名称。Restore 已通过子项验收，reset、rm、mv 仍未交付。
+来源与全部参数匹配先校验；需要更新 Index 时，再校验完整最终 Index，之后组合 Index 与 Work 的 caller-lock 计划，最后发布一次事务。无 HEAD 或日志移动规划。Index 全阶段限 100000 不同路径／300000 条记录，仍校验各预算与 typed Blob；共享 planner 还在捕获备份前检查 WorkChange 与已规划 MetadataChange 合计不超过 100000。来源串最多 4096 字节，原始路径每个最多 8192 字节、200000 参数／64 MiB；规范路径最多 4096 字节／128 分量，candidate、selected、owned 各限 200000 路径／64 MiB 名称。Restore 已通过子项验收，Reset 已通过子项验收，rm／mv 仍未交付。
+
+## Reset：整体改变当前位置，按模式扩大发布范围
+
+[reset.hpp](../include/minigit/reset.hpp) 用 ResetMode 枚举 Soft／Mixed／Hard，ResetOptions 的 mode 默认 Mixed，revision 为 optional。reset_repository 取得一次 RepoLock；没有 revision 和显式 HEAD 在未出生仓库里是不同输入，不能提前统一成同一字符串。
+
+| 模式 | HEAD／当前分支与日志 | Index | 实际工作文件 |
+| --- | --- | --- | --- |
+| soft | 移至目标，保留符号／detached 绑定 | 原字节保留，任何冲突拒绝 | 不读取，不修改 |
+| mixed（默认） | 同 soft | 完整替换为目标 stage 0，清冲突 | 不读取，不修改 |
+| hard | 同 soft | 同 mixed | 选定路径并集恢复为目标 |
+
+所有模式读取完整当前 Index，校验全部 stages 的 Blob、100000 不同路径／300000 条记录／64 MiB 编码预算；目标读取完整 Commit／Tree／Blob。mixed／hard 再校验最终 Index，逻辑相同则保留精确旧字节。hard 的路径并集为旧 HEAD A∪原 Index 全阶段∪目标 D，精确 owned 只取 A∪Index；没有 Switch 的干净矩阵，允许覆盖这些已跟踪文件的实际编辑。
+
+```mermaid
+flowchart TD
+    O[模式 / optional revision] --> V[完整 Index 与目标快照校验]
+    V --> H[plan_move_head: 当前绑定与日志]
+    H --> I[若 mixed/hard: plan_index_update]
+    I --> W[若 hard: 精确 owned 与目标 / 共享 planner]
+    W --> B[完整事务预算 / 实际 before 捕获]
+    B --> T[一次 execute_transaction]
+    T --> R[Prepared 回真实 before / Committed 到 after]
+```
+
+目标 ID 与当前 ID 相同只省略引用及日志移动，mixed／hard 仍处理 Index／Work。默认未出生目标为空：soft 校验后无操作，mixed 清 Index，hard 再删旧 Index 的已授权工作文件；空 Index 已缺失时不擅自持久化空文件。显式有效提交可建立当前未出生分支，显式 HEAD 仍失败；detached reset 改 raw HEAD 与其日志，不移动任何已有分支。
+
+hard 不能借父路径授权删除陌生后代。D/F 转换列出全部已知旧文件，未知／忽略子文件、陌生空子目录、软链或 FIFO 阻止需要的改写；删除叶文件可保留空父目录。完全相同的未知普通文件若字节和完整权限都无需改变，可被共享 planner 当作无操作，不能据此授权不同内容覆盖。实际 before 必须可读取和保存，hard 不跳过权限、同设备与恢复边界。
+
+hard 的 union／owned 各最多 200000 路径／64 MiB 名称，路径4096字节／128分量，revision4096字节。共享纯预算 API 已实现，合计 Work／metadata 数量、路径、元数据前后镜像及 journal 预算在备份捕获前校验；两份合法 Index 也可能因为同时存入 journal 超限。Reset 已通过子项验收；rm／mv 尚未交付，Phase 2 仍未整体验收。
 
 ## WorktreeUpdate：把授权目标变为真实节点计划
 

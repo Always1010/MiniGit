@@ -86,9 +86,9 @@ MiniGit 的 `branch topic` 把当前提交 ID 写入 refs/heads/topic，同时�
 
 ## Reflog 记录位置变化，log 读取父关系
 
-MiniGit 已接入自己的 MGRL 引用日志，验证状态见 [进度](progress.md)。连续提交 A、B 时，Commit B 的 parent 为 A，而初始分支日志记录“缺失→A”和“A→B”。前者回答 B 从哪里发展，后者回答本地引用经历了什么动作。未来 reset 将引用从 B 移回 A 时，无需改写 B 的 parent，也不会创建一个“反向 parent”；它会留下新的 B→A 事件。
+MiniGit 已接入自己的 MGRL 引用日志，验证状态见 [进度](progress.md)。连续提交 A、B 时，Commit B 的 parent 为 A，而初始分支日志记录“缺失→A”和“A→B”。前者回答 B 从哪里发展，后者回答本地引用经历了什么动作。reset 将引用从 B 移回 A 时，无需改写 B 的 parent，也不会创建一个“反向 parent”；它会留下新的 B→A 事件。
 
-核心移动规划还能区分两条都指向 A 的分支。HEAD 从一条分支切到另一条，提交 ID 没变，符号绑定已变，所以 HEAD 日志可以记录 A→A。这样的自环是有效事件，却不能作为提交 DAG 的父边。branch 管理已通过子项验收，switch 与 commit 已实际记录事件，reset 仍待后续交付。
+核心移动规划还能区分两条都指向 A 的分支。HEAD 从一条分支切到另一条，提交 ID 没变，符号绑定已变，所以 HEAD 日志可以记录 A→A。这样的自环是有效事件，却不能作为提交 DAG 的父边。branch 管理已通过子项验收，switch 与 commit 已实际记录事件，Reset 已通过子项验收。
 
 ```mermaid
 flowchart LR
@@ -97,7 +97,7 @@ flowchart LR
     end
     subgraph Events[可变引用的本地事件序列]
         E1[缺失到 A] --> E2[A 到 B]
-        E2 -.未来 reset.-> E3[B 到 A]
+        E2 -.reset 事件.-> E3[B 到 A]
     end
 ```
 
@@ -129,9 +129,9 @@ MiniGit 将当前分支引用、HEAD 日志和分支日志放入同一短事务�
 | 实际工作区 | 用户现在拥有的字节和权限是什么？ |
 | 更新目标 | 这次操作明确希望哪些路径变为什么？ |
 
-设 HEAD=A、Index=B、实际工作区=C，本次请求目标为 D。业务命令先决定 C 是否可以覆盖；获得授权后，规划器把 C 捕获为 before、D 作为 after。此时 Prepared 恢复必须回到 C，不能拿 A 或 B 代替“操作前实际文件”。这是短事务 rollback；restore 和未来 reset 选择历史版本作为业务目标，又是另外一层语义。`minigit recover` 不让用户选择某个提交，它按已有事务状态完成恢复。
+设 HEAD=A、Index=B、实际工作区=C，本次请求目标为 D。业务命令先决定 C 是否可以覆盖；获得授权后，规划器把 C 捕获为 before、D 作为 after。此时 Prepared 恢复必须回到 C，不能拿 A 或 B 代替“操作前实际文件”。这是短事务 rollback；restore 与 reset 选择历史版本作为业务目标，又是另外一层语义。`minigit recover` 不让用户选择某个提交，它按已有事务状态完成恢复。
 
-部分更新也不能把未列出的路径当成删除。只要求改写 dir/a 时，dir/b 可以是未跟踪文件，已有 dir 目录无需加入计划。若目标改成一个名为 dir 的文件，就必须检查整个 dir，证明每个旧文件已授权且明确删除；未知内容和陌生空子目录会阻止转换。若原已授权文件位置本身变为空目录，可以按显式目标移除这个空节点；不能由父位置授权推导出子项也可删除。所有这些检查已由共享规划器实现；switch、restore 已接入，reset 等 CLI 随后接入，验证证据见进度页。
+部分更新也不能把未列出的路径当成删除。只要求改写 dir/a 时，dir/b 可以是未跟踪文件，已有 dir 目录无需加入计划。若目标改成一个名为 dir 的文件，就必须检查整个 dir，证明每个旧文件已授权且明确删除；未知内容和陌生空子目录会阻止转换。若原已授权文件位置本身变为空目录，可以按显式目标移除这个空节点；不能由父位置授权推导出子项也可删除。所有这些检查已由共享规划器实现；switch、restore 已接入，reset 三模式重置已通过子项验收，rm／mv 随后接入，验证证据见进度页。
 
 ## Switch 不要求切换后所有文件都等于目标
 
@@ -148,6 +148,14 @@ MiniGit 将当前分支引用、HEAD 日志和分支日志放入同一短事务�
 工作区来源若没有某个已选文件，则目标为删除；存在零字节 Blob 时则保留空文件。Index 冲突的 stage 1/2/3 不是三个普通工作文件：工作区单目的不会自动清冲突记录，staged 目的才用来源 stage 0 替换所选阶段。目录 prefix 选择是批量版本路径，不是递归删除当前未知目录的授权。
 
 这些内容来源与目的策略已由 Restore 实现并验收；未出生 HEAD 不能提供默认 staged 来源，有效显式历史来源则不依赖当前分支已经诞生。
+
+## Reset 的三种模式共用目标，不共用发布范围
+
+令 A=当前 HEAD、B=Index、C=实际 Work、D=请求目标。soft 只让当前历史位置到 D，保留 B/C；mixed 再把 B 换成 D，仍保留 C；hard 再把已授权的 C 恢复到 D。它不切换当前分支名称，即使 revision 来自另一个分支；detached 状态也不会因为目标名称而重新附着。
+
+同 ID hard reset 仍可能清除 staged／working 修改，故不能把“引用没移动”当作整命令无操作。反过来，引用真正移动时会追加 reset:soft／mixed／hard 事件，旧 Commit 的 parent 不会改变。没有 ORIG_HEAD 或 reflog 选择器，不能将事件展示直接当作撤销接口。
+
+hard 授权丢弃已跟踪编辑，但只对旧 HEAD 和旧 Index 的精确文件路径负责；未知目录内容不会因为整个 reset 的名称获得删除权。它和 Restore 的范围选择、Switch 的兼容保留策略不同，三者仍共用捕获实际 before 与短事务恢复。Reset 已通过子项验收，不声称与 Git 所有模式和未知文件处理兼容。
 
 ## MiniGit 如何处理更新中断
 

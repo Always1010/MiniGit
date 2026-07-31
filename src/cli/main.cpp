@@ -17,6 +17,7 @@
 #include "minigit/branches.hpp"
 #include "minigit/switch.hpp"
 #include "minigit/restore.hpp"
+#include "minigit/reset.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -61,6 +62,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  branch [-f] [name [revision]] | branch -d|-D name  Manage branches\n"
                      "  switch <branch> | switch -c <name> [start] | switch --detach [revision]\n"
                      "  restore [-s revision] [-S] [-W] [--] <paths...>  Restore selected paths\n"
+                     "  reset [--soft|--mixed|--hard] [revision]  Reset HEAD and optional state\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -319,6 +321,26 @@ int run(const std::vector<std::string_view>& args) {
         const auto head = minigit::switch_worktree(minigit::Repository::discover(), options);
         if (head.symbolic) std::cout << "Switched to branch " << minigit::quote_path(head.symbolic->substr(11)) << '\n';
         else std::cout << "HEAD detached at " << head.id->hex() << '\n';
+        return 0;
+    }
+    if (command == "reset") {
+        minigit::ResetOptions options;
+        bool parse_options = true;
+        bool mode_set = false;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (parse_options && args[i] == "--") { parse_options = false; continue; }
+            if (parse_options && (args[i] == "--soft" || args[i] == "--mixed" || args[i] == "--hard")) {
+                if (mode_set) throw UsageError("reset mode may be specified once");
+                options.mode = args[i] == "--soft" ? minigit::ResetMode::Soft :
+                    args[i] == "--hard" ? minigit::ResetMode::Hard : minigit::ResetMode::Mixed;
+                mode_set = true;
+                continue;
+            }
+            if ((parse_options && args[i].starts_with('-')) || options.revision)
+                throw UsageError("reset accepts one revision and --soft, --mixed or --hard");
+            options.revision = args[i];
+        }
+        minigit::reset_repository(minigit::Repository::discover(), options);
         return 0;
     }
     if (command == "restore") {
