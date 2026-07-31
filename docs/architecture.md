@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 等后续操作仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，合并与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -122,7 +122,7 @@ Index 已由 [index.hpp](../include/minigit/index.hpp) 定义为条目列表，`
 - Index 记录将要提交的快照。`commit` 使用 Index，不重新把工作区的最新内容暗中纳入提交。
 - Repository 保存绝对根路径，普通文件工具支持绝对和相对路径；先按原始路径逐段检查软链接，再规范化结果，不能提前消除 `link/..`。计划中的版本快照使用仓库相对路径，并拒绝越界与元数据目录，不能依赖字符串前缀判断归属。
 - 分支和标签引用有效对象，HEAD 可以指向尚无首个提交的分支。未出生分支与损坏引用必须区分。
-- 工作区写入之前检查未提交修改与未跟踪文件的覆盖风险。拒绝操作时不留下部分更新。
+- 工作区写入之前检查未提交修改与未跟踪文件的覆盖风险。规划拒绝不发布可变状态；事务执行中断可能留下部分更新，由 recover 按 journal 恢复。
 - 所有不支持的格式版本、文件类型和命令选项显式报错，不静默降级。
 - 文件工具限制一次读取或写入为 64 MiB，对象解压后的完整封装也受此限制，实际 payload 上限需扣除头部；采用 Linux/POSIX 文件接口并拒绝路径中的软链接，其他平台没有验证。
 
@@ -292,7 +292,7 @@ flowchart TD
 
 工作区覆盖授权为旧 HEAD∪Index 全阶段的精确文件路径，来源中独有的历史文件不自动获得覆盖当前未知文件的权限。D/F 转换须选择包含旧文件的范围：每个已知旧子文件都要显式删除，未知子项仍阻止整体转换。来源缺失与 empty Blob 不同；工作区单目的不清 Index，Index 单目的不读取实际文件内容，但成功的事务仍可写入元数据镜像 Blob；这不等于对象库完全不写入。
 
-来源与全部参数匹配先校验；需要更新 Index 时，再校验完整最终 Index，之后组合 Index 与 Work 的 caller-lock 计划，最后发布一次事务。无 HEAD 或日志移动规划。Index 全阶段限 100000 不同路径／300000 条记录，仍校验各预算与 typed Blob；共享 planner 还在捕获备份前检查 WorkChange 与已规划 MetadataChange 合计不超过 100000。来源串最多 4096 字节，原始路径每个最多 8192 字节、200000 参数／64 MiB；规范路径最多 4096 字节／128 分量，candidate、selected、owned 各限 200000 路径／64 MiB 名称。Restore、Reset 与 Rm 已通过子项验收，mv 仍未交付。
+来源与全部参数匹配先校验；需要更新 Index 时，再校验完整最终 Index，之后组合 Index 与 Work 的 caller-lock 计划，最后发布一次事务。无 HEAD 或日志移动规划。Index 全阶段限 100000 不同路径／300000 条记录，仍校验各预算与 typed Blob；共享 planner 还在捕获备份前检查 WorkChange 与已规划 MetadataChange 合计不超过 100000。来源串最多 4096 字节，原始路径每个最多 8192 字节、200000 参数／64 MiB；规范路径最多 4096 字节／128 分量，candidate、selected、owned 各限 200000 路径／64 MiB 名称。Restore、Reset、Rm 与 Mv 已通过子项验收，Phase 2 整体验收仍待单独核对。
 
 ## Reset：整体改变当前位置，按模式扩大发布范围
 
@@ -321,7 +321,7 @@ flowchart TD
 
 hard 不能借父路径授权删除陌生后代。D/F 转换列出全部已知旧文件，未知／忽略子文件、陌生空子目录、软链或 FIFO 阻止需要的改写；删除叶文件可保留空父目录。完全相同的未知普通文件若字节和完整权限都无需改变，可被共享 planner 当作无操作，不能据此授权不同内容覆盖。实际 before 必须可读取和保存，hard 不跳过权限、同设备与恢复边界。
 
-hard 的 union／owned 各最多 200000 路径／64 MiB 名称，路径4096字节／128分量，revision4096字节。共享纯预算 API 已实现，合计 Work／metadata 数量、路径、元数据前后镜像及 journal 预算在备份捕获前校验；两份合法 Index 也可能因为同时存入 journal 超限。Reset 与 Rm 已通过子项验收；mv 尚未交付，Phase 2 仍未整体验收。
+hard 的 union／owned 各最多 200000 路径／64 MiB 名称，路径4096字节／128分量，revision4096字节。共享纯预算 API 已实现，合计 Work／metadata 数量、路径、元数据前后镜像及 journal 预算在备份捕获前校验；两份合法 Index 也可能因为同时存入 journal 超限。Reset、Rm 与 Mv 已通过子项验收；Phase 2 仍未整体验收。
 
 ## Remove：删除范围与丢弃内容的授权分开检查
 
@@ -350,13 +350,40 @@ flowchart TD
 
 目录 prefix 通常只生成叶文件的删除目标，已有父目录不改，从而保留未知／忽略兄弟与空目录。只有选中的 tracked File 实际变为 Directory，才需要检查其完整目录内容；精确位置授权不继承给陌生 child。普通模式视此为本地改动，force 仍保护未知子项和软链／特殊文件。
 
-非 force 的工作区安全判断与后续 planner 必须使用一致的真实 C：规划结果的 before 再与先前内容／完整权限比较，避免长准备过程中用新 dirty 内容替换原判断。cached 的 B==C 只读校验不产生 WorkChange，也不锁外部编辑器。词法选择、有界路径集合与 Index 类型／编码预算已提取到 core-private [checkout_support.hpp](../src/core/checkout_support.hpp)／[checkout_support.cpp](../src/core/checkout_support.cpp)，Restore、Reset 和 Remove 调用同一组纯检查；没有新公共 Repository 路径接口，尚未验收 mv。
+非 force 的工作区安全判断与后续 planner 必须使用一致的真实 C：规划结果的 before 再与先前内容／完整权限比较，避免长准备过程中用新 dirty 内容替换原判断。cached 的 B==C 只读校验不产生 WorkChange，也不锁外部编辑器。词法选择、有界路径集合与 Index 类型／编码预算已提取到 core-private [checkout_support.hpp](../src/core/checkout_support.hpp)／[checkout_support.cpp](../src/core/checkout_support.cpp)，Restore、Reset 和 Remove 调用同一组纯检查；没有新公共 Repository 路径接口，Mv 已通过子项验收。
+
+## Move：同一路径变换保留两份独立版本
+
+Mv 已通过子项验收，[move.hpp](../include/minigit/move.hpp) 的 move_path 自取一次 RepoLock，CLI 每次只接受 source／destination。词法路径规范化与完整 Index 对象检查复用 checkout_support；业务单独判断源实体、目的碰撞和目录完整授权，不把这些策略加入共享 helper。
+
+| 数据 | 源状态 | 迁移后的目的状态 |
+| --- | --- | --- |
+| Index B | 所选正常 stage 0 的 mode／ID | 原 mode／ID，仅替换路径 |
+| Work C | 实际普通文件的字节、执行位、完整权限 | 实际 C 的 Blob／完整权限 |
+| HEAD A | 已提交快照 | 不改变 |
+
+源的 B 与 C 可不同，所选冲突拒绝，未选阶段保留。先检查源／目的无 payload 拓扑，再校验完整最终 Index 的编码、D/F 与预算，并检查 Index 元数据计划预算，随后逐文件捕获 C。共享 planner 的实际源目录库存必须全部已知，每个文件为所选路径，每个目录有所选后代。未知／忽略 child、陌生 emptyDir 或软链／FIFO 不随目录源自动迁移。
+
+目的为已有普通 Directory 时追加 source basename 一次，随后 final root 的任何实际节点或 Index exact／后代占用都拒绝；同内容不等于覆盖许可。根、自身、目录后代或祖先重叠拒绝。目的 required parents 默认 0755，已有不变父目录保留权限；首版迁移文件完整权限，不迁移源目录权限。
+
+```mermaid
+flowchart TD
+    I[词法源目的 / 完整 Index typed 检查] --> C[源目的拓扑 / final root 无碰撞]
+    C --> M[路径映射 / 最终 Index schema与元数据计划预算]
+    M --> B[逐文件保存实际 C Blob / 完整权限]
+    B --> P[Index B 路径映射 + Work C 目标]
+    P --> W[共享 planner 库存与总预算 / 核对 source before 与 destination Absent]
+    W --> T[一次 Transaction: 源删除 + 目的写入 + Index]
+    T --> H[HEAD / refs / 日志 / identity 不变]
+```
+
+捕获 C 后的规划拒绝可遗留不可达的不可变 Blob，不发布工作文件或 Index；execute_transaction 开始后的执行中断可能留下 pending journal 与部分更新，必须 recover。这一边界无需先构造整目录 provisional 计划；完整事务预算由共享 planner 再验证。源真实 before、目的 Absent 与事务预检分别约束不同阶段，RepoLock 仍不锁外部编辑器。实际调用链见导读，Mv 子项已验收，Phase 2 整体验收仍待单独核对。
 
 ## WorktreeUpdate：把授权目标变为真实节点计划
 
 [worktree_update.hpp](../include/minigit/worktree_update.hpp) 提供 `WorktreeTarget`、`WorktreeTargets`、`plan_worktree_update` 与 `plan_index_update`。二者都要求 caller-held RepoLock，不取得第二把锁。业务层选择目标、决定哪些旧路径可改，再把工作区、Index、HEAD 和引用日志组合到同一个 TransactionPlan；规划器不自行决定 switch 或 reset 的策略，也不提供这些 CLI。
 
-WorktreeTarget 的可选 FileState 表示目标文件，空 optional 表示该路径不再作为普通文件；若新子路径需要它成为父目录，最终节点会由文件转为目录，否则删除。指向空 Blob 则表示保留零字节文件。可选完整权限默认从模式取得 `0644`／`0755`，显式权限必须与 `100644`／`100755` 的执行位一致，仍遵循事务的权限边界。未来 mv 可以保留完整权限，而不是只把内容变成普通 0644 文件。
+WorktreeTarget 的可选 FileState 表示目标文件，空 optional 表示该路径不再作为普通文件；若新子路径需要它成为父目录，最终节点会由文件转为目录，否则删除。指向空 Blob 则表示保留零字节文件。可选完整权限默认从模式取得 `0644`／`0755`，显式权限必须与 `100644`／`100755` 的执行位一致，仍遵循事务的权限边界。已接入的 mv 用显式权限保留实际文件完整权限，而不是只把内容变成普通 0644 文件。
 
 ```mermaid
 flowchart TD
