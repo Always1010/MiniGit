@@ -274,4 +274,18 @@ bash examples/experiments/remove.sh ./build/debug/minigit
 
 cached 保留磁盘版本，所以可在 B==A 时删除 Index，即使 C 已修改；B 不等于 A 时，B==C 也能保住暂存内容。若 A/B/C 都不同，cached 拒绝，cached force 才明确放弃该保护。脚本还把一个工作文件变成软链，cached 的 B==A 分支不打开它，外部目标不变。
 
-目录 -r 删除所选 tracked leaves，未知／忽略 sibling 和 emptyDir 留下；tracked File 变成含 private 的目录后，普通模式与 force 都不能抹掉陌生 child。最后比较 HEAD、ref、两份 reflog 和 identity 原字节，说明“准备删除”与“移动历史”不同。两种预设的该实验均已运行通过；Mv 仍未交付，Phase 2 尚未整体验收。
+目录 -r 删除所选 tracked leaves，未知／忽略 sibling 和 emptyDir 留下；tracked File 变成含 private 的目录后，普通模式与 force 都不能抹掉陌生 child。最后比较 HEAD、ref、两份 reflog 和 identity 原字节，说明“准备删除”与“移动历史”不同。两种预设的该实验均已运行通过；Mv 子项也已验收，Phase 2 整体验收仍另行核对。
+
+## 迁移实验：名字一起变，版本仍分开
+
+[迁移实验](../examples/experiments/move.sh) 两种预设均已实际运行通过。构建后可重放：
+
+```sh
+bash examples/experiments/move.sh ./build/debug/minigit
+```
+
+先把 source 暂存为 B，再把实际文件编辑成 C 并设为可执行。迁移后 show :renamed 仍输出 B，磁盘 renamed 仍是 C，完整权限保持 0751；暂存差异的新路径模式仍是 100644，状态显示 AM。这是“迁移名字”与“暂存新字节”的区别，不能用一次 add 省略独立状态。
+
+目的即使已有相同字节也拒绝；仅 Index 中有目的、实际文件已删也不能覆盖。每次失败前保存 Index、HEAD、ref、日志、身份和有关文件，再 cmp 原状，不能在失败后才截取 baseline。已有目的目录追加 basename 并保留权限；迁移目录的多个叶文件保留各自 B／C，新目录采用 0755，不复制源目录 0700。
+
+加入被忽略的 private child、再换成陌生 emptyDir，目录迁移两次都拒绝；精确跟踪路径不授权这些子项。最后 -- 传入选项样名称，确认 HEAD 与日志从实验开始到结束保持原字节。Mv 子项已验收，Phase 2 的整体验收另行记录。规划拒绝不会发布可变状态，但执行中断可能已有部分更新，必须依据 journal 执行 recover；两种情况要分别解释。

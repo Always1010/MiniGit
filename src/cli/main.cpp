@@ -19,6 +19,7 @@
 #include "minigit/restore.hpp"
 #include "minigit/reset.hpp"
 #include "minigit/remove.hpp"
+#include "minigit/move.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -65,6 +66,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  restore [-s revision] [-S] [-W] [--] <paths...>  Restore selected paths\n"
                      "  reset [--soft|--mixed|--hard] [revision]  Reset HEAD and optional state\n"
                      "  rm [-r] [-f] [--cached] [--] <paths...>  Remove tracked paths\n"
+                     "  mv [--] <source> <destination>  Move a tracked file or directory\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -323,6 +325,19 @@ int run(const std::vector<std::string_view>& args) {
         const auto head = minigit::switch_worktree(minigit::Repository::discover(), options);
         if (head.symbolic) std::cout << "Switched to branch " << minigit::quote_path(head.symbolic->substr(11)) << '\n';
         else std::cout << "HEAD detached at " << head.id->hex() << '\n';
+        return 0;
+    }
+    if (command == "mv") {
+        bool options = true;
+        std::vector<std::filesystem::path> paths;
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            if (options && args[i] == "--") { options = false; continue; }
+            if ((options && args[i].starts_with('-')) || paths.size() == 2)
+                throw UsageError("mv accepts one source and one destination, without options");
+            paths.emplace_back(args[i]);
+        }
+        if (paths.size() != 2) throw UsageError("mv requires one source and one destination");
+        minigit::move_path(minigit::Repository::discover(), paths[0], paths[1]);
         return 0;
     }
     if (command == "rm") {

@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -74,9 +74,10 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 13 | Restore | 来源、路径范围与 Work／Index 目的如何分开？ |
 | 14 | Reset | 模式如何扩大发布范围，同 ID 为何仍处理 Index／Work？ |
 | 15 | Remove（已验收） | 为何 cached 有两条安全路径，force 仍保护未知内容？ |
-| 16 | Operations（计划） | 继续／中止怎样跨进程保持？ |
+| 16 | Move（已验收） | Index 路径映射怎样与实际工作字节迁移分开？ |
+| 17 | Operations（计划） | 继续／中止怎样跨进程保持？ |
 
-表中前十五项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，mv 仍为计划。依赖关系见 [架构](architecture.md)。
+表中前十六项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -260,3 +261,15 @@ plan_move_head 使用原 before_head.symbolic 与 target_id，保留当前分支
 [remove.sh](../examples/experiments/remove.sh) 已准备 clean／真实缺失、staged-only／dirty拒绝、cached 两条件／force、目录 -r、未知 child、选项样名称及 HEAD／日志不变。每个失败先保存元数据 baseline，实际文件也在操作前复制再 cmp；两种预设均已运行通过。
 
 [test_remove.cpp](../tests/unit/test_remove.cpp) 的七组语义用例覆盖普通批次原子保护、cached 短路与 force、词法范围与 -r、所选／未选冲突、真实缺失与未知目录保护、unborn／detached／坏输入及 Prepared／Committed 两个恢复边界。本轮还复验共享提取影响的 Restore、Reset 和关联 CLI；实际筛选与注册规模分别记录在进度页。
+
+## Move：复制状态模型，再统一发布
+
+Mv 已通过子项验收，[move.hpp](../include/minigit/move.hpp) 的 move_path 在 [move.cpp](../src/core/move.cpp) 自取一次锁；CLI 参数重放见 [move_cli.cmake](../tests/integration/move_cli.cmake)，单元覆盖见 [test_move.cpp](../tests/unit/test_move.cpp)，两种预设定向检查均通过。共享 checkout_support 只负责词法规范化、有界集合、选择及 typed Index，不承担目的覆盖或源目录授权。
+
+C++ 阅读重点是把两份状态分别保存：IndexEntry 的 mode／ID 可值复制并改 path；实际 C 的 NodeImage／FileData 包含完整权限，不能从 B 推导 C。每个工作文件读取后释放 payload，只保留有限路径／ID／权限，不持有整目录字节。目的已有 Directory 只影响 final root 解释一次，不能反复追加 basename。
+
+实际顺序为 normalize_selectors → load_index／check_index_objects → select_known_paths／所选冲突 → inspect_path 源目的拓扑与 final root 碰撞 → 路径映射／最终 Index encode → plan_index_update／元数据计划 validate_transaction_budget → C 读取与 capture_work_node → plan_worktree_update 的目录库存／完整预算 → planned_change 核对 → execute_transaction。inspect_path 只读无跟随拓扑，不读 payload；完整目录库存留给共享 planner。source before 须保持此前观察的 C，destination 须真正 Absent；即使 planner 因同字节未知目的而省略 change，业务也不能默认许可覆盖。晚规划拒绝可留下不可变对象，不发布 Work／Index；执行中断可能留下待恢复事务与部分更新，需 recover。私有 below 检查带分隔符的祖先边界，planned_change 要求 source／destination 真有对应改动，避免“规划器省略”掩盖外部变化。
+
+[move.sh](../examples/experiments/move.sh) 已准备 MM 中 B／C 内容与执行位分离、完整权限、同字节与 Index-only 碰撞、已有目的目录 basename、多叶目录、未知／忽略 child／emptyDir、选项样名称及 HEAD／日志不变；两种构建的实际实验均通过。
+
+Move 的七组单元用例分别检查 B／C 字节与模式／完整权限、目的碰撞和 basename、未知库存、自身重叠与 Index 拓扑／冲突、全对象与不安全节点、unborn／detached／词法路径，以及 dirty 源和目录映射的 Prepared／Committed 恢复。该恢复用例验证执行中断后的真实现场，不能由“规划失败无发布”替代恢复契约；实际命令与范围见进度页。
