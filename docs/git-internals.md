@@ -131,7 +131,7 @@ MiniGit 将当前分支引用、HEAD 日志和分支日志放入同一短事务�
 
 设 HEAD=A、Index=B、实际工作区=C，本次请求目标为 D。业务命令先决定 C 是否可以覆盖；获得授权后，规划器把 C 捕获为 before、D 作为 after。此时 Prepared 恢复必须回到 C，不能拿 A 或 B 代替“操作前实际文件”。这是短事务 rollback；restore 与 reset 选择历史版本作为业务目标，又是另外一层语义。`minigit recover` 不让用户选择某个提交，它按已有事务状态完成恢复。
 
-部分更新也不能把未列出的路径当成删除。只要求改写 dir/a 时，dir/b 可以是未跟踪文件，已有 dir 目录无需加入计划。若目标改成一个名为 dir 的文件，就必须检查整个 dir，证明每个旧文件已授权且明确删除；未知内容和陌生空子目录会阻止转换。若原已授权文件位置本身变为空目录，可以按显式目标移除这个空节点；不能由父位置授权推导出子项也可删除。所有这些检查已由共享规划器实现；switch、restore 已接入，reset 三模式重置已通过子项验收，rm／mv 随后接入，验证证据见进度页。
+部分更新也不能把未列出的路径当成删除。只要求改写 dir/a 时，dir/b 可以是未跟踪文件，已有 dir 目录无需加入计划。若目标改成一个名为 dir 的文件，就必须检查整个 dir，证明每个旧文件已授权且明确删除；未知内容和陌生空子目录会阻止转换。若原已授权文件位置本身变为空目录，可以按显式目标移除这个空节点；不能由父位置授权推导出子项也可删除。所有这些检查已由共享规划器实现；switch、restore 已接入，reset 三模式重置已通过子项验收，rm 删除与取消暂存已通过子项验收，mv 随后接入，验证证据见进度页。
 
 ## Switch 不要求切换后所有文件都等于目标
 
@@ -156,6 +156,14 @@ MiniGit 将当前分支引用、HEAD 日志和分支日志放入同一短事务�
 同 ID hard reset 仍可能清除 staged／working 修改，故不能把“引用没移动”当作整命令无操作。反过来，引用真正移动时会追加 reset:soft／mixed／hard 事件，旧 Commit 的 parent 不会改变。没有 ORIG_HEAD 或 reflog 选择器，不能将事件展示直接当作撤销接口。
 
 hard 授权丢弃已跟踪编辑，但只对旧 HEAD 和旧 Index 的精确文件路径负责；未知目录内容不会因为整个 reset 的名称获得删除权。它和 Restore 的范围选择、Switch 的兼容保留策略不同，三者仍共用捕获实际 before 与短事务恢复。Reset 已通过子项验收，不声称与 Git 所有模式和未知文件处理兼容。
+
+## Rm 把删除放入 Index，不直接改历史
+
+普通 rm 删除已知工作文件并移除 Index 条目，下一次 commit 才记录删除；--cached 保留实际文件，只移除 Index。它不会改 HEAD 或追加引用事件，Prepared 恢复仍可找回被删实际字节与原 Index。与 Restore、Reset 相同，删除也要先保存可恢复的真实 before。
+
+cached 的内容规则允许 B 等于 HEAD 或磁盘版本，目的是避免无意丢掉仅存在于 Index 的版本；目录 prefix 需 -r，并只选择已知路径。这些概念可与 [Git 官方 git-rm 文档](https://git-scm.com/docs/git-rm)对照。MiniGit 使用 exact／prefix，无 glob，成功默认静默；它另有明确的未知目录及特殊类型保护，不实现 Git 全部 pathspec、dry-run 或 sparse 功能。
+
+Rm 已通过子项验收。普通模式将 Directory 当成本地类型变化，不能借“没有普通 FileState”得出缺失；force 只改变内容丢弃策略，不能把 owned 祖先变成递归授权。cached 则先利用 B==A 的纯对象判断避免无关物理工作路径读取。
 
 ## MiniGit 如何处理更新中断
 

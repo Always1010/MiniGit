@@ -261,3 +261,17 @@ bash examples/experiments/reset.sh ./build/debug/minigit
 Detached 的三模式直接移动 HEAD，原分支 ref 与日志始终保持；未出生默认 soft 保留 staged／working，默认 mixed 清 Index，hard 删重新暂存的 tracked 文件而保留 unknown。显式 HEAD 在未出生时失败，不把缺失提交偷换为空目标。每次成功 reset 都验证 stdout 为空，移动事件按实际 reflog 文本核对。
 
 C++ 练习：若在 reset_repository 中加入“目标 ID 等于当前 ID 就返回”，会怎样影响 mixed／hard？这里真正应比较的是各自发布范围的状态，而不是用一个“目标 ID 相同”布尔值替代整个操作。Reset 没有路径参数，选择性 Index 恢复仍使用 restore --staged。
+
+## 删除实验：保住仅存在于暂存区的版本
+
+[删除实验](../examples/experiments/remove.sh) 已在两种预设运行通过，构建后可重放：
+
+```sh
+bash examples/experiments/remove.sh ./build/debug/minigit
+```
+
+从 A=HEAD、B=Index、C=Work 三列理解普通 rm：只暂存 B 后，即使磁盘也等于 B，仍不能普通删除，因为 B 是尚未提交的独有版本；force 明确允许丢弃。一个批次里前面 clean、后面 dirty 时，必须先全量判断，再一起发布，不能先删掉 clean。
+
+cached 保留磁盘版本，所以可在 B==A 时删除 Index，即使 C 已修改；B 不等于 A 时，B==C 也能保住暂存内容。若 A/B/C 都不同，cached 拒绝，cached force 才明确放弃该保护。脚本还把一个工作文件变成软链，cached 的 B==A 分支不打开它，外部目标不变。
+
+目录 -r 删除所选 tracked leaves，未知／忽略 sibling 和 emptyDir 留下；tracked File 变成含 private 的目录后，普通模式与 force 都不能抹掉陌生 child。最后比较 HEAD、ref、两份 reflog 和 identity 原字节，说明“准备删除”与“移动历史”不同。两种预设的该实验均已运行通过；Mv 仍未交付，Phase 2 尚未整体验收。

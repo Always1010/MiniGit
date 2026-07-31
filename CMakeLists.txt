@@ -29,6 +29,8 @@ add_library(minigit_core
     src/core/switch.cpp
     src/core/restore.cpp
     src/core/reset.cpp
+    src/core/remove.cpp
+    src/core/checkout_support.cpp
     src/core/index.cpp
     src/core/worktree.cpp
     src/core/worktree_update.cpp
@@ -65,6 +67,7 @@ if(BUILD_TESTING)
         tests/unit/test_switch.cpp
         tests/unit/test_restore.cpp
         tests/unit/test_reset.cpp
+        tests/unit/test_remove.cpp
         tests/unit/test_repository.cpp
         tests/unit/test_staging.cpp
         tests/unit/test_worktree_update.cpp
@@ -110,4 +113,6 @@ if(BUILD_TESTING)
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/restore_cli.cmake)
     add_test(NAME reset_cli COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/reset_cli.cmake)
+    add_test(NAME remove_cli COMMAND ${CMAKE_COMMAND}
+        -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/remove_cli.cmake)
 endif()
