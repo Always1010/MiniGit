@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；Phase 2 尚未整体验收；继续逐项推进至 Phase 4。
+Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；Phase 2 尚未整体验收；继续逐项推进至 Phase 4。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 108 个单元及 14 个 CLI 用例，共 122 项 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 116 个单元及 15 个 CLI 用例，共 131 项 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
 | 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
 | Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
@@ -29,6 +29,7 @@ Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/
 | Phase 2 子项：共享工作区与 Index 更新规划器 | 已验收 | 两种预设构建无警告，Debug 16 项及受影响 1 项复验通过；完整验证证据见下文，无新增 CLI |
 | Phase 2 子项：switch 工作区切换 | 已验收 | 原定向每种预设 25 项、预算补充后 Debug 10 项及优化 sanitized 全量 112 项通过；切换实验通过 |
 | Phase 2 子项：restore 内容恢复 | 已验收 | Debug 首轮 12 项及失败 fixture 修正后 1 项复验、sanitized 13 项通过；两种预设恢复实验通过 |
+| Phase 2 子项：reset 三模式重置 | 已验收 | 两种预设各 18 项定向检查与重置实验通过，无编译警告或 ASan/UBSan 报告 |
 | Phase 2 其余及 Phase 3 至 Phase 4 | 计划 | 尚未实现或验收 |
 
 已执行的 Debug 验证：
@@ -197,7 +198,19 @@ Restore 新增 8 个单元与 1 个 CLI，连同此前独立共享预算用例�
 
 `ctest --preset debug -R '^unit\.Restore|^(restore_cli|status_cli|diff_cli|show_cli|staging_cli)$' --output-on-failure` 首轮 13 项中 12 项通过，1 项测试错误：成功的 Index-only 事务也保存元数据镜像 Blob，原对象数不变断言错误。仅将该测试基线移到成功之后，保留 FIFO／软链及失败不新增对象的断言；`-R '^unit\.Restore protects'` 的受影响 1 项复验通过，用时 1.65 秒，生产代码未改。对应 sanitized 筛选首轮 13 项全部通过，用时 20.63 秒，无 ASan/UBSan 报告；范围为 8 单元与含 Restore 在内的 5 个 CLI。
 
-共享纯预算修复此前独立提交，工作区备份捕获前检查完整事务总数／字节预算，相关 17 项在 Debug／sanitized 各全部通过，分别用时 16.50／69.67 秒；机制见构建与验证策略。`bash examples/experiments/restore.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，覆盖各来源／目的、删除与空 Blob、双向 D/F、未知保护及 HEAD／ref／日志／identity 不变。脚本语法、七份文档 158 个相对链接与代码围栏及 `git diff --check` 通过。没有执行当前全部 122 项，也没有宣称 Phase 2 整体验收；reset、rm、mv 仍未交付。
+共享纯预算修复此前独立提交，工作区备份捕获前检查完整事务总数／字节预算，相关 17 项在 Debug／sanitized 各全部通过，分别用时 16.50／69.67 秒；机制见构建与验证策略。`bash examples/experiments/restore.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，覆盖各来源／目的、删除与空 Blob、双向 D/F、未知保护及 HEAD／ref／日志／identity 不变。脚本语法、七份文档 158 个相对链接与代码围栏及 `git diff --check` 通过。该 Restore 验收轮没有执行全部 122 项，也没有宣称 Phase 2 整体验收；当时 reset、rm、mv 仍未交付，Reset 随后接入见下一子项。
+
+### Reset 三模式重置：已验收
+
+ResetMode 为 Soft／Mixed／Hard，默认 Mixed，revision 缺失默认当前 HEAD。soft 只移动历史位置和日志，mixed 再完整重置 Index，hard 再恢复旧 HEAD／原 Index／目标并集的 Work；保留当前符号分支名称或 detached 状态。soft 拒绝任何冲突，mixed／hard 清阶段；metadata-only 不探测实际工作文件。
+
+同 ID 仍处理 Index／Work，不追加移动事件；默认 unborn 空目标与显式 HEAD 解析失败区分，默认不创建空 ref／日志。hard 明确可丢弃精确旧 tracked 修改，继续保护需要改写的未知／忽略文件、陌生目录子项及特殊类型。完整 Index／目标对象、最终编码、union 和已实现共享纯预算均先于捕获／事务发布；一次事务含 HEAD/ref、日志、Index、Work，不实现路径 reset／ORIG_HEAD／keep／merge／reflog 选择器。
+
+Reset 新增 8 个单元与 1 个 CLI 用例，CTest JSON 注册清单核对当前注册 116 单元、15 CLI，共 131 项；注册规模不表示本轮全量执行。两种预设构建均无警告，独立审查通过。
+
+`ctest --preset debug -R '^unit\.Reset|^(reset_cli|recovery_cli|reflog_cli|branches_cli|switch_cli|restore_cli|status_cli|diff_cli|show_cli|cli_basics)$' --output-on-failure` 与 sanitized 对应命令，各 18 项全部通过，分别用时 25.98／40.78 秒；实际范围为 8 个新单元与 10 个关联 CLI，无 ASan/UBSan 报告。
+
+`bash examples/experiments/reset.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，验证 A/B/C/D 三模式、默认 mixed、同 ID dirty 恢复、unborn／detached、双向 D/F、未知子项拒绝前后快照及引用日志事件。七份文档 166 个相对链接、代码围栏、脚本 `bash -n` 与 `git diff --check` 通过。未执行全部 131 项，Phase 2 尚未整体验收；rm／mv 随后推进。
 
 ## Phase 3：可恢复的合并与应用
 
@@ -213,4 +226,4 @@ Restore 新增 8 个单元与 1 个 CLI，连同此前独立共享预算用例�
 
 ## 下一步
 
-Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，下一步逐项推进 reset、rm、mv，持续推进至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，下一步逐项推进 rm、mv，持续推进至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。

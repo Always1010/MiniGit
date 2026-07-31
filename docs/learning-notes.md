@@ -182,7 +182,7 @@ bash examples/experiments/reflog.sh ./build/debug/minigit
 
 [脚本](../examples/experiments/reflog.sh) 在临时仓库提交 A、B，从分支引用取得实际完整 ID，再核对 `reflog` 的最新事件为 A→B、较旧事件为缺失→A，同时用 cmp 比较 HEAD 与 main 的 MGRL 字节。两个预设的实验和 reflog 子项验收已通过；详细证据见 [进度](progress.md)。提交 ID 由实际内容和业务元数据决定，实验不硬编码摘要或开发日期。
 
-在另一份临时仓库执行相同两次提交，再分别运行 `minigit log --oneline`、`minigit reflog`、`minigit reflog main`。log 根据 parent 读到 B、A；reflog 根据保存的事件逆序展示 A→B、缺失→A。为两个输出画两张图：前者的边连接 Commit，后者的边描述引用位置变化。switch 已能产生 B→A 或 A→A 事件，未来 reset 也会复用它，而已有 Commit 的 parent 不会随之改变。
+在另一份临时仓库执行相同两次提交，再分别运行 `minigit log --oneline`、`minigit reflog`、`minigit reflog main`。log 根据 parent 读到 B、A；reflog 根据保存的事件逆序展示 A→B、缺失→A。为两个输出画两张图：前者的边连接 Commit，后者的边描述引用位置变化。switch 已能产生 B→A 或 A→A 事件，Reset 已复用它并通过子项验收，而已有 Commit 的 parent 不会随之改变。
 
 C++ 学习练习是比较这两个类型：`CommitGraph` 用 map 去重并服务拓扑排序，`Reflog` 用 vector 保留发生顺序。若把事件存入 set 去重，同一位置的重复访问可能丢失；若把事件边塞进提交图，合法回退又可能被误判为 DAG 环。容器选择应来自数据含义，而不是只考虑哪个接口更方便。
 
@@ -245,3 +245,19 @@ bash examples/experiments/restore.sh ./build/debug/minigit
 历史 A 中 dir 是目录，当前 D 中 dir 是普通文件；根／目录 prefix 选择让全部旧节点进入转换计划。加入 dir/private 后，再恢复 D 必须拒绝并保持 Index 与文件，而不是因为选择了 dir 就删除陌生 child。来源缺少 obsolete 时删除已选旧文件，empty 的零字节 Blob 仍存在。另在仅历史来源有的 obsolete 位置放未知文件，显式 source 也不能覆盖它。
 
 脚本最后 cmp HEAD、当前分支 ref、两份 reflog 和 identity，确认恢复没有改变历史位置。C++ 练习再画冲突 stages：显式历史只恢复 Work 时阶段还在，staged 目的才清除所选阶段；未选中冲突必须原样保留。相关测试、实验与复验的执行证据见进度页。
+
+## 重置实验：先列出允许改变的状态
+
+[重置实验](../examples/experiments/reset.sh) 在 Debug 与 sanitized 下均已通过，构建后可重复运行：
+
+```sh
+bash examples/experiments/reset.sh ./build/debug/minigit
+```
+
+实验保存历史 D，再提交 A，构造 Index=B／Work=C。soft 到 D 保留 B/C，mixed 到 D 让 Index 变 D 而 C 不动；default mixed 的同 ID 也会清暂存版本。随后 hard 到 D 改实际文件与 D/F 结构，并删除目标中缺失的旧文件；empty Blob 仍存在。同 ID hard 还原 dirty 文件，但两份日志字节不变。
+
+在 dir 里加入 private 后，转换为目标普通文件必须拒绝。脚本先复制全部相关元数据和实际文件，再逐项 cmp；删除陌生 child 后转换才成功。不要在失败之后才保存 baseline，那只会证明现场等于它自己。
+
+Detached 的三模式直接移动 HEAD，原分支 ref 与日志始终保持；未出生默认 soft 保留 staged／working，默认 mixed 清 Index，hard 删重新暂存的 tracked 文件而保留 unknown。显式 HEAD 在未出生时失败，不把缺失提交偷换为空目标。每次成功 reset 都验证 stdout 为空，移动事件按实际 reflog 文本核对。
+
+C++ 练习：若在 reset_repository 中加入“目标 ID 等于当前 ID 就返回”，会怎样影响 mixed／hard？这里真正应比较的是各自发布范围的状态，而不是用一个“目标 ID 相同”布尔值替代整个操作。Reset 没有路径参数，选择性 Index 恢复仍使用 restore --staged。
