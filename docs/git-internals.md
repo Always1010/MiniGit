@@ -190,3 +190,9 @@ base=[a,b,c]，ours=[A,b,c]，theirs=[a,b,C] 可以得到 [A,b,C]；仅比较 ou
 纯文本只比较字节，SnapshotMerge 已实现的语义还包括文件存在、执行位与路径结构。base 缺失并不等于 base 是一个空文件；ours 新建 empty、theirs 新建 note 仍是两份新建版本冲突，不能因为空字节相等快捷选择 note。相反，ours 仅改 executable mode、theirs 改内容时，可以把两份独立修改组合。
 
 冲突 stages 保存原始版本，work 的 marker 只是用户将来解决冲突时的呈现内容。D/F 区域还须保持一个实际可发布的布局：选择 ours 的 parent File 就不能同时创建 theirs 的 child File，不自动生成别名。此处是候选结果，真正的工作区保护、Index 发布和 continue／abort 仍待后续业务接入。
+
+## 基线来自父图，不来自文件相等或提交时间
+
+single-lowest merge-base helper 已通过子项验收。两份 Commit 可以具有相同 Tree 却没有共同祖先，因此文件相等不能代替历史关系；共同祖先也不能只沿 first parent 寻找。若共同祖先有 R 和 X，且 X 是 R 的后代，X 才是最低基线，R 仍属于完整校验范围。
+
+先验证全部祖先，再沿 child-before-parent 顺序传播双方可达性与共同后代标记。没有共同后代的共同祖先才留下；多个这样的节点表示 crisscross，本版明确拒绝，不用 ObjectId 或 timestamp 任选一个。没有共同祖先返回 nullopt，未来业务才据此拒绝 unrelated merge。选择基线不展开 Tree；真正合并文件仍需读取选定快照并调用 SnapshotMerge。

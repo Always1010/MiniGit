@@ -78,6 +78,7 @@ if(BUILD_TESTING)
         tests/unit/test_history.cpp
         tests/unit/test_status.cpp
         tests/unit/test_dag.cpp
+        tests/unit/test_merge_base.cpp
         tests/unit/test_tags.cpp
         tests/unit/test_diff.cpp
         tests/unit/test_merge_text.cpp

@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，合并业务与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，合并业务与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -463,4 +463,21 @@ SnapshotMerge 已通过子项验收。[merge_snapshot.hpp](../include/minigit/me
 
 干净 Index 为 stage 0；冲突记录原始 1／2／3，缺失阶段不补零 ID。marker Blob 只在 work 呈现，不能代替原始 stages；内容与 mode 可分别成功或冲突。两侧新建不同 ID 必冲突，包括空文件：非 NUL 分类 AddAdd 并呈现 whole-file marker，NUL 优先分类 Binary 并保留 ours 字节；没有基线的不同 mode 由 mode_conflict 独立报告。最短 D/F 区域升级全部路径为原始 conflict stages，work 只采用 ours 区域布局，不能同时放 parent File 与 child File。
 
-输入纯结构预检与全部对象校验先于新对象保存，按文件读／合并／保存后释放内容。Snapshot／最终 Index 的 100000 distinct 文件预算不是 write_snapshot 的 100000 Tree entries（含目录）预算；深层候选还须后续建树校验。实际源码、语义组与独立性质验证已通过子项验收；下一项是完整 DAG 上的 single-base 选择，尚未发布合并业务。具体例子见 [快照合并学习笔记](learning-notes.md#快照合并原始版本与呈现内容各有位置)。
+输入纯结构预检与全部对象校验先于新对象保存，按文件读／合并／保存后释放内容。Snapshot／最终 Index 的 100000 distinct 文件预算不是 write_snapshot 的 100000 Tree entries（含目录）预算；深层候选还须后续建树校验。实际源码、语义组与独立性质验证已通过子项验收；完整 DAG 上的 single-base 选择见下节，尚未发布合并业务。具体例子见 [快照合并学习笔记](learning-notes.md#快照合并原始版本与呈现内容各有位置)。
+
+## Single-lowest merge base：先完整验证父图
+
+此 helper 已通过子项验收，无新 CLI。接口 find_merge_base(repo, left, right) 要求调用者持有 RepoLock，返回 optional<ObjectId>，复用已有 load_commit_graph 与 topological_order；先完整读取双方祖先闭包并校验类型、对象、父边与环，再作基线选择。same ID 或快进关系也不能绕过深层损坏检查，不读取任何 Tree 或工作区。
+
+在 child-before-parent 顺序中，第一轮把两 root 的标记沿全部 parents 作 OR，得到双方可达的共同祖先；第二轮把“本节点是共同祖先或已有共同后代”的标记传播给父节点。共同祖先且没有共同后代者才是 lowest；它表达父图偏序，不是时间最新。零个返回 nullopt，一个返回该 ID，多个报 Error，不构造递归虚拟基线。未来 merge 业务明确拒绝 unrelated histories；helper 的 nullopt 本身不执行业务拒绝或发布。
+
+```mermaid
+flowchart LR
+    R[两个 Commit ID] --> G[完整祖先闭包 / 预算与对象校验]
+    G --> T[拓扑校验 / child-before-parent]
+    T --> A[全部父边传播两侧 reachable]
+    A --> D[全部父边传播共同后代]
+    D --> L[唯一 lowest / nullopt / 多基线 Error]
+```
+
+继承 DAG 的 100000 节点、1000000 父边及 64 MiB 解码数据预算；重复父边的 OR 幂等。实际两轮传播与接口已核对，构建、语义测试及独立 DAG 性质验证通过，精确范围见进度页。下一层先补完整 Directory WorktreeTargets，再建立 caller-lock CommitFactory 与持久 Operation codec，之后才能组合 SnapshotMerge 与事务发布。

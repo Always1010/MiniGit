@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，无合并业务 CLI。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，无合并业务 CLI。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -77,9 +77,10 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 16 | Move（已验收） | Index 路径映射怎样与实际工作字节迁移分开？ |
 | 17 | 纯文本合并（已验收） | 基线坐标、点插入、完整区块重放与 LF 怎样决定冲突？ |
 | 18 | SnapshotMerge（已验收） | 原始 stages、marker 工作内容与 D/F 区域如何区分？ |
-| 19 | Operations（计划） | 继续／中止怎样跨进程保持？ |
+| 19 | Single-lowest merge base（已验收） | 如何从完整父图剔除非最低共同祖先？ |
+| 20 | Operations（计划） | 继续／中止怎样跨进程保持？ |
 
-表中前十七项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
+表中前十九项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -290,4 +291,10 @@ span 与 Line 只借用输入，TextMergeResult 的 Bytes 拥有输出；base �
 
 阅读时追踪两个输出：IndexEntry 保存原始 B/O/T 的 ID 与 mode，work 保存干净选择、合并或 marker 的 FileState。全状态 optional 快捷判断包含存在和 mode，随后内容与模式分别作三方判断；创建冲突须确认“base 不存在、两侧内容 ID 不同”，不能把缺失当空字节交给恒等快捷路径。NUL 优先分类 Binary 且保留 ours 字节；非 NUL 由 add_add_marker 生成 whole-file marker，分类 AddAdd，TextConflict 的 base_count=0。mode_conflict 与主 kind 并行，多个冲突维度不因分类互相覆盖。
 
-D/F 用可能的最终存在路径找最短区域，而不是机械合并三个输入的名字；祖先检查须覆盖全部路径分量，p-other 不能让 p 与 p/x 的碰撞漏掉。整个区域的原 stage 0 候选也要升级为原始 stages，工作布局只保留 ours。最终 sorted Index 要经预算与 encode_index，work 要复验无 D/F；实际链为 snapshot_index 的各输入 schema → 有界 union 与去重 typed IDs → choose 计算 possible → region_at 最短 D/F 区域 → scalar 的内容／mode 或 read_blob／add_add_marker／merge_text → IndexOutput → 最终 Index 与 work schema。choose 比较完整 optional<FileState>，scalar 才分别比较单项；D/F 在文本化前判定，避免生成本会丢弃的 marker。八组测试覆盖完整状态选择、内容／mode 独立组合、原始 stages 与 marker、含空文件的 AddAdd、删除与二进制、最短 D/F 区域、全部输入前检及 union／最终 distinct 预算。AddAdd 单独验证 100001 行拒绝与接近 64 MiB 的 marker 膨胀，不借空 base 的快捷路径绕过限制。核心已验收，没有 CLI／事务发布调用；下一项 single-base 选择复用完整 DAG 校验。
+D/F 用可能的最终存在路径找最短区域，而不是机械合并三个输入的名字；祖先检查须覆盖全部路径分量，p-other 不能让 p 与 p/x 的碰撞漏掉。整个区域的原 stage 0 候选也要升级为原始 stages，工作布局只保留 ours。最终 sorted Index 要经预算与 encode_index，work 要复验无 D/F；实际链为 snapshot_index 的各输入 schema → 有界 union 与去重 typed IDs → choose 计算 possible → region_at 最短 D/F 区域 → scalar 的内容／mode 或 read_blob／add_add_marker／merge_text → IndexOutput → 最终 Index 与 work schema。choose 比较完整 optional<FileState>，scalar 才分别比较单项；D/F 在文本化前判定，避免生成本会丢弃的 marker。八组测试覆盖完整状态选择、内容／mode 独立组合、原始 stages 与 marker、含空文件的 AddAdd、删除与二进制、最短 D/F 区域、全部输入前检及 union／最终 distinct 预算。AddAdd 单独验证 100001 行拒绝与接近 64 MiB 的 marker 膨胀，不借空 base 的快捷路径绕过限制。核心已验收，没有 CLI／事务发布调用；下节 single-base 选择复用完整 DAG 校验。
+
+## Merge base：两轮传播都走全部 parents
+
+find_merge_base 已通过子项验收，不是新命令。先复习 [dag.hpp](../include/minigit/dag.hpp) 与 [dag.cpp](../src/core/dag.cpp)：load_commit_graph 有界加载完整 Commit 闭包，topological_order 验证全部 parent membership 与环，提供 child-before-parent 顺序，available-node ties 用 ObjectId 字节顺序。这个 tie 规则只保证遍历稳定，不可代替多个基线的业务定义。
+
+实际链为 load_commit_graph → topological_order → Reach 的 mask／common_descendant 初始化 → 两 root 的两位标记 → 第一轮沿全部 parents OR → 第二轮向 parents 传播共同祖先／共同后代 → 收集 common 且无共同后代的节点。不能在 same ID／ancestor 检查前漏掉完整图校验；重复父边不应改变集合含义。[test_merge_base.cpp](../tests/unit/test_merge_base.cpp) 已有八组语义，涵盖 same tip、祖先双方向、私有链、非 first-parent／父顺序、diamond、crisscross、无关同 Tree／重复父边及损坏深祖先。无 Tree 展开也有实际 fixture：删除 Tree 对象后，父图查询仍应得到相同结果；它不承诺该 Commit 可被发布。未重复已有 incomplete／cycle／大预算测试，八组与相关 DAG／日志回归均通过，实际范围见进度页。返回 optional 区分“没有共同祖先”，多最低基线则 Error；后续业务另处理这个缺失值。

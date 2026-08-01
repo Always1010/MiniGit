@@ -77,6 +77,35 @@ std::vector<ObjectId> topological_order(const CommitGraph& graph) {
     if (result.size() != graph.size()) throw Error("提交图包含环");
     return result;
 }
+std::optional<ObjectId> find_merge_base(const Repository& repo, const ObjectId& left,
+                                       const ObjectId& right) {
+    const auto graph = load_commit_graph(repo, {left, right});
+    const auto order = topological_order(graph);
+    struct Reach { unsigned mask = 0; bool common_descendant = false; };
+    std::map<ObjectId, Reach> reach;
+    for (const auto& [id, commit] : graph) { (void)commit; reach.emplace(id, Reach{}); }
+    reach.at(left).mask |= 1;
+    reach.at(right).mask |= 2;
+    // A parent is visited after every child, including paths through non-first
+    // parents. Duplicate edges only repeat idempotent OR operations.
+    for (const auto& id : order)
+        for (const auto& parent : graph.at(id).parents) reach.at(parent).mask |= reach.at(id).mask;
+    // Only strict ancestors inherit this flag; a common node must not mark itself
+    // as its own common descendant, or every candidate would be discarded.
+    for (const auto& id : order) {
+        const auto& current = reach.at(id);
+        if (current.mask == 3 || current.common_descendant)
+            for (const auto& parent : graph.at(id).parents) reach.at(parent).common_descendant = true;
+    }
+    std::optional<ObjectId> result;
+    for (const auto& id : order) {
+        const auto& current = reach.at(id);
+        if (current.mask != 3 || current.common_descendant) continue;
+        if (result) throw Error("提交历史存在多个最低共同祖先");
+        result = id;
+    }
+    return result;
+}
 std::vector<HistoryEntry> log_history(const Repository& repo, std::string_view revision, std::optional<std::size_t> maximum) {
     RepoLock lock(repo.metadata());
     require_no_transaction(repo);

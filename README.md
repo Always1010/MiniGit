@@ -10,6 +10,8 @@ Phase 3 的纯文本三方合并引擎已通过子项验收，无新 CLI。它�
 
 SnapshotMerge 适配器已通过子项验收，调用者持 RepoLock 后可读取 typed Blob、保存不可变合并／marker Blob，并返回候选 Index 与完整 work 布局；它不发布工作区、Index、HEAD 或日志，也不新增 CLI。文件存在、内容、模式和 D/F 冲突语义见 [快照合并学习笔记](docs/learning-notes.md#快照合并原始版本与呈现内容各有位置)，两种预设各 18 项定向检查及各 1000 组独立性质验证通过；完整范围见进度页。
 
+single-lowest merge-base helper 已通过子项验收：沿双方完整父图选择唯一最低共同祖先，不展开 Tree、不新增 CLI。零个基线返回缺失，多个基线明确拒绝，避免用提交时间选一个；两种预设各 14 项定向检查及各 500 组独立 DAG 性质验证通过。后续依赖为完整目录目标规划、CommitFactory 与持久操作，merge 业务尚未交付。
+
 ## 构建与运行
 
 需要 CMake 3.20 或更高版本、支持 C++20 的编译器、OpenSSL 3、zlib 和 Catch2 v3。CLI 集成检查通过 CMake 脚本注册到 CTest，核心单元测试使用 Catch2。预设负责配置项目，依赖由环境提供，不在构建过程中隐式安装系统软件。
