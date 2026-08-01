@@ -292,7 +292,7 @@ flowchart TD
 
 工作区覆盖授权为旧 HEAD∪Index 全阶段的精确文件路径，来源中独有的历史文件不自动获得覆盖当前未知文件的权限。D/F 转换须选择包含旧文件的范围：每个已知旧子文件都要显式删除，未知子项仍阻止整体转换。来源缺失与 empty Blob 不同；工作区单目的不清 Index，Index 单目的不读取实际文件内容，但成功的事务仍可写入元数据镜像 Blob；这不等于对象库完全不写入。
 
-来源与全部参数匹配先校验；需要更新 Index 时，再校验完整最终 Index，之后组合 Index 与 Work 的 caller-lock 计划，最后发布一次事务。无 HEAD 或日志移动规划。Index 全阶段限 100000 不同路径／300000 条记录，仍校验各预算与 typed Blob；共享 planner 还在捕获备份前检查 WorkChange 与已规划 MetadataChange 合计不超过 100000。来源串最多 4096 字节，原始路径每个最多 8192 字节、200000 参数／64 MiB；规范路径最多 4096 字节／128 分量，candidate、selected、owned 各限 200000 路径／64 MiB 名称。Restore、Reset、Rm 与 Mv 已通过子项验收，Phase 2 整体验收仍待单独核对。
+来源与全部参数匹配先校验；需要更新 Index 时，再校验完整最终 Index，之后组合 Index 与 Work 的 caller-lock 计划，最后发布一次事务。无 HEAD 或日志移动规划。Index 全阶段限 100000 不同路径／300000 条记录，仍校验各预算与 typed Blob；共享 planner 还在捕获备份前检查 WorkChange 与已规划 MetadataChange 合计不超过 100000。来源串最多 4096 字节，原始路径每个最多 8192 字节、200000 参数／64 MiB；规范路径最多 4096 字节／128 分量，candidate、selected、owned 各限 200000 路径／64 MiB 名称。Restore、Reset、Rm 与 Mv 已通过子项验收，Phase 2 也已完成整体验收。
 
 ## Reset：整体改变当前位置，按模式扩大发布范围
 
@@ -321,7 +321,7 @@ flowchart TD
 
 hard 不能借父路径授权删除陌生后代。D/F 转换列出全部已知旧文件，未知／忽略子文件、陌生空子目录、软链或 FIFO 阻止需要的改写；删除叶文件可保留空父目录。完全相同的未知普通文件若字节和完整权限都无需改变，可被共享 planner 当作无操作，不能据此授权不同内容覆盖。实际 before 必须可读取和保存，hard 不跳过权限、同设备与恢复边界。
 
-hard 的 union／owned 各最多 200000 路径／64 MiB 名称，路径4096字节／128分量，revision4096字节。共享纯预算 API 已实现，合计 Work／metadata 数量、路径、元数据前后镜像及 journal 预算在备份捕获前校验；两份合法 Index 也可能因为同时存入 journal 超限。Reset、Rm 与 Mv 已通过子项验收；Phase 2 仍未整体验收。
+hard 的 union／owned 各最多 200000 路径／64 MiB 名称，路径4096字节／128分量，revision4096字节。共享纯预算 API 已实现，合计 Work／metadata 数量、路径、元数据前后镜像及 journal 预算在备份捕获前校验；两份合法 Index 也可能因为同时存入 journal 超限。Reset、Rm 与 Mv 已通过子项验收；Phase 2 已完成整体验收。
 
 ## Remove：删除范围与丢弃内容的授权分开检查
 
@@ -377,7 +377,7 @@ flowchart TD
     T --> H[HEAD / refs / 日志 / identity 不变]
 ```
 
-捕获 C 后的规划拒绝可遗留不可达的不可变 Blob，不发布工作文件或 Index；execute_transaction 开始后的执行中断可能留下 pending journal 与部分更新，必须 recover。这一边界无需先构造整目录 provisional 计划；完整事务预算由共享 planner 再验证。源真实 before、目的 Absent 与事务预检分别约束不同阶段，RepoLock 仍不锁外部编辑器。实际调用链见导读，Mv 子项已验收，Phase 2 整体验收仍待单独核对。
+捕获 C 后的规划拒绝可遗留不可达的不可变 Blob，不发布工作文件或 Index；execute_transaction 开始后的执行中断可能留下 pending journal 与部分更新，必须 recover。这一边界无需先构造整目录 provisional 计划；完整事务预算由共享 planner 再验证。源真实 before、目的 Absent 与事务预检分别约束不同阶段，RepoLock 仍不锁外部编辑器。实际调用链见导读；Mv 子项及 Phase 2 整体验收均已完成，完整结果见 [Phase 2 阶段总结](progress.md#phase-2-阶段总结)。
 
 ## WorktreeUpdate：把授权目标变为真实节点计划
 
@@ -419,7 +419,7 @@ flowchart TD
 
 ## 工作区短事务与恢复
 
-短事务机制已通过 Debug/sanitized 相关回归及实验验收。commit 的引用与 reflog 事务发布已通过后续子项验收；branch 创建、移动与删除接入同一机制，已通过子项验收。add/tag 继续使用各自原子元数据写入。所有业务查询和修改检查待恢复事务；原始 Blob/Tree 观察仍可使用。分支与工作区更新命令将复用这些共同机制。
+短事务机制已通过 Debug/sanitized 相关回归及实验验收。commit 的引用与 reflog 事务发布已通过后续子项验收；branch 创建、移动与删除接入同一机制，已通过子项验收。add/tag 继续使用各自原子元数据写入。所有业务查询和修改检查待恢复事务；原始 Blob/Tree 观察仍可使用。分支与工作区更新命令已复用这些共同机制。
 
 问题来自更新范围：切换分支可能需要删除旧文件、创建目录、写入新文件，并修改 Index 与 HEAD。分别原子替换每个文件，仍可能在第三步崩溃后留下前两步的新内容。事务因此保存每个节点的 before/after 和可恢复意图，而不是只记录“曾经执行过哪个命令”。
 

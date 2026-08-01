@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/mv/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收；Phase 2 尚未整体验收；继续逐项推进至 Phase 4。
+Phase 0、Phase 1 与 Phase 2 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/mv/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收；Phase 2 整体验收的两个预设各 147 项全量检查全部通过；Phase 3／4 尚未实现，继续推进至 Phase 4。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前实际注册 130 个单元及 17 个 CLI，共 147 项；注册规模不表示本轮全量执行 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前实际注册 130 个单元及 17 个 CLI，共 147 项；两个预设已各执行全部 147 项 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
 | 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
 | Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
@@ -32,7 +32,8 @@ Phase 0 与 Phase 1 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/
 | Phase 2 子项：reset 三模式重置 | 已验收 | 两种预设各 18 项定向检查与重置实验通过，无编译警告或 ASan/UBSan 报告 |
 | Phase 2 子项：rm 删除与取消暂存 | 已验收 | 删除矩阵、精确授权、共享检查及事务恢复；两种预设各 33 项定向检查与实验通过 |
 | Phase 2 子项：mv 迁移 | 已验收 | 独立迁移 B／C、目录与目的保护；两种预设各 17 项定向检查与实验通过 |
-| Phase 2 其余及 Phase 3 至 Phase 4 | 计划 | 尚未实现或验收 |
+| Phase 2 整体 | 已验收 | Debug／sanitized 各 147 项全量全部通过，无 ASan／UBSan 报告；八个命令实验已在各子项验收中通过 |
+| Phase 3 至 Phase 4 | 计划 | 合并、提交重放、stash、rebase 与 gc 尚未实现或验收 |
 
 已执行的 Debug 验证：
 
@@ -113,13 +114,13 @@ Phase 1 验收时的限制：使用 Linux/POSIX 接口；没有断电故障注�
 
 与真实 Git 的主要差异：自有 SHA-256 仓库及 MGIX 格式；只处理普通 UTF-8 路径和可执行位，拒绝软链；简化忽略语法；标签只指向 Commit；不提供缩写解析、附注标签、packfile 或远程功能。该阶段验证平台为 Linux，单文件原子替换不构成多文件断电事务。
 
-Phase 2 将复用快照、引用和 DAG。先增加差异引擎与可恢复工作区更新，再实现分支切换、恢复、重置、删除与移动；修改命令必须共同使用覆盖保护、事务状态和 reflog，避免逐命令重复实现或覆盖未提交内容。
+Phase 2 已复用快照、引用和 DAG，增加差异引擎与可恢复工作区更新，再接入分支切换、恢复、重置、删除与移动；修改策略共用覆盖保护、规划与事务机制，引用移动再组合 reflog，避免逐命令重复实现或覆盖未提交内容。
 
 ## Phase 2：比较、分支与安全更新
 
 实现准备已完成：Snapshot 的通用模型、对象读取及 Index/Tree 转换独立于 History，路径转义移入 Format，Refs 不再依赖提交命令模块。代码原样移动，不改变仓库格式或命令行为。Debug 和 sanitized 配置、构建及 `-R 'unit\.(Snapshots|Commit|References|Identity|Status|DAG|Log|Tag)|_cli|cli_basics'` 各 33 项通过，无编译警告及 ASan/UBSan 报告；六份文档 85 个相对链接及 `git diff --check` 通过。
 
-计划范围为 `diff`、`show`、`branch`、`switch`、`restore`、`reset`、`rm`、`mv`。
+本阶段范围为 `diff`、`show`、`branch`、`switch`、`restore`、`reset`、`rm`、`mv`；八个命令子项与整阶段回归均已验收。
 
 纯行差异与统一补丁引擎已验收：Line/EditScript/Hunk 不依赖仓库读取；包含有界 LCS、上下文、无末尾 LF、二进制摘要、模式与空文件语义。Debug 和 sanitized 配置、构建与 `ctest --preset debug -R 'unit\.Diff|cli_basics' --output-on-failure` 及对应 sanitized 命令，各 7 项通过。临时 C++ 验证器在两种预设下各重放 2000 组固定种子输入，分别应用编辑与统一文本补丁，逐字节等于新内容。审查补充 4096 字节显示路径预算后，两种预设 `-R 'unit\.Diff rejects'` 各 1 项通过；没有编译警告或 ASan/UBSan 报告。六份文档 91 个相对链接及 `git diff --check` 通过。
 
@@ -212,7 +213,7 @@ Reset 新增 8 个单元与 1 个 CLI 用例，CTest JSON 注册清单核对该 
 
 `ctest --preset debug -R '^unit\.Reset|^(reset_cli|recovery_cli|reflog_cli|branches_cli|switch_cli|restore_cli|status_cli|diff_cli|show_cli|cli_basics)$' --output-on-failure` 与 sanitized 对应命令，各 18 项全部通过，分别用时 25.98／40.78 秒；实际范围为 8 个新单元与 10 个关联 CLI，无 ASan/UBSan 报告。
 
-`bash examples/experiments/reset.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，验证 A/B/C/D 三模式、默认 mixed、同 ID dirty 恢复、unborn／detached、双向 D/F、未知子项拒绝前后快照及引用日志事件。七份文档 166 个相对链接、代码围栏、脚本 `bash -n` 与 `git diff --check` 通过。该 Reset 验收轮未执行全部 131 项，Phase 2 尚未整体验收；当时 rm／mv 尚未交付，Rm 随后接入见下一子项。
+`bash examples/experiments/reset.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，验证 A/B/C/D 三模式、默认 mixed、同 ID dirty 恢复、unborn／detached、双向 D/F、未知子项拒绝前后快照及引用日志事件。七份文档 166 个相对链接、代码围栏、脚本 `bash -n` 与 `git diff --check` 通过。该 Reset 验收轮未执行全部 131 项，当时 Phase 2 尚未整体验收；当时 rm／mv 尚未交付，Rm 随后接入见下一子项。
 
 ### Rm 删除与取消暂存：已验收
 
@@ -224,7 +225,7 @@ Rm 新增 7 个单元与 1 个 CLI 用例，CTest JSON 注册清单核对该 Rm 
 
 `ctest --preset debug -R '^unit\.(Remove|Restore|Reset)|^(remove_cli|restore_cli|reset_cli|recovery_cli|reflog_cli|staging_cli|status_cli|diff_cli|show_cli|cli_basics)$' --output-on-failure` 与 sanitized 对应命令，各 33 项全部通过，分别用时 49.06／66.48 秒；范围为 7 个 Remove、8 个 Restore、8 个 Reset 单元和 10 个关联 CLI，无 ASan/UBSan 报告。
 
-`bash examples/experiments/remove.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，验证普通／cached／force 矩阵、目录递归、未知保护、选项样名称及 HEAD／ref／日志／identity 原字节不变。脚本语法、七份文档 178 个相对链接、代码围栏与 `git diff --check` 通过。该 Rm 验收轮未执行全部 139 项；当时 Mv 尚未交付，随后接入见下一子项。Phase 2 仍未整体验收，继续推进至 Phase 4。
+`bash examples/experiments/remove.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，验证普通／cached／force 矩阵、目录递归、未知保护、选项样名称及 HEAD／ref／日志／identity 原字节不变。脚本语法、七份文档 178 个相对链接、代码围栏与 `git diff --check` 通过。该 Rm 验收轮未执行全部 139 项；当时 Mv 尚未交付，随后接入见下一子项。该 Rm 轮未做 Phase 2 整体验收；阶段全量结果见阶段总结。
 
 ### Mv 迁移：已验收
 
@@ -232,11 +233,58 @@ CLI 为 mv [--] source destination，成功静默；首版不支持 -f、多源�
 
 Index 保持源 B 的 mode／ID，只迁移路径；Work 独立保存实际 C 的字节与完整权限，不重新 add。新父目录为 0755，已有父目录权限保留，不迁移源目录权限。源／目的无 payload 拓扑检查、完整最终 Index 和元数据计划预算前检后，逐文件捕获 C；共享 planner 再检查目录库存与合并预算，组合一次 Txn 的源删除／目的写入／Index mapping，HEAD/ref/log/identity 不变。晚规划拒绝允许不可达 immutable Blob 遗留，不发布 mutable 状态；执行中断可能 pending journal 与部分更新，需 recover；没有整目录 provisional 计划的新 API。
 
-Mv 新增 7 个单元与 1 个 CLI 用例，CTest JSON 注册清单实际核对 130 单元、17 CLI，共 147 项，当前状态表同步此规模；本轮未执行全 147 项。两种预设构建均无警告；核心、七组单元与 CLI 的独立审查通过。随后仅收窄 move.hpp 注释，明确规划失败与执行中断的不同契约，不改变二进制行为，因此未重复构建验证。
+Mv 新增 7 个单元与 1 个 CLI 用例，CTest JSON 注册清单实际核对 130 单元、17 CLI，共 147 项，当前状态表同步此规模；该 Mv 定向验收轮未执行全 147 项。两种预设构建均无警告；核心、七组单元与 CLI 的独立审查通过。随后仅收窄 move.hpp 注释，明确规划失败与执行中断的不同契约，不改变二进制行为，因此未重复构建验证。
 
 `ctest --preset debug -R '^unit\.Move|^(move_cli|recovery_cli|remove_cli|restore_cli|reset_cli|staging_cli|status_cli|diff_cli|show_cli|cli_basics)$' --output-on-failure` 与 sanitized 对应命令，各 17 项全部通过，分别用时 22.34／37.54 秒；范围为 7 个 Move 单元与 10 个关联 CLI，无 ASan/UBSan 报告。
 
-`bash examples/experiments/move.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，验证 MM／模式／完整权限、目的碰撞、已有目录、多叶目录、未知子项、-- 与 HEAD/ref/log/identity 不变。七份文档 186 个相对链接、代码围栏、脚本 bash -n 与 git diff --check 通过。Mv 已完成子项验收，Phase 2 的命令子项均已验收；整阶段检查在本项提交后单独推进，尚未宣称 Phase 2 整体验收或全 147 项通过，继续至 Phase 4。
+`bash examples/experiments/move.sh ./build/debug/minigit` 与 sanitized 对应实验均通过，验证 MM／模式／完整权限、目的碰撞、已有目录、多叶目录、未知子项、-- 与 HEAD/ref/log/identity 不变。七份文档 186 个相对链接、代码围栏、脚本 bash -n 与 git diff --check 通过。Mv 已完成子项验收，Phase 2 的命令子项均已验收；该 Mv 轮尚未宣称 Phase 2 整体验收或全 147 项通过；本项提交后的阶段全量结果见下节，继续至 Phase 4。
+
+### Phase 2 阶段总结
+
+八个命令子项与各自实验已验收，当前版本仍为 0.1.0，本次阶段核对不是版本发布。整体验收已完成：两个预设均实际执行全部 130 个单元与 17 个 CLI，共各 147 项，不能把此前定向检查或注册数量当作这次全量执行的替代证据：
+
+| 验证 | 当前证据 |
+| --- | --- |
+| `ctest --preset debug --output-on-failure` | 147 项全量全部通过，155.98 秒，进程退出码 0 |
+| `ctest --preset sanitized --output-on-failure` | 147 项全量全部通过，399.18 秒，进程退出码 0；无失败项、AddressSanitizer 或 UBSan runtime error 报告 |
+| 命令实验 | 八个命令的实验已在各子项验收中通过，阶段核对不重复运行 |
+| 注册与实际执行范围 | 130 个单元、17 个 CLI，共 147 项；两个预设本轮均完整覆盖 |
+| 文档与脚本静态检查 | 七份文档 189 个相对链接及代码围栏、12 个实验脚本的 bash -n、git diff --check 通过 |
+
+完整命令能力如下，选项与保护细节仍以各子项章节和当前 CLI 为准。
+
+| 命令 | 已交付能力 |
+| --- | --- |
+| diff | Index→Work、HEAD／修订→Index、修订→Work、两修订比较；文本、二进制摘要、模式及空文件差异 |
+| show | 提交元数据与第一父差异、原始 Blob／Tree、revision:path 和 Index stage 0／1／2／3 的字节查询 |
+| branch | 排序列表、创建／强制移动非当前分支、按完整 parent 闭包安全删除或明确强删 |
+| switch | 兼容修改保护矩阵、已有分支、-c、unborn 新分支与 detached；引用、日志和文件统一发布 |
+| restore | 来源、路径选择与 Index／Work 目的独立；保留未选阶段，staged 目的清所选冲突 |
+| reset | soft／mixed／hard 的 HEAD、Index、Work 不同范围；same-ID 仍恢复内容，unborn 默认与显式修订分开 |
+| rm | 普通／cached／force 的 A/B/C 内容保护、-r 已知 prefix、精确未知内容保护及所选冲突清理 |
+| mv | 文件／完整已知目录迁移，Index B 与实际 C 独立保存、完整文件权限、目的碰撞与未知库存保护 |
+
+架构从“各命令自行写文件”收敛为共享状态模型与纯规划。Snapshot 表示保存的路径／模式／Blob，Index 保留所有冲突 stages，Work 读取同一 fd 的字节与权限；业务只在一个 RepoLock 内决定策略。查询从这些来源取得内容后完整格式化，修改则用 caller-lock planner 组合受影响状态，最后执行一次短事务。
+
+```mermaid
+flowchart TD
+    S[Snapshot / Index / 实际 Work] --> B[业务选择来源与范围 / 校验预算和保护策略]
+    B --> Q[diff / show: 完整只读结果]
+    B --> P[caller-lock Work与Index planner]
+    B --> R[按需 plan_create_branch / plan_move_head + Reflog]
+    P --> T[TransactionPlan: Work / Index / Head与refs / 日志]
+    R --> T
+    T --> E[一次 execute_transaction]
+    E --> V[Prepared 恢复 before / Committed 恢复 after]
+```
+
+图中的发布范围按命令选择：rm／mv／restore 不移动 HEAD，branch 不改 Index／Work，reset 和 switch 才按模式组合更广范围；commit 也已接入引用与日志的事务发布。add 与轻量 tag 仍使用各自发布路径，不能由共享模块存在推断所有写操作都改为同一种事务。规划拒绝不发布可变状态，可能遗留不可变 Blob；执行中断则可能有 pending journal 与部分更新，recover 根据真实 before-image 收敛，不能用旧 HEAD 快照代替用户实际编辑文件的备份。
+
+与原生 Git 的边界必须保留：MiniGit 固定 SHA-256，并使用自己的 `.minigit`、MGIX Index 与版本化日志格式，不承诺 Git 仓库互读；摘要算法相同也不构成格式兼容证据。修订解析只支持已交付的完整 ID／引用，不支持 ID 缩写、~／^ 历史运算或 reflog selectors。工作更新拒绝软链与特殊节点，不实现 submodule；差异以 A／D 表示迁移，没有 rename detection、combined merge patch 或二进制补丁内容。路径选择为已知 exact／prefix，复杂 pathspec、完整 Git 命令 flags、多源／force mv、remote 和 packfile 均未交付。文件 owner／group 和时间戳不属于恢复镜像；Linux/POSIX、procfs 与事务设备／权限边界见架构。
+
+本阶段的学习结果是把三个相互独立的版本说清：HEAD 的 A 是已提交快照，Index 的 B 是下一次提交候选，Work 的 C 是实际编辑内容；MM 的迁移证明 B 与 C 不能合并。轻量 refs 只指向 Commit，创建分支不等于工作区切换；DAG 的全部 parent 闭包用于历史与安全删除，reflog 则是引用事件序列。不可变对象允许先保存内容，before-image 和校验 journal 才负责多节点中断恢复。C++ 对应练习包括 optional 区分缺失／空文件、值复制保持规划异常保护、RAII 锁与 fd、借用行视图的生命周期，以及在容器展开前检查资源预算。
+
+Phase 3 先沿依赖链建设：可复用的纯文本三方合并 → Snapshot 合并及模式／删除／D/F 冲突 → 完整 DAG 的 merge-base 选择 → caller-lock CommitFactory 与持久 LongOperation → merge／cherry-pick／revert／stash。现有 Line／EditScript 是差异基础，不自动提供三方冲突策略；多 merge-base、二进制和粗化回退都须先定义语义。LongOperation 跨进程保存原 Head、Index、真实 Work 备份与步骤，每次 start／continue／abort 再通过短事务发布；同时定义 operation／stash 的语义根，为后续 gc 保留数据。完成这些后才推进 Phase 4 的 rebase 与 gc，不能把本阶段验收写成最终 Phase 4 目标已完成。
 
 ## Phase 3：可恢复的合并与应用
 
@@ -252,4 +300,4 @@ Mv 新增 7 个单元与 1 个 CLI 用例，CTest JSON 注册清单实际核对 
 
 ## 下一步
 
-Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，Mv 文件与目录迁移已完成子项验收，随后单独核对 Phase 2 整体验收，再持续推进至 Phase 4。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，Mv 文件与目录迁移已完成子项验收，Phase 2 两个预设各 147 项全量检查已通过、整体验收完成；下一步先纯文本三方合并，再按上述依赖推进 Phase 3 和 Phase 4，最终目标尚未完成。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
