@@ -324,4 +324,12 @@ D/F 例子为 base:p，ours:p/x，theirs 修改 p。冲突区域的 Index 对 p 
 
 候选 work 不是实际工作区，SnapshotMerge 不探测或删除未知 p/y；后续业务仍须用精确 owned 与共享 planner 决定发布。它可逐文件保存不可变 Blob，规划后期拒绝会留下不可达对象，不能因此修改实际 Index。C++ 练习用 optional 区分缺失和 empty FileState，用原始 IndexEntry 与呈现 FileState 两份值表达不同用途。
 
-100000 Snapshot 文件和最终 Index distinct 路径是规划预算；Tree 建树另计算目录 entries，深目录的候选不能仅凭文件数宣称可提交。结果、原始 stages 与资源边界已有语义测试和独立性质验证，精确范围见进度页；single-base 选择、LongOperation、解决冲突与中止恢复还未交付。
+100000 Snapshot 文件和最终 Index distinct 路径是规划预算；Tree 建树另计算目录 entries，深目录的候选不能仅凭文件数宣称可提交。结果、原始 stages 与资源边界已有语义测试和独立性质验证，精确范围见进度页；下节 single-base 选择已验收；LongOperation、解决冲突与中止恢复还未交付。
+
+## 两轮传播为何找到最低共同祖先
+
+helper 已通过子项验收，尚无 merge 命令实验。先手画 R→X，X 分叉到 L 与 T：R、X 都是共同祖先，但 R 的共同后代有 X，所以唯一最低基线为 X。若两个分叉各自合并对方的旧 tip，可能留下两个互不为祖先的共同候选；这时不能比较时间或选 ID 小的一个，本版应报 Error。
+
+C++ 练习用两位整数标记 left／right reachable。初值只设在两 root，按 child-before-parent 把当前位标记 OR 给每个 parent；最后值为 3 的节点是共同祖先。再以同一顺序，把当前节点是 common 或已有共同后代的事实传给每个 parent。不要把 common 自己直接设为“有共同后代”，否则连真正最低的 X 也被删掉。OR 对重复父边幂等，first parent 只是 parents 中的一项，不能漏掉其余边。
+
+即使 L=T 或 T 是 L 的祖先，也先读取完整闭包；末端快进关系不能证明更深的 Commit 没有缺损。无共同祖先返回 optional 空值，多基线抛 Error，不展开 Tree；语义组及用独立闭包算法核对的随机 DAG 性质验证均通过，范围见进度页。实际工作区的安全规划、提交工厂与持久操作仍是后续依赖，不能把 helper 完成当作 merge 已交付。

@@ -11,6 +11,12 @@ CommitGraph load_commit_graph(const Repository& repo, const std::vector<ObjectId
 // Child before parent. Available-node ties use ascending ObjectId byte order.
 // Rejects incomplete ancestry and cycles, including manually assembled graphs.
 std::vector<ObjectId> topological_order(const CommitGraph& graph);
+// Caller holds RepoLock. Validates the complete ancestry of both tips before
+// choosing their single lowest common ancestor; does not expand Trees. Inherits
+// load_commit_graph bounds. No common ancestor returns nullopt; multiple lowest
+// ancestors (crisscross history) are rejected instead of choosing arbitrarily.
+std::optional<ObjectId> find_merge_base(const Repository& repo, const ObjectId& left,
+                                       const ObjectId& right);
 struct HistoryEntry {
     ObjectId id;
     Commit commit;
