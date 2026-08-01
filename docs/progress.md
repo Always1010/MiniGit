@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-Phase 0、Phase 1 与 Phase 2 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/mv/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收；Phase 2 整体验收的两个预设各 147 项全量检查全部通过；Phase 3／4 尚未实现，继续推进至 Phase 4。
+Phase 0、Phase 1 与 Phase 2 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/mv/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收；Phase 2 整体验收的两个预设各 147 项全量检查全部通过；Phase 3 纯文本引擎已通过子项验收，业务命令与 Phase 4 尚未交付，继续推进至 Phase 4。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前实际注册 130 个单元及 17 个 CLI，共 147 项；两个预设已各执行全部 147 项 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前实际注册 137 个单元及 17 个 CLI，共 154 项；本轮各 13 项定向检查，Phase 2 全量 147 项是此前独立验收证据 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
 | 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
 | Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
@@ -33,7 +33,8 @@ Phase 0、Phase 1 与 Phase 2 已验收，版本为 `0.1.0`。当前 CLI 完成 
 | Phase 2 子项：rm 删除与取消暂存 | 已验收 | 删除矩阵、精确授权、共享检查及事务恢复；两种预设各 33 项定向检查与实验通过 |
 | Phase 2 子项：mv 迁移 | 已验收 | 独立迁移 B／C、目录与目的保护；两种预设各 17 项定向检查与实验通过 |
 | Phase 2 整体 | 已验收 | Debug／sanitized 各 147 项全量全部通过，无 ASan／UBSan 报告；八个命令实验已在各子项验收中通过 |
-| Phase 3 至 Phase 4 | 计划 | 合并、提交重放、stash、rebase 与 gc 尚未实现或验收 |
+| Phase 3 子项：纯文本三方合并 | 已验收 | 无新 CLI；两种预设各 13 项定向检查及各 2000 组独立性质验证通过 |
+| Phase 3 其余与 Phase 4 | 计划 | merge、cherry-pick、revert、stash、rebase 与 gc 尚未交付 |
 
 已执行的 Debug 验证：
 
@@ -292,6 +293,20 @@ Phase 3 先沿依赖链建设：可复用的纯文本三方合并 → Snapshot �
 
 验收条件：快进与三方合并、文本和二进制冲突、父关系、暂存区冲突状态均有定义与验证。会暂停等待用户处理的操作，在同一交付中提供继续和中止能力；重启后能读取状态，中止恢复原先状态，继续拒绝尚未解决的冲突。stash 保存与恢复需要明确工作区和 Index 边界，并检查恢复冲突。
 
+### 纯文本三方合并：已验收
+
+本项已实现并验收 merge_text(base, ours, theirs)，不读 Repository／ObjectStore／Index，不发布文件、引用或事务。TextMergeResult 拥有 Bytes 与冲突记录；TextConflict 的 base_begin／base_count 是零基行范围，output_begin／output_count 是固定 ours／theirs marker 区块的输出字节范围。没有新的 merge CLI，Snapshot 模式／存在／D/F、merge base 与 LongOperation 仍待后续子项。
+
+三份输入先受 64 MiB／NUL 与每侧 100000 行校验，再判断恒等关系，NUL 即使三方相等也报 Error。内部复用两次顺序 diff_lines，每次最多 4000000 DP cells；共有基线坐标归并、同位置点先处理、严格内部点与消费区间交互并取传递闭包。比较两侧完整区块重放的 bytes＋LF，相同只保留一次，不能用展示用的 make_hunks 上下文判断冲突。
+
+EOF 去 LF 与另一侧追加普通行或空行须合为冲突，不得粘连或悄悄补 LF。标记必须独立成行，完整输出增量限 64 MiB；100000 行仅限输入，合法独立修改的 clean 输出可更多行。coarse 表示实际 Diff 发生整体替换回退，可增加保守冲突，不能静默偏选一侧。详细例子见学习笔记，merge_text 的 validate_input／order_edits／replay／Output 调用链已核对；只读完整审查通过。
+
+新增 7 个 MergeText 单元、无新 CLI；CTest 实际注册为 137 单元、17 CLI，共 154 项。本轮执行下列 13 项定向检查，没有执行全 154 项；此前 Phase 2 各 147 项全量验收仍是该阶段证据。
+
+两种预设最终构建无警告。`ctest --preset debug -R '^unit\.(MergeText|Diff)' --output-on-failure` 与 sanitized 对应命令各 13 项全部通过，分别用时 2.90／14.19 秒，无 ASan／UBSan 报告。七组语义覆盖恒等／任意非 NUL 字节、独立／相邻／边界修改、同点插入及 marker 偏移、传递区块重放、EOF 普通与空行追加、64 MiB 输入与标记膨胀／100000 输入行与 100001 clean 输出行、coarse 内外区域保留。
+
+临时独立性质验证器在每种预设各执行 2000 组固定种子输入并通过，检查恒等、单侧精确字节、交换冲突 sides 及区块外内容、独立位置修改和首尾插入。该验证器不进入生产 CLI；核心与测试只读审查通过；七份文档 195 个相对链接、代码围栏与 git diff --check 通过。纯引擎已验收，Snapshot 适配器、merge base、CommitFactory／LongOperation 与合并业务 CLI 尚未交付，Phase 3／4 目标仍未完成。
+
 ## Phase 4：历史编辑与对象回收
 
 计划范围为 `rebase` 和 `gc`。
@@ -300,4 +315,4 @@ Phase 3 先沿依赖链建设：可复用的纯文本三方合并 → Snapshot �
 
 ## 下一步
 
-Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，Mv 文件与目录迁移已完成子项验收，Phase 2 两个预设各 147 项全量检查已通过、整体验收完成；下一步先纯文本三方合并，再按上述依赖推进 Phase 3 和 Phase 4，最终目标尚未完成。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，Mv 文件与目录迁移已完成子项验收，Phase 2 两个预设各 147 项全量检查已通过、整体验收完成；纯文本三方合并引擎已通过子项验收，下一步实现 Snapshot 合并的模式／存在／D/F 语义，随后按上述依赖推进 Phase 3 和 Phase 4，最终目标尚未完成。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。

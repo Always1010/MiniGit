@@ -178,3 +178,9 @@ MiniGit 在 Phase 2 增加自己的短事务日志：实际工作文件先备份
 Mv 已通过子项验收。设 Index 的源存 B，工作文件后来被编辑成 C：直接移动文件再 add 目的会把 C 放入 Index，丢失原暂存版本 B。正确映射分别保留 B 的 mode／ID 与 C 的实际内容／完整权限，再让源删除、目的写入及 Index 路径变更一起发布。HEAD 未移动，下一次 commit 才保存迁移后的快照；当前差异显示为 A／D，不提供 rename 检测。
 
 [Git 官方 git-mv 文档](https://git-scm.com/docs/git-mv)描述成功迁移后更新 Index、仍需提交，以及已有目的目录接收源的形式。真实 Git 还支持软链、多源、force 和 dry-run；MiniGit 首版每次一个源、一个目的，不接受这些扩展，默认任何目的碰撞都拒绝。目录授权只覆盖确实已知的库存，不能把整个目录名字当成收集陌生内容的许可；源目录权限也不随新目录迁移。
+
+## 三方文本为什么需要基线
+
+[Git 官方 git-merge-file 文档](https://git-scm.com/docs/git-merge-file)用共同 base 与两份修改解释三方合并，并在同一区域存在不兼容修改时呈现冲突。MiniGit 的纯文本算法已通过子项验收，不复刻该命令的全部策略、标签与选项；仓库 merge、基线历史选择和冲突阶段发布仍待后续。
+
+base=[a,b,c]，ours=[A,b,c]，theirs=[a,b,C] 可以得到 [A,b,C]；仅比较 ours 与 theirs 却看不出 a 和 c 各自原来的版本。同一区块先分别按完整 base 重放，两侧结果相同可以去重，否则保留固定 ours／theirs markers。LF 状态也是字节事实，不能由“看起来是同一行”推断等价。独立位置与 EOF 例子见学习笔记。
