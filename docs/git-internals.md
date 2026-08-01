@@ -184,3 +184,9 @@ Mv 已通过子项验收。设 Index 的源存 B，工作文件后来被编辑�
 [Git 官方 git-merge-file 文档](https://git-scm.com/docs/git-merge-file)用共同 base 与两份修改解释三方合并，并在同一区域存在不兼容修改时呈现冲突。MiniGit 的纯文本算法已通过子项验收，不复刻该命令的全部策略、标签与选项；仓库 merge、基线历史选择和冲突阶段发布仍待后续。
 
 base=[a,b,c]，ours=[A,b,c]，theirs=[a,b,C] 可以得到 [A,b,C]；仅比较 ours 与 theirs 却看不出 a 和 c 各自原来的版本。同一区块先分别按完整 base 重放，两侧结果相同可以去重，否则保留固定 ours／theirs markers。LF 状态也是字节事实，不能由“看起来是同一行”推断等价。独立位置与 EOF 例子见学习笔记。
+
+## 文件合并还要合并存在与模式
+
+纯文本只比较字节，SnapshotMerge 已实现的语义还包括文件存在、执行位与路径结构。base 缺失并不等于 base 是一个空文件；ours 新建 empty、theirs 新建 note 仍是两份新建版本冲突，不能因为空字节相等快捷选择 note。相反，ours 仅改 executable mode、theirs 改内容时，可以把两份独立修改组合。
+
+冲突 stages 保存原始版本，work 的 marker 只是用户将来解决冲突时的呈现内容。D/F 区域还须保持一个实际可发布的布局：选择 ours 的 parent File 就不能同时创建 theirs 的 child File，不自动生成别名。此处是候选结果，真正的工作区保护、Index 发布和 continue／abort 仍待后续业务接入。

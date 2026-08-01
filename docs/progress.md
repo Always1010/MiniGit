@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-Phase 0、Phase 1 与 Phase 2 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/mv/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收；Phase 2 整体验收的两个预设各 147 项全量检查全部通过；Phase 3 纯文本引擎已通过子项验收，业务命令与 Phase 4 尚未交付，继续推进至 Phase 4。
+Phase 0、Phase 1 与 Phase 2 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/mv/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收；Phase 2 整体验收的两个预设各 147 项全量检查全部通过；Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，业务命令与 Phase 4 尚未交付，继续推进至 Phase 4。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前实际注册 137 个单元及 17 个 CLI，共 154 项；本轮各 13 项定向检查，Phase 2 全量 147 项是此前独立验收证据 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 145 个单元及 17 个 CLI，共 162 项；SnapshotMerge 本轮各 18 项定向检查，未执行全 162 项，Phase 2 全量 147 项是此前独立验收证据 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
 | 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
 | Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
@@ -34,6 +34,7 @@ Phase 0、Phase 1 与 Phase 2 已验收，版本为 `0.1.0`。当前 CLI 完成 
 | Phase 2 子项：mv 迁移 | 已验收 | 独立迁移 B／C、目录与目的保护；两种预设各 17 项定向检查与实验通过 |
 | Phase 2 整体 | 已验收 | Debug／sanitized 各 147 项全量全部通过，无 ASan／UBSan 报告；八个命令实验已在各子项验收中通过 |
 | Phase 3 子项：纯文本三方合并 | 已验收 | 无新 CLI；两种预设各 13 项定向检查及各 2000 组独立性质验证通过 |
+| Phase 3 子项：SnapshotMerge 适配器 | 已验收 | 两种预设各 18 项定向检查及各 1000 组独立性质验证通过，无新 CLI／可变状态发布 |
 | Phase 3 其余与 Phase 4 | 计划 | merge、cherry-pick、revert、stash、rebase 与 gc 尚未交付 |
 
 已执行的 Debug 验证：
@@ -295,17 +296,33 @@ Phase 3 先沿依赖链建设：可复用的纯文本三方合并 → Snapshot �
 
 ### 纯文本三方合并：已验收
 
-本项已实现并验收 merge_text(base, ours, theirs)，不读 Repository／ObjectStore／Index，不发布文件、引用或事务。TextMergeResult 拥有 Bytes 与冲突记录；TextConflict 的 base_begin／base_count 是零基行范围，output_begin／output_count 是固定 ours／theirs marker 区块的输出字节范围。没有新的 merge CLI，Snapshot 模式／存在／D/F、merge base 与 LongOperation 仍待后续子项。
+本项已实现并验收 merge_text(base, ours, theirs)，不读 Repository／ObjectStore／Index，不发布文件、引用或事务。TextMergeResult 拥有 Bytes 与冲突记录；TextConflict 的 base_begin／base_count 是零基行范围，output_begin／output_count 是固定 ours／theirs marker 区块的输出字节范围。该轮没有新的 merge CLI，Snapshot 模式／存在／D/F、merge base 与 LongOperation 当时仍待后续子项。
 
 三份输入先受 64 MiB／NUL 与每侧 100000 行校验，再判断恒等关系，NUL 即使三方相等也报 Error。内部复用两次顺序 diff_lines，每次最多 4000000 DP cells；共有基线坐标归并、同位置点先处理、严格内部点与消费区间交互并取传递闭包。比较两侧完整区块重放的 bytes＋LF，相同只保留一次，不能用展示用的 make_hunks 上下文判断冲突。
 
 EOF 去 LF 与另一侧追加普通行或空行须合为冲突，不得粘连或悄悄补 LF。标记必须独立成行，完整输出增量限 64 MiB；100000 行仅限输入，合法独立修改的 clean 输出可更多行。coarse 表示实际 Diff 发生整体替换回退，可增加保守冲突，不能静默偏选一侧。详细例子见学习笔记，merge_text 的 validate_input／order_edits／replay／Output 调用链已核对；只读完整审查通过。
 
-新增 7 个 MergeText 单元、无新 CLI；CTest 实际注册为 137 单元、17 CLI，共 154 项。本轮执行下列 13 项定向检查，没有执行全 154 项；此前 Phase 2 各 147 项全量验收仍是该阶段证据。
+新增 7 个 MergeText 单元、无新 CLI；该轮 CTest 实际注册为 137 单元、17 CLI，共 154 项。本轮执行下列 13 项定向检查，没有执行全 154 项；此前 Phase 2 各 147 项全量验收仍是该阶段证据。
 
 两种预设最终构建无警告。`ctest --preset debug -R '^unit\.(MergeText|Diff)' --output-on-failure` 与 sanitized 对应命令各 13 项全部通过，分别用时 2.90／14.19 秒，无 ASan／UBSan 报告。七组语义覆盖恒等／任意非 NUL 字节、独立／相邻／边界修改、同点插入及 marker 偏移、传递区块重放、EOF 普通与空行追加、64 MiB 输入与标记膨胀／100000 输入行与 100001 clean 输出行、coarse 内外区域保留。
 
-临时独立性质验证器在每种预设各执行 2000 组固定种子输入并通过，检查恒等、单侧精确字节、交换冲突 sides 及区块外内容、独立位置修改和首尾插入。该验证器不进入生产 CLI；核心与测试只读审查通过；七份文档 195 个相对链接、代码围栏与 git diff --check 通过。纯引擎已验收，Snapshot 适配器、merge base、CommitFactory／LongOperation 与合并业务 CLI 尚未交付，Phase 3／4 目标仍未完成。
+临时独立性质验证器在每种预设各执行 2000 组固定种子输入并通过，检查恒等、单侧精确字节、交换冲突 sides 及区块外内容、独立位置修改和首尾插入。该验证器不进入生产 CLI；核心与测试只读审查通过；七份文档 195 个相对链接、代码围栏与 git diff --check 通过。该轮纯引擎已验收，Snapshot 适配器、merge base、CommitFactory／LongOperation 与合并业务 CLI 当时尚未交付；Snapshot 的后续验收见下节，Phase 3／4 目标仍未完成。
+
+### SnapshotMerge 适配器：已验收
+
+本项已实现并验收 caller-lock merge_snapshots(repo, base, ours, theirs)，不调用 self-lock 业务，不发布工作区、Index、HEAD、日志或 operation；可读取 typed Blob 并保存不可变合并／marker Blob，后期错误允许不可达 Blob 遗留。结果 Index 的干净路径为 stage 0，冲突只能记录实际存在的原始 base／ours／theirs stages 1／2／3；work 表示完整候选布局，不是实际磁盘备份，且始终无 D/F。没有新 CLI 或实验，merge-base 与持久操作仍待后续。
+
+存在、内容 ID 与 mode 独立判断。完整 FileState 快捷选择可处理无需文本化的二进制；delete／modify 包括删除与仅模式修改。base 缺失、两侧都新建且内容 ID 不同，必为创建冲突，空 Blob 也是真实新建版本：非 NUL 分类 AddAdd 并用整文件 marker，NUL 优先分类 Binary 并保留 ours 工作字节，不通过空 base 的恒等快捷返回吞掉冲突；模式不同由 mode_conflict 同时标注模式冲突。文本 marker 或内容已合并而 mode 冲突时，Index 仍保留原始 stages，不把呈现内容当 stage 0。
+
+先对可能的最终存在路径检查最短 D/F 区域，不能把原始三份 union 的结构变化都当冲突。区域内全部使用原始 conflict stages、work 沿用 ours 的完整布局，无 stage 0／marker／别名文件。所有输入路径、mode、各自 D/F 与结构预算先校验，再验证全部 typed Blob，之后才保存新 Blob；逐文件释放内容，不把所有既存 Blob 总字节限为 64 MiB。
+
+每侧 Snapshot 最多 100000 文件，union 最多 200000 路径／64 MiB key，最终 Index 最多 100000 distinct／300000 stage entries／64 MiB 编码；路径 4096 字节／128 分量。这里的文件规划预算与以后 write_snapshot 的 100000 Tree entries（含目录）不同，候选结果合法不自动承诺能在所有深目录布局下写成 Commit。实际 API 与 snapshot_index／choose／scalar／region_at／IndexOutput 等私有入口已核对；输入和最终 Index 的逐项结构预算在复制／追加前检查。核心、八组单元及只读完整审查均通过。
+
+新增 8 个 SnapshotMerge 单元、无新 CLI；CTest 实际注册为 145 单元、17 CLI，共 162 项。两种预设构建无警告；`ctest --preset debug -R '^unit\.(SnapshotMerge|MergeText|Index)|^unit\.Invalid index entries' --output-on-failure` 与 sanitized 对应命令各 18 项全部通过，分别用时 13.91／278.95 秒，无 ASan／UBSan 报告。本轮没有执行全 162 项，不改写此前 Phase 2 全量 147 项的验收范围。
+
+八组语义覆盖完整状态快捷选择、内容／mode 独立组合、原始 stages 与 coarse 文本 marker、包含空文件的 AddAdd 及并行 mode_conflict、DeleteModify／Binary、最短 D/F 与干净结构替换、全部输入结构与 typed Blob 前检、共享 Blob 的 union 200001／最终 distinct 100001 拒绝。AddAdd 还验证 100001 输入行及接近 64 MiB 的 marker 膨胀预算。sanitized 最后一组真实大预算 fixture 用时 261.09 秒，执行期间 CPU 活跃且核对采用 -g -O1；没有减小预算或跳过检查，该耗时不构成性能承诺。
+
+两种预设的临时独立验证器各 1000 组固定种子性质检查通过，覆盖恒等、精确原始 stages 与合法布局、交换 stages 2／3、coarse 对称性及无可变状态发布。适配器已验收；下一独立依赖为 single-base helper：先校验双方完整祖先闭包，再选择唯一 lowest 共同祖先（没有另一共同祖先位于其后代），多个最低基线或无共同祖先在业务发布前明确拒绝。CommitFactory／LongOperation 与 merge 等命令仍待后续，Phase 3 尚未整体验收。
 
 ## Phase 4：历史编辑与对象回收
 
@@ -315,4 +332,4 @@ EOF 去 LF 与另一侧追加普通行或空行须合为冲突，不得粘连或
 
 ## 下一步
 
-Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，Mv 文件与目录迁移已完成子项验收，Phase 2 两个预设各 147 项全量检查已通过、整体验收完成；纯文本三方合并引擎已通过子项验收，下一步实现 Snapshot 合并的模式／存在／D/F 语义，随后按上述依赖推进 Phase 3 和 Phase 4，最终目标尚未完成。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，Mv 文件与目录迁移已完成子项验收，Phase 2 两个预设各 147 项全量检查已通过、整体验收完成；纯文本三方合并引擎已通过子项验收，Snapshot 合并的模式／存在／D/F 适配器已通过子项验收，下一项为完整 DAG 上的 single-base 选择，随后按上述依赖推进 Phase 3 和 Phase 4，最终目标尚未完成。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。

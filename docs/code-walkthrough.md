@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，无合并业务 CLI。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，无合并业务 CLI。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -76,7 +76,8 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 15 | Remove（已验收） | 为何 cached 有两条安全路径，force 仍保护未知内容？ |
 | 16 | Move（已验收） | Index 路径映射怎样与实际工作字节迁移分开？ |
 | 17 | 纯文本合并（已验收） | 基线坐标、点插入、完整区块重放与 LF 怎样决定冲突？ |
-| 18 | Operations（计划） | 继续／中止怎样跨进程保持？ |
+| 18 | SnapshotMerge（已验收） | 原始 stages、marker 工作内容与 D/F 区域如何区分？ |
+| 19 | Operations（计划） | 继续／中止怎样跨进程保持？ |
 
 表中前十七项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
 
@@ -282,3 +283,11 @@ Move 的七组单元用例分别检查 B／C 字节与模式／完整权限、�
 阅读重点是同一份 base 的 old 坐标：点插入不消费基线，正区间消费半开范围。同坐标先点后区间，内部交互形成传递闭包，分别重放两侧包含未修改基线的完整区块，再比较 bytes 和 terminated。make_hunks 会人为加入显示上下文，两个 hunk 接近不表示两份修改互相冲突，不能把显示结果用作合并判定。
 
 span 与 Line 只借用输入，TextMergeResult 的 Bytes 拥有输出；base 行坐标和 output 字节偏移须分别计算。输入与输出增量预算、EOF 无 LF 特例和 coarse 都属于语义，不能在格式化最后才补救。实际链为 validate_input → split_lines → 恒等快捷返回 → 两次 diff_lines → order_edits → 严格区块／EOF 合组 → replay → Output::clean／conflict。Output::append 在每次写入前检查剩余字节预算，冲突偏移从真实 content.size() 计算。七组单元覆盖恒等输入校验、独立与边界修改、同点插入及 marker 偏移、完整重放与传递重叠、EOF／LF、预算与 coarse。fs.hpp 仅复用 max_file_size 常量，无文件 IO。实际验证范围见进度页，当前不是 merge／continue／abort 的命令导读。
+
+## SnapshotMerge：先验证所有输入，再保存新对象
+
+[merge_snapshot.hpp](../include/minigit/merge_snapshot.hpp) 定义 MergeConflictKind、含 mode_conflict 的 MergeConflict 及 SnapshotMergeResult；[merge_snapshot.cpp](../src/core/merge_snapshot.cpp) 的 merge_snapshots 已通过子项验收；[test_merge_snapshot.cpp](../tests/unit/test_merge_snapshot.cpp) 包含八组语义测试。merge_snapshots 接收外部 Snapshot，因此不能假设输入都来自 read_snapshot；路径、mode、该侧无 D/F、100000 文件与结构预算先检查；snapshot_index 在复制路径／追加 entry 之前逐项检查剩余编码预算，所有 typed Blob 再验证，之后才可生成新对象。
+
+阅读时追踪两个输出：IndexEntry 保存原始 B/O/T 的 ID 与 mode，work 保存干净选择、合并或 marker 的 FileState。全状态 optional 快捷判断包含存在和 mode，随后内容与模式分别作三方判断；创建冲突须确认“base 不存在、两侧内容 ID 不同”，不能把缺失当空字节交给恒等快捷路径。NUL 优先分类 Binary 且保留 ours 字节；非 NUL 由 add_add_marker 生成 whole-file marker，分类 AddAdd，TextConflict 的 base_count=0。mode_conflict 与主 kind 并行，多个冲突维度不因分类互相覆盖。
+
+D/F 用可能的最终存在路径找最短区域，而不是机械合并三个输入的名字；祖先检查须覆盖全部路径分量，p-other 不能让 p 与 p/x 的碰撞漏掉。整个区域的原 stage 0 候选也要升级为原始 stages，工作布局只保留 ours。最终 sorted Index 要经预算与 encode_index，work 要复验无 D/F；实际链为 snapshot_index 的各输入 schema → 有界 union 与去重 typed IDs → choose 计算 possible → region_at 最短 D/F 区域 → scalar 的内容／mode 或 read_blob／add_add_marker／merge_text → IndexOutput → 最终 Index 与 work schema。choose 比较完整 optional<FileState>，scalar 才分别比较单项；D/F 在文本化前判定，避免生成本会丢弃的 marker。八组测试覆盖完整状态选择、内容／mode 独立组合、原始 stages 与 marker、含空文件的 AddAdd、删除与二进制、最短 D/F 区域、全部输入前检及 union／最终 distinct 预算。AddAdd 单独验证 100001 行拒绝与接近 64 MiB 的 marker 膨胀，不借空 base 的快捷路径绕过限制。核心已验收，没有 CLI／事务发布调用；下一项 single-base 选择复用完整 DAG 校验。
