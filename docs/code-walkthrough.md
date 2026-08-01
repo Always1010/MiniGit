@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，无合并业务 CLI。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -75,9 +75,10 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 14 | Reset | 模式如何扩大发布范围，同 ID 为何仍处理 Index／Work？ |
 | 15 | Remove（已验收） | 为何 cached 有两条安全路径，force 仍保护未知内容？ |
 | 16 | Move（已验收） | Index 路径映射怎样与实际工作字节迁移分开？ |
-| 17 | Operations（计划） | 继续／中止怎样跨进程保持？ |
+| 17 | 纯文本合并（已验收） | 基线坐标、点插入、完整区块重放与 LF 怎样决定冲突？ |
+| 18 | Operations（计划） | 继续／中止怎样跨进程保持？ |
 
-表中前十六项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
+表中前十七项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -273,3 +274,11 @@ C++ 阅读重点是把两份状态分别保存：IndexEntry 的 mode／ID 可值
 [move.sh](../examples/experiments/move.sh) 已准备 MM 中 B／C 内容与执行位分离、完整权限、同字节与 Index-only 碰撞、已有目的目录 basename、多叶目录、未知／忽略 child／emptyDir、选项样名称及 HEAD／日志不变；两种构建的实际实验均通过。
 
 Move 的七组单元用例分别检查 B／C 字节与模式／完整权限、目的碰撞和 basename、未知库存、自身重叠与 Index 拓扑／冲突、全对象与不安全节点、unborn／detached／词法路径，以及 dirty 源和目录映射的 Prepared／Committed 恢复。该恢复用例验证执行中断后的真实现场，不能由“规划失败无发布”替代恢复契约；实际命令与范围见进度页。
+
+## 纯文本合并：hunk 是展示范围，edit 才是修改范围
+
+[merge_text.hpp](../include/minigit/merge_text.hpp) 定义 TextConflict／TextMergeResult，落盘 [merge_text.cpp](../src/core/merge_text.cpp) 实施纯 merge_text；单元文件为 [test_merge_text.cpp](../tests/unit/test_merge_text.cpp)，两种预设的相关检查及独立性质验证已通过。merge_text 只接受原始三份字节，不接受外部伪造 EditScript；内部复用 split_lines／diff_lines 的合法脚本，避免新增一份 LCS。
+
+阅读重点是同一份 base 的 old 坐标：点插入不消费基线，正区间消费半开范围。同坐标先点后区间，内部交互形成传递闭包，分别重放两侧包含未修改基线的完整区块，再比较 bytes 和 terminated。make_hunks 会人为加入显示上下文，两个 hunk 接近不表示两份修改互相冲突，不能把显示结果用作合并判定。
+
+span 与 Line 只借用输入，TextMergeResult 的 Bytes 拥有输出；base 行坐标和 output 字节偏移须分别计算。输入与输出增量预算、EOF 无 LF 特例和 coarse 都属于语义，不能在格式化最后才补救。实际链为 validate_input → split_lines → 恒等快捷返回 → 两次 diff_lines → order_edits → 严格区块／EOF 合组 → replay → Output::clean／conflict。Output::append 在每次写入前检查剩余字节预算，冲突偏移从真实 content.size() 计算。七组单元覆盖恒等输入校验、独立与边界修改、同点插入及 marker 偏移、完整重放与传递重叠、EOF／LF、预算与 coarse。fs.hpp 仅复用 max_file_size 常量，无文件 IO。实际验证范围见进度页，当前不是 merge／continue／abort 的命令导读。

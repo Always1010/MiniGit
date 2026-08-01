@@ -6,6 +6,8 @@ Phase 0 构建基础、Phase 1 本地快照闭环及 Phase 2 比较、分支与�
 
 Phase 2 的八个命令 diff／show／branch／switch／restore／reset／rm／mv 已完成整体验收，Debug 与 sanitized 各 147 项全量检查全部通过（130 单元、17 CLI），无 ASan／UBSan 报告。共同的数据模型、事务架构、与原生 Git 的边界及 Phase 3 依赖链集中记录在 [Phase 2 阶段总结](docs/progress.md#phase-2-阶段总结)。版本仍为 0.1.0；合并、历史重放与对象回收尚待 Phase 3／4，最终目标未完成。
 
+Phase 3 的纯文本三方合并引擎已通过子项验收，无新 CLI。它以 base／ours／theirs 字节为输入，返回拥有内容的结果和冲突范围；merge、cherry-pick、revert、stash 仍未交付。语义例子见 [三方文本学习笔记](docs/learning-notes.md#三方文本先比较相对基线的修改)。
+
 ## 构建与运行
 
 需要 CMake 3.20 或更高版本、支持 C++20 的编译器、OpenSSL 3、zlib 和 Catch2 v3。CLI 集成检查通过 CMake 脚本注册到 CTest，核心单元测试使用 Catch2。预设负责配置项目，依赖由环境提供，不在构建过程中隐式安装系统软件。
