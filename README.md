@@ -8,6 +8,8 @@ Phase 2 的八个命令 diff／show／branch／switch／restore／reset／rm／m
 
 Phase 3 的纯文本三方合并引擎已通过子项验收，无新 CLI。它以 base／ours／theirs 字节为输入，返回拥有内容的结果和冲突范围；merge、cherry-pick、revert、stash 仍未交付。语义例子见 [三方文本学习笔记](docs/learning-notes.md#三方文本先比较相对基线的修改)。
 
+SnapshotMerge 适配器已通过子项验收，调用者持 RepoLock 后可读取 typed Blob、保存不可变合并／marker Blob，并返回候选 Index 与完整 work 布局；它不发布工作区、Index、HEAD 或日志，也不新增 CLI。文件存在、内容、模式和 D/F 冲突语义见 [快照合并学习笔记](docs/learning-notes.md#快照合并原始版本与呈现内容各有位置)，两种预设各 18 项定向检查及各 1000 组独立性质验证通过；完整范围见进度页。
+
 ## 构建与运行
 
 需要 CMake 3.20 或更高版本、支持 C++20 的编译器、OpenSSL 3、zlib 和 Catch2 v3。CLI 集成检查通过 CMake 脚本注册到 CTest，核心单元测试使用 Catch2。预设负责配置项目，依赖由环境提供，不在构建过程中隐式安装系统软件。

@@ -312,4 +312,16 @@ Phase 3 的纯文本引擎已通过子项验收，没有新 CLI 或命令实验�
 
 C++ 练习分别标出 TextConflict 的基线行范围与输出字节范围，后者从 opening marker 到 closing marker 后的 LF。上例 base_begin=1，output_begin=2（前面已有 a 与 LF 两字节），两个起点不能共用单位。UTF-8 多字节、CRLF 和无 LF 尾行都能说明“行数”不等于“字节数”。输入 span／Line 只借用三份缓冲区，返回 Bytes 拥有结果，因此调用结束后不留下借用输出。
 
-三份输入各限 100000 行且拒绝 NUL，即使内容相等也先检查；非 NUL 的任意字节与 CR 不自动转码。合并输出可因独立插入超过任一输入的行数，但仍增量限 64 MiB。两次有界 Diff 顺序执行，coarse 只说明采用较宽替换并可能增加保守冲突，不能以它为理由丢掉某侧修改。两种预设的相关检查及独立性质验证已通过；二进制文件选择、模式、D/F 与 Index stages 属于后续 Snapshot 适配器。
+三份输入各限 100000 行且拒绝 NUL，即使内容相等也先检查；非 NUL 的任意字节与 CR 不自动转码。合并输出可因独立插入超过任一输入的行数，但仍增量限 64 MiB。两次有界 Diff 顺序执行，coarse 只说明采用较宽替换并可能增加保守冲突，不能以它为理由丢掉某侧修改。两种预设的相关检查及独立性质验证已通过；二进制文件选择、模式、D/F 与 Index stages 属于下节已验收的 Snapshot 适配器。
+
+## 快照合并：原始版本与呈现内容各有位置
+
+SnapshotMerge 适配器已通过子项验收，无新 CLI 或命令实验。先在单文件上分开三项状态：是否存在、Blob 内容 ID、mode。base 是普通文件，ours 只把 100644 改为 100755，theirs 只改文本，候选结果应取 ours mode 加 theirs 内容；仅比较完整 FileState 相等会漏掉这个可组合情况。
+
+再令 base 不存在，ours 新建空 Blob，theirs 新建非空 Blob。空文件是新版本而不是不存在，两侧 ID 不同必须冲突：非 NUL 分类 AddAdd，整文件 marker 放 work，原始 ours／theirs 分别放 stage 2／3，没有 stage 1；任何一侧含 NUL 则优先分类 Binary，work 保留 ours 字节，不生成文本 marker。若两侧 mode 也不同，mode_conflict 也为真，不被主 kind 掩盖。
+
+D/F 例子为 base:p，ours:p/x，theirs 修改 p。冲突区域的 Index 对 p 与 p/x 都只放原始 1／2／3，不能把 child 留 stage 0；work 采用 ours 的 p/x 布局，不同时写 p。若 theirs 未改 base，则 ours 的结构替换本可干净接受，所以判断来自可能的最终存在路径，不能仅看三份名字的 union。即使夹着 p-other，也要发现 p 与 p/x 的祖先关系。
+
+候选 work 不是实际工作区，SnapshotMerge 不探测或删除未知 p/y；后续业务仍须用精确 owned 与共享 planner 决定发布。它可逐文件保存不可变 Blob，规划后期拒绝会留下不可达对象，不能因此修改实际 Index。C++ 练习用 optional 区分缺失和 empty FileState，用原始 IndexEntry 与呈现 FileState 两份值表达不同用途。
+
+100000 Snapshot 文件和最终 Index distinct 路径是规划预算；Tree 建树另计算目录 entries，深目录的候选不能仅凭文件数宣称可提交。结果、原始 stages 与资源边界已有语义测试和独立性质验证，精确范围见进度页；single-base 选择、LongOperation、解决冲突与中止恢复还未交付。

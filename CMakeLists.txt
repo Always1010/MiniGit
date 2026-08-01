@@ -41,6 +41,7 @@ add_library(minigit_core
     src/core/format.cpp
     src/core/diff.cpp
     src/core/merge_text.cpp
+    src/core/merge_snapshot.cpp
     src/core/inspection.cpp
     src/core/status.cpp
     src/core/dag.cpp
@@ -80,6 +81,7 @@ if(BUILD_TESTING)
         tests/unit/test_tags.cpp
         tests/unit/test_diff.cpp
         tests/unit/test_merge_text.cpp
+        tests/unit/test_merge_snapshot.cpp
         tests/unit/test_inspection.cpp)
     target_include_directories(minigit_tests PRIVATE tests/support)
     # Transaction crash scenarios also exercise recovery through the real CLI.
