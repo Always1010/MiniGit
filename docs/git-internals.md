@@ -208,3 +208,9 @@ MiniGit 的 HEAD Snapshot 保存文件 Blob 与 100644／100755，不保存空�
 CommitSnapshot 工厂已通过子项验收，空提交策略仍由 create_commit 决定。一个合法父 Tree 可以含空子 Tree，展平 read_snapshot 看不到文件；write_snapshot(empty) 则构造空根 Tree。两份 Snapshot 同为空不保证这两个 Tree ID 相等，直接用 Snapshot equality 拒绝会改变既有业务判定。
 
 对象工厂允许显式空 Snapshot，支持初始或多父 Commit；它不猜当前分支，也不擅自认定消息相同或文件投影相同就不能保存。重放原 author 与当前 committer 同样是不同角色：前者保留源字段，后者记录本次显式身份；来源、parent 顺序与允许空的策略由后续业务选择，不让存储层从 Index 推断。
+
+## 长期状态的根不是一个备份 Blob 就够了
+
+OperationState v1 基础已通过子项验收，没有 merge／continue／abort 命令。原 Index 备份先是普通 Blob；GC 仅沿 Blob 没有子对象可遍历，却可能遗漏该 Index 内所有 stage 引用，因此 state_roots 要解码备份的 MGIX 并显式返回每个 stage Blob ID。Work before／after File、original／current／source Commit 也都是语义根，事务删除 State 时仍须保留 before 根。
+
+历史 Head 的 typed Commit 校验不同于业务对当前 HEAD 的 CAS，也不同于展开其 Tree／parents。保存 raw HEAD 与整份 optional Index 是为了将来精确恢复元数据；Work 仅恢复记录的受影响路径，不能把未涉入文件当作删掉。State codec 的 64 MiB 上限只验证单文件，真正发布还要承受 operation／Index／日志双方总量和 Work 数量的 combined 事务预算。

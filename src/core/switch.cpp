@@ -2,6 +2,7 @@
 #include "minigit/branches.hpp"
 #include "minigit/error.hpp"
 #include "minigit/object_store.hpp"
+#include "minigit/operation.hpp"
 #include "minigit/reflog.hpp"
 #include "minigit/snapshot.hpp"
 #include "minigit/worktree.hpp"
@@ -45,6 +46,7 @@ Snapshot checked_index(const Repository& repo, const Index& index) {
 Head switch_worktree(const Repository& repo, const SwitchOptions& options) {
     RepoLock lock(repo.metadata());
     require_no_transaction(repo);
+    require_no_operation(repo);
     if (options.detach && options.new_branch) throw Error("switch -c 与 --detach 不能同时使用");
     if (!options.detach && !options.new_branch && options.target.empty()) throw Error("switch 需要目标分支");
     const auto before_head = read_head(repo);

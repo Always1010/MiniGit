@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，无合并业务 CLI。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，无合并业务 CLI。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -79,9 +79,10 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 18 | SnapshotMerge（已验收） | 原始 stages、marker 工作内容与 D/F 区域如何区分？ |
 | 19 | Single-lowest merge base（已验收） | 如何从完整父图剔除非最低共同祖先？ |
 | 20 | CommitSnapshot 工厂（已验收） | 显式内容存储为何不能从当前 Index 或 HEAD 推断？ |
-| 21 | Operations（计划） | 继续／中止怎样跨进程保持？ |
+| 21 | OperationState v1（已验收） | 状态、语义根与业务 guard 怎样分工？ |
+| 22 | 操作生命周期（计划） | 继续／中止怎样跨进程保持？ |
 
-表中前二十项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
+表中前二十一项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -320,4 +321,18 @@ find_merge_base 已通过子项验收，不是新命令。先复习 [dag.hpp](..
 
 ordinary create_commit 的链保持 validate_message → 取锁／pending → required_identity → HEAD／parent 自快照 → Index／root-empty → write_snapshot／Tree ID empty → prepare_commit／store_final_commit → plan_move_head／execute_transaction。共享私有构造器不代表它改为经 public factory：普通提交的 actor／frame 仍晚于候选 Tree，可能留下不可达 Tree，绝无提前可变发布。
 
-[test_history.cpp](../tests/unit/test_history.cpp) 新增五组：明确输入不读取损坏当前 HEAD／Index 与有序重复 parents（含不遍历父祖先）、原 author 字节／当前 committer、全部父和候选对象／schema 写 Tree 前校验、100001 parent／完整 frame／pending 拒绝、ordinary 空子 Tree 与消息→身份→HEAD→Index 错误顺序。显式 empty Snapshot 及 same-tree 存储允许。两种预设构建与定向回归通过，精确范围见进度页；无 CLI 或新实验，下一依赖为持久 Operation codec／roots、业务 guard 与生命周期。
+[test_history.cpp](../tests/unit/test_history.cpp) 新增五组：明确输入不读取损坏当前 HEAD／Index 与有序重复 parents（含不遍历父祖先）、原 author 字节／当前 committer、全部父和候选对象／schema 写 Tree 前校验、100001 parent／完整 frame／pending 拒绝、ordinary 空子 Tree 与消息→身份→HEAD→Index 错误顺序。显式 empty Snapshot 及 same-tree 存储允许。两种预设构建与定向回归通过，精确范围见进度页；无 CLI 或新实验，持久 Operation codec／roots 与业务 guard 的验收见下节；下一依赖为 Merge start／continue／abort 生命周期。
+
+## OperationState：pure codec、semantic roots 与业务 guard
+
+本项基础模块已通过子项验收。[operation.hpp](../include/minigit/operation.hpp) 定义 OperationState 与纯 codec／caller-lock 接口；[operation.cpp](../src/core/operation.cpp) 实现 encode_operation／decode_operation、caller-lock read_operation／require_no_operation／state_roots，以及 plan_operation_update(repo, plan, expected, desired)。codec 不读 Repository；read／roots 做 typed 对象语义校验但不探测 Work；guard 对任意现存 operation 节点拒绝，无需为了阻止业务先扫描备份对象。
+
+plan 首先 require_no_transaction、拒绝已有 operation metadata change，并 validate_transaction_budget 原 plan，再读取真实可选 raw before；存在时 decode／roots 并和 expected canonical 编码比较。expected=null 只允许缺失，desired=null 表示删除；同 State 为 noop，但不跳过期待值或计划前置校验。v1 不支持 existing→不同 State。desired 的 codec／roots 与 complete combined 事务预算通过后才 move 赋回，任何失败磁盘不变、caller plan 不变。
+
+检验两个不同的根层：journal 保存 operation metadata payload 的 backup Blob；State 自己另保存 original raw Index backup Blob。后者必须继续解码所有 stages 与 typed Blob，不是只验它为 Blob。original／current 是保存的历史结构，不可和现盘 HEAD 在 codec／roots 中比较；当前 HEAD CAS 留给后续业务。事务 execute／recover／roots 共用 operation before／after 的语义分支，避免只有正常执行支持而恢复不保根。
+
+guard 只在 self-lock commit／switch／reset／branch mutations 加入，内部 store_commit_snapshot 与各 planner 不加；允许解决工具与身份配置仍遵守原规则。首版只有 Merge／Conflicted，read／plan 本身不会捕获新的备份 Blob，当前没有 Ready／todo／position 的万能字段包。实际 encode 链为 validate_state 的增量大小／Head／NodeImage／双侧拓扑预验 → reserve 有界空间 → BE 字段写入 → SHA-256；decode 先总大小与 checksum，再 Reader 消费字段、在 count reserve 前验证上限与最小剩余字节，最后复验 validate_state 并拒绝 trailing bytes。roots 用 ObjectId→ObjectType map 去重 typed 校验，Index header 的 300000 stages 前检早于 decode_index 的 reserve，再按完整 Index budget 与所有 stage Blob 取根。
+
+read_operation 为 raw_operation → decode_operation → state_roots，刻意不自加短事务 guard、也不 inspect live HEAD／Work，以便 recovery 复用。plan 为原 plan／before 语义 → expected 编码 CAS → desired 编码／roots → same noop 或 v1 replacement 拒绝 → next combined budget → move 赋回。原 metadata 精确字节而不是重编码值进入短事务 CAS。
+
+[test_operation.cpp](../tests/unit/test_operation.cpp) 已落盘五组：canonical roundtrip、authenticated malformed／资源与双侧拓扑、历史 typed roots／Index 全 stages、expected CAS／strong plan／combined budget、operation＋Index＋Work 的 Prepared 创建／Committed 删除恢复与 before／after 根。两组 [test_operation_guards.cpp](../tests/unit/test_operation_guards.cpp) 检查有效／坏／unsafe State 节点阻止历史移动、允许查询／身份／解决工具／tags／内部 primitives 并保留 operation 字节。冻结源码审查、两种预设最终构建及 31 项定向回归通过，精确范围见进度页；没有 merge／continue／abort CLI。

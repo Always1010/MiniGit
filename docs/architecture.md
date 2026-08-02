@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，合并业务与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，合并业务与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -71,7 +71,7 @@ Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/
 
 仓库元数据存放在 `.minigit` 专用目录。当前初始化写入 `config`，内容为 `format=1` 和 `hash=sha256` 两行；`HEAD` 为 `ref: refs/heads/main`，此时 main 尚无首个提交。松散对象路径为 `objects/<摘要前两位>/<剩余六十二位>`。初始化先在临时目录构造元数据，再发布为 `.minigit`，有效仓库重复初始化保留已有内容。
 
-当前持久化布局如下；reflog 在首次记录事件时创建，长期操作状态仍待后续子项接入：
+当前持久化布局如下；reflog 在首次记录事件时创建。OperationState v1 基础已验收，可由核心 planner 创建／删除，Merge 生命周期 CLI 尚未接入：
 
 ```text
 .minigit/
@@ -82,6 +82,7 @@ Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/
   write.lock             持久锁文件；解锁不删除
   transaction            MGTR v1，未完成短事务时存在
   transaction-staging/   本次双方节点的内部暂存
+  operation              MGOP v1，Merge／Conflicted 核心状态
   objects/ab/<62位ID>     zlib 松散对象
   refs/heads/<分支>       完整提交 ID 与换行
   refs/tags/<标签>        完整提交 ID 与换行
@@ -424,7 +425,7 @@ flowchart TD
 
 权限改变也使 Directory 成为事务记录，必须检查完整实际 inventory。保留模式不把 chmod 意图变成递归删除：已知文件需要 exact owned，沿已有明确目标或 actual 镜像保留；已知目录需要 exact owned 或已授权后代。已有删除／替换目标优先，未知文件、空子目录、软链与特殊节点仍阻止操作。必要的 before==after 后代也记入 work，满足执行器“记录目录的全部实际子项”契约；完全相同 Directory 的无操作不枚举无关兄弟。
 
-被记录的 Directory 两侧都至少具备 owner-read／execute；最终 work 中有后代（包括 after=Absent）时，两侧 Directory 须 owner-rwx。完整拓扑和 combined work／metadata 预算先于捕获备份，不放宽 Transaction。原空目录可按 exact owned 恢复，但这个位置授权不延伸到未知后代。此处仅补共享 planner；LongOperation 的持久镜像、abort 与语义 roots 仍是后续目的。
+被记录的 Directory 两侧都至少具备 owner-read／execute；最终 work 中有后代（包括 after=Absent）时，两侧 Directory 须 owner-rwx。完整拓扑和 combined work／metadata 预算先于捕获备份，不放宽 Transaction。原空目录可按 exact owned 恢复，但这个位置授权不延伸到未知后代。此处仅补共享 planner；持久镜像字段与语义 roots 由下节 OperationState 基础提供，abort 生命周期仍是后续目的。
 
 ## 工作区短事务与恢复
 
@@ -489,7 +490,7 @@ flowchart LR
     D --> L[唯一 lowest / nullopt / 多基线 Error]
 ```
 
-继承 DAG 的 100000 节点、1000000 父边及 64 MiB 解码数据预算；重复父边的 OR 幂等。实际两轮传播与接口已核对，构建、语义测试及独立 DAG 性质验证通过，精确范围见进度页。完整 Directory WorktreeTargets 已通过子项验收，caller-lock CommitSnapshot 工厂也已验收，下一层建立持久 Operation codec／roots 与业务 guard，之后才能组合 SnapshotMerge 与事务发布。
+继承 DAG 的 100000 节点、1000000 父边及 64 MiB 解码数据预算；重复父边的 OR 幂等。实际两轮传播与接口已核对，构建、语义测试及独立 DAG 性质验证通过，精确范围见进度页。完整 Directory WorktreeTargets 已通过子项验收，caller-lock CommitSnapshot 工厂也已验收，持久 Operation codec／roots 与业务 guard 也已验收，下一层组合 SnapshotMerge 与事务发布，完成 Merge 的 start／continue／abort。
 
 ## CommitSnapshot 工厂：保存对象与移动 HEAD 分开
 
@@ -498,3 +499,23 @@ flowchart LR
 未提供 author 时，author／committer 都由当前 identity 与运行时 UTC 业务秒生成；提供原 author 时原字段连同其原业务时间按 Commit codec 校验并保留，committer 仍取当前身份。参数 parent 顺序和重复边原样保存，校验可按 ID 去重；每个显式父 Commit 自己的完整 Tree／Blob 必须可读，但不遍历其整个祖先 DAG。公开 store_commit_snapshot 的 100000 parents 与完整 Commit／ObjectStore frame 的 64 MiB 预算先于任何 Tree 写入；候选建树仍受含目录的 Tree entry 预算。
 
 create_commit 继续在消息拒绝后自己取锁，先检查 identity，再读取 HEAD parent／Index 并处理初始空与 allow-empty；已有 parent 的空提交检查比较实际 Tree ID，不改为展平 Snapshot 相等。ordinary create_commit 仍先 write_snapshot 并比较 Tree ID，再复用 prepare_commit／store_final_commit 保存对象，最后由原 plan_move_head／Transaction 一次发布；没有为了共享而改变原失败顺序。因而普通提交的晚期 actor／frame 错误可留下不可达 Tree；公开工厂的 actor／frame 前检则在写 Tree 前完成。五组新增测试与冻结私有链已核对，定向回归及完整只读审查通过；不可变准备不提前发布元数据。本项不引入 Factory 类、LongOperation codec 或 merge CLI。
+
+## OperationState v1：跨调用的记录仍由短事务发布
+
+本项基础状态／roots／guard 已通过子项验收，不交付 merge CLI 或 continue／abort。v1 只接受 Merge／Conflicted，original_head 与 current_head 结构相同且都有 Commit ID；不接受 unborn、Ready 或其他 kind。状态保存 original raw HEAD、可选整份 raw Index 的 backup Blob、单个 source_commit、message 及按路径排序唯一的 work。WorkChange.before 是第一次实际镜像，after 是上次操作发布后的镜像，不是用户解决冲突后当前文件的 CAS。
+
+纯 MGOP v1 codec 采用 magic、BE u32 版本／长度／计数、单字节 kind／phase／presence、原始 32 字节 ID 与末尾 SHA-256；校验版本、枚举、presence、长度／数量、checksum、raw HEAD 与保存的 logical Head 一致，以及两侧 Work 拓扑／权限；不读取磁盘。raw HEAD 保留 detached ID 原大小写；不能查当前 ref 来解释历史 id。缺失 Index 是 null，合法空 Index 也有实际 backup Blob，空 Blob 不是合法 Index。记录限 100000、路径 4096 字节／128 分量，完整编码限 64 MiB；这不保证与其他 Work／metadata 合并后的 TransactionPlan 能发布。
+
+```mermaid
+flowchart LR
+    S[历史 Head / raw HEAD / 整份 Index 备份 / 受影响 Work] --> C[纯 codec 结构与 checksum]
+    C --> R[语义 roots / typed Commit 与 Blob / Index 内部各 stages]
+    R --> P[expected State 比较 / next Plan combined 预算]
+    P --> T[短事务 operation before-after 发布与恢复]
+```
+
+state_roots 校验 Commit 类型与结构，Work File 为 Blob；raw Index backup 为 Blob，还需 decode_index 并校验内部各 stage 的 Blob。历史 Commit roots 不展开 Tree／parents，业务随后预验参与合并的完整快照，未来 GC 自 roots 遍历闭包。事务 operation metadata 的 before／after 共用同一语义校验和根并集；删除 after=null 时 before roots 仍保留到短事务清理，journal 的 metadata backup Blob 与状态内部 Index backup 是两层不同对象。
+
+caller-lock read／guard／roots／plan 不写对象或 Work；plan 使用实际原字节、expected State 的 canonical 编码比较，首版允许创建、删除、同值无操作，拒绝 existing→不同 State，并以 next 副本保证异常时 caller plan 不变。历史结构有效不表示当前 HEAD 仍匹配，未来业务须另作 current Head CAS；事务继续保护规划后的原 metadata 字节。
+
+业务 guard 只加在 commit、switch、reset、branch 创建／删除（含 force），在 RepoLock／短事务 guard 之后执行；坏 operation 节点也拒绝。config、查询、add／rm／restore／mv、tag／hash-object 允许，但短事务与原冲突／unknown 策略仍生效。内部 caller-lock planners、存储工厂及状态读根不加 operation guard，避免未来继续／中止被自己的记录阻止。实际 API、validate_state／Reader／raw_operation／state_roots／plan 链已核对，最终构建、定向回归与完整审查通过；Merge 生命周期仍待下一目的。

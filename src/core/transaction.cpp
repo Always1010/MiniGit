@@ -2,6 +2,7 @@
 #include "minigit/error.hpp"
 #include "minigit/index.hpp"
 #include "minigit/object_store.hpp"
+#include "minigit/operation.hpp"
 #include "minigit/refs.hpp"
 #include "minigit/reflog.hpp"
 #include "minigit/snapshot.hpp"
@@ -48,7 +49,7 @@ void validate_path(std::string_view path) {
 }
 void validate_metadata_path(std::string_view path) {
     validate_path(path);
-    if (path == "index" || path == "HEAD" || path == "refs/stash" || path == "logs/HEAD") return;
+    if (path == "index" || path == "HEAD" || path == "refs/stash" || path == "logs/HEAD" || path == "operation") return;
     if (path.starts_with("refs/heads/") || path.starts_with("refs/tags/")) { validate_ref_name(path); return; }
     if (path.starts_with("logs/refs/heads/")) { validate_ref_name(path.substr(5)); return; }
     throw Error("事务元数据路径不在白名单中");
@@ -102,6 +103,11 @@ void add_budget(std::size_t& used, std::size_t count) {
 }
 void validate_metadata_bytes(const Repository& repo, const MetadataChange& change, const Bytes& bytes,
                              std::set<ObjectId>* roots = nullptr) {
+    if (change.path == "operation") {
+        const auto semantic = state_roots(repo, decode_operation(bytes));
+        if (roots) roots->insert(semantic.begin(), semantic.end());
+        return;
+    }
     const ObjectStore store(repo.metadata() / "objects");
     auto keep = [&](const ObjectId& id, ObjectType type) {
         const auto object = store.read(id);

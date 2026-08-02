@@ -1,6 +1,7 @@
 #include "minigit/reset.hpp"
 #include "checkout_support.hpp"
 #include "minigit/error.hpp"
+#include "minigit/operation.hpp"
 #include "minigit/reflog.hpp"
 #include "minigit/worktree_update.hpp"
 #include <algorithm>
@@ -16,6 +17,7 @@ void check_index(const Repository& repo, const Index& index, bool soft) {
 void reset_repository(const Repository& repo, const ResetOptions& options) {
     RepoLock lock(repo.metadata());
     require_no_transaction(repo);
+    require_no_operation(repo);
     std::string reason;
     switch (options.mode) {
     case ResetMode::Soft: reason = "reset:soft"; break;
