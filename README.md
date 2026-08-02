@@ -4,19 +4,21 @@ MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可�
 
 Phase 0 构建基础、Phase 1 本地快照闭环及 Phase 2 比较、分支与安全更新均已验收，当前版本仍为 `0.1.0`。Phase 1 验收时 Debug 与 sanitized 各 54 项检查全部通过；各阶段真实范围与验证记录见 [进度](docs/progress.md)。
 
-Phase 2 的八个命令 diff／show／branch／switch／restore／reset／rm／mv 已完成整体验收，Debug 与 sanitized 各 147 项全量检查全部通过（130 单元、17 CLI），无 ASan／UBSan 报告。共同的数据模型、事务架构、与原生 Git 的边界及 Phase 3 依赖链集中记录在 [Phase 2 阶段总结](docs/progress.md#phase-2-阶段总结)。版本仍为 0.1.0；合并、历史重放与对象回收尚待 Phase 3／4，最终目标未完成。
+Phase 2 的八个命令 diff／show／branch／switch／restore／reset／rm／mv 已完成整体验收，Debug 与 sanitized 各 147 项全量检查全部通过（130 单元、17 CLI），无 ASan／UBSan 报告。共同的数据模型、事务架构、与原生 Git 的边界及 Phase 3 依赖链集中记录在 [Phase 2 阶段总结](docs/progress.md#phase-2-阶段总结)。版本仍为 0.1.0；Phase 3 合并与重放逐项推进，Phase 4 对象回收仍待实现，最终目标未完成。
 
-Phase 3 的纯文本三方合并引擎已通过子项验收，无新 CLI。它以 base／ours／theirs 字节为输入，返回拥有内容的结果和冲突范围；merge、cherry-pick、revert、stash 仍未交付。语义例子见 [三方文本学习笔记](docs/learning-notes.md#三方文本先比较相对基线的修改)。
+Phase 3 的纯文本三方合并引擎已通过子项验收，无新 CLI。它以 base／ours／theirs 字节为输入，返回拥有内容的结果和冲突范围；该纯引擎验收轮尚未包含 merge、cherry-pick、revert、stash；Merge 后续接入见下文。语义例子见 [三方文本学习笔记](docs/learning-notes.md#三方文本先比较相对基线的修改)。
 
 SnapshotMerge 适配器已通过子项验收，调用者持 RepoLock 后可读取 typed Blob、保存不可变合并／marker Blob，并返回候选 Index 与完整 work 布局；它不发布工作区、Index、HEAD 或日志，也不新增 CLI。文件存在、内容、模式和 D/F 冲突语义见 [快照合并学习笔记](docs/learning-notes.md#快照合并原始版本与呈现内容各有位置)，两种预设各 18 项定向检查及各 1000 组独立性质验证通过；完整范围见进度页。
 
-single-lowest merge-base helper 已通过子项验收：沿双方完整父图选择唯一最低共同祖先，不展开 Tree、不新增 CLI。零个基线返回缺失，多个基线明确拒绝，避免用提交时间选一个；两种预设各 14 项定向检查及各 500 组独立 DAG 性质验证通过。完整目录目标规划也已验收，CommitSnapshot 工厂也已验收，后续依赖为持久操作，merge 业务尚未交付。
+single-lowest merge-base helper 已通过子项验收：沿双方完整父图选择唯一最低共同祖先，不展开 Tree、不新增 CLI。零个基线返回缺失，多个基线明确拒绝，避免用提交时间选一个；两种预设各 14 项定向检查及各 500 组独立 DAG 性质验证通过。完整目录目标规划也已验收，CommitSnapshot 工厂也已验收，持久操作基础及 Merge 业务已通过子项验收。
 
 共享 planner 的显式 Directory target 已通过子项验收，用于描述空目录与完整目录权限；接口与调用链已核对，两种预设各 28 项定向检查通过，无新 CLI。HEAD 快照不能替代真实 NodeImage，后续长操作中止需要这些镜像，目录扩展本身不提供 abort；状态基础见下文。
 
-caller-lock CommitSnapshot 存储工厂已通过子项验收，接收明确 Snapshot 和有序 parents，只保存不可变 Tree／Commit；不读取 HEAD／Index 或发布引用。create_commit 保持业务入口与原空提交策略，merge／重放和长期操作生命周期仍未交付。本项无新 CLI 或实验，接口和调用链已核对，两种预设各 22 项定向检查通过；Operation codec／roots 与业务 guard 也已验收，下一项是 Merge 的 start／continue／abort 生命周期。
+caller-lock CommitSnapshot 存储工厂已通过子项验收，接收明确 Snapshot 和有序 parents，只保存不可变 Tree／Commit；不读取 HEAD／Index 或发布引用。create_commit 保持业务入口与原空提交策略，Merge 生命周期现已实现，重放和其他长期操作仍未交付。本项无新 CLI 或实验，接口和调用链已核对，两种预设各 22 项定向检查通过；Operation codec／roots 与业务 guard 也已验收，Merge 的 start／continue／abort 已通过子项验收。
 
-OperationState v1 基础已通过子项验收：首版只支持 Merge／Conflicted，保存原始 HEAD 字节、整份可选 Index 备份及受影响 Work 的真实镜像，接入事务语义根与业务 guard；无 merge CLI、continue／abort 或其他操作 kind。接口和冻结源码已核对，两种预设各 31 项定向检查通过，既有解决工具的安全策略不放宽。
+OperationState v1 基础已通过子项验收：首版只支持 Merge／Conflicted，保存原始 HEAD 字节、整份可选 Index 备份及受影响 Work 的真实镜像，接入事务语义根与业务 guard；该基础验收轮无 merge CLI、continue／abort 或其他操作 kind，现由下文 Merge 生命周期使用。接口和冻结源码已核对，两种预设各 31 项定向检查通过，既有解决工具的安全策略不放宽。
+
+完整 Merge 生命周期已通过子项验收，首版以干净跟踪状态启动，覆盖 up-to-date、fast-forward、unborn 与唯一基线三方合并。冲突以原始 stages、呈现 Work 和 OperationState 同事务发布；继续取当前 Index，中止恢复 raw HEAD／整份原 Index 与受影响 Work 的真实 before。两个预设的相关检查、真实实验及完整只读审查通过，不提供 Ready 或其他操作 kind。
 
 ## 构建与运行
 
@@ -63,6 +65,7 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `reset [--soft\|--mixed\|--hard] [--] [revision]` | 整体重置当前历史位置，默认 mixed，按模式更新 Index／Work |
 | `rm [-r] [-f] [--cached] [--] paths...` | 删除 Index 已知路径，默认同时删工作文件；已验收 |
 | `mv [--] source destination` | 同事务迁移 Index 路径与实际工作文件，首版无覆盖选项；已验收 |
+| `merge [-m message] [--] revision`、`merge --continue`、`merge --abort` | 单源合并、从 Index 继续或恢复真实备份；已验收 |
 
 对象 ID 必须为完整 64 位十六进制文本，尚不支持缩写。不带 `-w` 的摘要计算可以在仓库外执行；写入和读取需要当前目录或祖先存在有效 `.minigit` 仓库。当前文件读取上限为 64 MiB，软链接和非普通文件被拒绝。
 
@@ -99,6 +102,8 @@ Rm 已通过子项验收，用于把 Index 已知路径的删除准备给下一�
 Mv 已通过子项验收，每次接受一个源和一个目的：源为 Index 已知的普通文件或目录 prefix。它把原 Index 的 mode／ID 放到新路径，并独立迁移实际工作文件的字节与完整权限；源即使是 MM，也不能用 add 新路径替代这两份版本。所选冲突拒绝，未选冲突保留；成功静默，不改 HEAD、ref、日志或身份。
 
 目的若为已有普通目录，只追加一次源 basename；解析后的目的必须没有实际节点或 Index 占用，同字节文件也拒绝覆盖。目录源必须完整由所选跟踪文件构成，未知／忽略子文件、陌生空目录、软链与特殊节点均阻止迁移。首版不支持 -f、多源或 dry-run，自身／祖先／后代及仓库根迁移拒绝；新父目录为 0755，已有父目录权限保留，不迁移源目录权限。规划拒绝不发布 Work／Index，可遗留不可变备份 Blob；执行中断可能留下 pending journal 与部分更新，需 recover。源删除、目的发布和 Index 映射一起事务执行，[迁移实验](examples/experiments/move.sh) 两种预设均已运行通过。
+
+Merge 首版不提供强制覆盖、--no-ff 或多源形式。-m 只用于启动，continue／abort 不接收修订或消息；-- 可传入选项样式修订。正常结果输出说明并返回 0，已发布冲突输出路径并返回 1，业务错误返回 1，参数错误返回 2。冲突展示有 64 MiB 上限，超限省略剩余路径并提示使用 status，Index／State 仍记录完整结果。受影响 Work 备份包含保持 ours 的冲突同值节点及 D/F 区域内必要真实目录权限；abort 不只撤销实际写过的文件。实际覆盖仍保护未知内容；incoming 未跟踪节点若与目标字节及权限相同、无需改写，可保留并跟踪，不表示支持覆盖。[合并实验](examples/experiments/merge.sh) 已在两种构建运行通过，核对原 stages、完整权限／raw metadata 中止和从 Index 继续。精确验证范围见进度页。
 
 首次提交前设置显式身份。身份单独保存在 `.minigit/identity`，不改写仓库格式标识：
 
@@ -200,7 +205,7 @@ Phase 1 的暂存、提交与历史实验可直接运行。branch 管理已通�
 
 工作区短事务与 `minigit recover` 已完成子项验收。发生中断后，状态／历史查询和业务修改会提示先恢复，原始对象仍可通过 `cat-file` 或完整 Blob/Tree ID 的 `show` 观察。恢复拒绝损坏日志、缺失备份和计划外修改，并保留现场；不要通过手工删除日志来把未知状态当作成功。
 
-事务使用 `.minigit/transaction` 与内部 `transaction-staging`。只读空目录在目标缺失时以 exclusive mkdir 设置精确权限，可写目录继续暂存后 rename；系统调用内部临时权限若不匹配日志镜像会严格拒绝恢复。当前 Linux 实现依赖可用的 `/proc/self/fd`，工作区相关目录和元数据暂存必须在同一文件系统；源文件需具备 owner-read 权限，目录需可读取和遍历，包含更新子项的目录需 owner-rwx。这些约束属于当前实现边界，具体已验证范围见 [进度](docs/progress.md)。commit 已接入共同事务与 reflog 规划；branch 已通过同一事务发布引用与分支日志的子项验收。switch／restore／reset／rm／mv 已接入共同更新机制；OperationState 基础已接入事务，Merge 生命周期仍待后续。
+事务使用 `.minigit/transaction` 与内部 `transaction-staging`。只读空目录在目标缺失时以 exclusive mkdir 设置精确权限，可写目录继续暂存后 rename；系统调用内部临时权限若不匹配日志镜像会严格拒绝恢复。当前 Linux 实现依赖可用的 `/proc/self/fd`，工作区相关目录和元数据暂存必须在同一文件系统；源文件需具备 owner-read 权限，目录需可读取和遍历，包含更新子项的目录需 owner-rwx。这些约束属于当前实现边界，具体已验证范围见 [进度](docs/progress.md)。commit 已接入共同事务与 reflog 规划；branch 已通过同一事务发布引用与分支日志的子项验收。switch／restore／reset／rm／mv 已接入共同更新机制；OperationState 基础已接入事务，Merge 生命周期已通过子项验收。
 
 可重复的 [事务实验](examples/experiments/transactions.sh) 使用单独构建的 C++ 教学程序，在 a 已更新、b 尚未更新时保留 Prepared 日志，再通过真实 CLI 恢复并核对两次结果：
 

@@ -25,6 +25,7 @@ add_library(minigit_core
     src/core/repository.cpp
     src/core/transaction.cpp
     src/core/operation.cpp
+    src/core/merge.cpp
     src/core/reflog.cpp
     src/core/branches.cpp
     src/core/switch.cpp
@@ -68,6 +69,7 @@ if(BUILD_TESTING)
         tests/unit/test_transaction.cpp
         tests/unit/test_operation.cpp
         tests/unit/test_operation_guards.cpp
+        tests/unit/test_merge.cpp
         tests/unit/test_reflog.cpp
         tests/unit/test_branches.cpp
         tests/unit/test_switch.cpp
@@ -127,4 +129,6 @@ if(BUILD_TESTING)
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/remove_cli.cmake)
     add_test(NAME move_cli COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/move_cli.cmake)
+    add_test(NAME merge_cli COMMAND ${CMAKE_COMMAND}
+        -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/merge_cli.cmake)
 endif()

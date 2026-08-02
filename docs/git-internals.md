@@ -211,6 +211,12 @@ CommitSnapshot 工厂已通过子项验收，空提交策略仍由 create_commit
 
 ## 长期状态的根不是一个备份 Blob 就够了
 
-OperationState v1 基础已通过子项验收，没有 merge／continue／abort 命令。原 Index 备份先是普通 Blob；GC 仅沿 Blob 没有子对象可遍历，却可能遗漏该 Index 内所有 stage 引用，因此 state_roots 要解码备份的 MGIX 并显式返回每个 stage Blob ID。Work before／after File、original／current／source Commit 也都是语义根，事务删除 State 时仍须保留 before 根。
+OperationState v1 基础的独立验收当时未包含 merge／continue／abort 命令，现由下节业务使用。原 Index 备份先是普通 Blob；GC 仅沿 Blob 没有子对象可遍历，却可能遗漏该 Index 内所有 stage 引用，因此 state_roots 要解码备份的 MGIX 并显式返回每个 stage Blob ID。Work before／after File、original／current／source Commit 也都是语义根，事务删除 State 时仍须保留 before 根。
 
 历史 Head 的 typed Commit 校验不同于业务对当前 HEAD 的 CAS，也不同于展开其 Tree／parents。保存 raw HEAD 与整份 optional Index 是为了将来精确恢复元数据；Work 仅恢复记录的受影响路径，不能把未涉入文件当作删掉。State codec 的 64 MiB 上限只验证单文件，真正发布还要承受 operation／Index／日志双方总量和 Work 数量的 combined 事务预算。
+
+## 合并提交与冲突状态是两种结果
+
+Merge 生命周期已通过子项验收。fast-forward 只移动现有历史 tip，up-to-date 无新 Commit；真正分叉的 clean 合并记录有序 [ours, theirs] 两父，即使结果文件恰与一侧相同，历史连接仍有意义。共同基线来自完整父图，unrelated／crisscross 首版明确拒绝。
+
+冲突时 HEAD 保持，Index stages 1／2／3 是原始版本，Work marker 是呈现，State 保存未来继续／中止所需上下文。继续以用户已解决的整份 stage0 Index 为来源，不把未暂存 Work 自动提交。中止范围则不同：整份 Index 恢复原字节，Work 恢复受影响区域，含未改写但发生冲突的 ours 同值节点与 D/F 区域内真实目录权限。原 File／Absent 变为目录时，恢复 root 下当前 Index 新跟踪子项可删除，unknown 不获授权；区域外新跟踪 Work 保留，其暂存信息随整份 Index 恢复而撤销。incoming 未跟踪文件与目标内容／权限相同而无需写入时可保留并加入 Index，实际覆盖仍受 unknown 保护，不能视为完整原生 Git 行为兼容。实际 CLI 与生命周期检查、实验通过，完整只读审查通过；状态基础和业务分别验证，不把此子项当作 Phase 3 整体验收。

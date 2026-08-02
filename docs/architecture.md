@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，合并业务与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，其他合并应用与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -71,7 +71,7 @@ Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/
 
 仓库元数据存放在 `.minigit` 专用目录。当前初始化写入 `config`，内容为 `format=1` 和 `hash=sha256` 两行；`HEAD` 为 `ref: refs/heads/main`，此时 main 尚无首个提交。松散对象路径为 `objects/<摘要前两位>/<剩余六十二位>`。初始化先在临时目录构造元数据，再发布为 `.minigit`，有效仓库重复初始化保留已有内容。
 
-当前持久化布局如下；reflog 在首次记录事件时创建。OperationState v1 基础已验收，可由核心 planner 创建／删除，Merge 生命周期 CLI 尚未接入：
+当前持久化布局如下；reflog 在首次记录事件时创建。OperationState v1 基础已验收，可由核心 planner 创建／删除，Merge 生命周期已接入 State 创建／删除：
 
 ```text
 .minigit/
@@ -425,7 +425,7 @@ flowchart TD
 
 权限改变也使 Directory 成为事务记录，必须检查完整实际 inventory。保留模式不把 chmod 意图变成递归删除：已知文件需要 exact owned，沿已有明确目标或 actual 镜像保留；已知目录需要 exact owned 或已授权后代。已有删除／替换目标优先，未知文件、空子目录、软链与特殊节点仍阻止操作。必要的 before==after 后代也记入 work，满足执行器“记录目录的全部实际子项”契约；完全相同 Directory 的无操作不枚举无关兄弟。
 
-被记录的 Directory 两侧都至少具备 owner-read／execute；最终 work 中有后代（包括 after=Absent）时，两侧 Directory 须 owner-rwx。完整拓扑和 combined work／metadata 预算先于捕获备份，不放宽 Transaction。原空目录可按 exact owned 恢复，但这个位置授权不延伸到未知后代。此处仅补共享 planner；持久镜像字段与语义 roots 由下节 OperationState 基础提供，abort 生命周期仍是后续目的。
+被记录的 Directory 两侧都至少具备 owner-read／execute；最终 work 中有后代（包括 after=Absent）时，两侧 Directory 须 owner-rwx。完整拓扑和 combined work／metadata 预算先于捕获备份，不放宽 Transaction。原空目录可按 exact owned 恢复，但这个位置授权不延伸到未知后代。此处仅补共享 planner；持久镜像字段与语义 roots 由下节 OperationState 基础提供，abort 的接入见末节 Merge 生命周期。
 
 ## 工作区短事务与恢复
 
@@ -518,4 +518,28 @@ state_roots 校验 Commit 类型与结构，Work File 为 Blob；raw Index backu
 
 caller-lock read／guard／roots／plan 不写对象或 Work；plan 使用实际原字节、expected State 的 canonical 编码比较，首版允许创建、删除、同值无操作，拒绝 existing→不同 State，并以 next 副本保证异常时 caller plan 不变。历史结构有效不表示当前 HEAD 仍匹配，未来业务须另作 current Head CAS；事务继续保护规划后的原 metadata 字节。
 
-业务 guard 只加在 commit、switch、reset、branch 创建／删除（含 force），在 RepoLock／短事务 guard 之后执行；坏 operation 节点也拒绝。config、查询、add／rm／restore／mv、tag／hash-object 允许，但短事务与原冲突／unknown 策略仍生效。内部 caller-lock planners、存储工厂及状态读根不加 operation guard，避免未来继续／中止被自己的记录阻止。实际 API、validate_state／Reader／raw_operation／state_roots／plan 链已核对，最终构建、定向回归与完整审查通过；Merge 生命周期仍待下一目的。
+业务 guard 只加在 commit、switch、reset、branch 创建／删除（含 force），在 RepoLock／短事务 guard 之后执行；坏 operation 节点也拒绝。config、查询、add／rm／restore／mv、tag／hash-object 允许，但短事务与原冲突／unknown 策略仍生效。内部 caller-lock planners、存储工厂及状态读根不加 operation guard，避免未来继续／中止被自己的记录阻止。实际 API、validate_state／Reader／raw_operation／state_roots／plan 链已核对，最终构建、定向回归与完整审查通过；Merge 生命周期的接入与相关回归见下节，完整只读审查通过。
+
+## Merge 生命周期：把已有引擎组合成一次业务发布
+
+本项已实现 start／continue／abort，两个预设的相关回归、真实实验及完整只读审查通过。首版启动要求 HEAD、Index 与已跟踪 Work 的内容／文件模式干净，任何实际改写仍保护未知与忽略内容，不把新命令当作工作区强制清理；incoming 节点与目标字节及权限完全相同、无需写入时，允许保留并更新 Index。未知 D/F 子项或空目录保护没有放宽。历史先走完整祖先校验与唯一 lowest 基线；up-to-date 不生成操作状态，fast-forward／unborn 可直接更新目标，不制造无必要合并 Commit。无共同祖先或多个 lowest 在发布前拒绝，不递归构造虚拟 base。
+
+真正分叉合并把 base／ours／theirs 交 SnapshotMerge。clean 结果生成有序 parents=[ours, theirs] 的新 Commit，Index／Work／HEAD及日志在一笔事务发布；conflict 保持 HEAD，Index 原始 1／2／3、无 D/F 的呈现 Work 与 Merge／Conflicted State 同事务。marker Blob 不是原始 stages，resolved 不靠 marker 字符串判断。
+
+```mermaid
+flowchart TD
+    S[启动 / 干净跟踪状态 / 完整历史与对象校验] --> U[up-to-date / 无 State]
+    S --> F[fast-forward 或 unborn / 一次事务 / 无 State]
+    S --> M[唯一 base 的 SnapshotMerge]
+    M --> C[clean / 两父 Commit / 一次事务 / 无 State]
+    M --> X[conflict / stages + Work + State / HEAD 保持]
+    X --> I[用户编辑并用解决工具更新 Index]
+    I --> N[continue / 整份 Index stage0 / 两父 Commit + 删除 State]
+    X --> A[abort / raw metadata + affected Work before / 删除 State]
+```
+
+continue 读取当前完整 Index，拒绝残留非零 stages，允许未暂存 Work 继续保留；提交来源仍是 Index，不能额外吸收 Work。当前 HEAD 须符合 State.current_head，源与原提交完整快照另验；成功 Commit／HEAD／日志与 State 删除同事务，失败保持状态以便重试。
+
+State.work 记录受影响区域，不限于实际写入的 plan.work：非零 stages 与 D/F root 的冲突节点即使保持 ours，也捕获真实 before==after；D/F 区域内 root→leaf 的实际目录祖先同样记录，避免中止重建时把 0710 变成默认 0755。未受影响 parent 与未知空目录不纳入授权，codec 的双侧目录后代 0700 约束不放宽；不能形成可恢复镜像时拒绝启动。
+
+abort 不用 HEAD Snapshot 代替备份：整份 raw Index、精确 original raw HEAD 与受影响区域的真实 before NodeImages 恢复。若原 File／Absent 在解决过程中变成目录，为恢复 root 下当前 Index 新跟踪子项补删除目标；unknown 子项仍拒绝。区域外新跟踪文件的 Work 保留，但整份 Index 回退会撤掉其暂存信息。额外 unknown 子项或外部 HEAD／ref 变化阻挡恢复时整笔拒绝，不递归强删。短事务 recover 始终先于长期动作；规划失败可留不可达 immutable Blob，执行中断则可能留 journal，恢复后再继续／中止。首版仅单步 Merge／Conflicted，不交付 Ready 或其他 kind。
