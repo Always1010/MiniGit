@@ -8,16 +8,24 @@ namespace minigit {
 struct WorktreeTarget {
     std::optional<FileState> file;
     std::optional<std::uint32_t> permissions;
+    bool directory = false;
     bool operator==(const WorktreeTarget&) const = default;
 };
 using WorktreeTargets = std::map<std::string, WorktreeTarget>;
-// Caller holds RepoLock. A null file deletes; an empty blob remains a file.
+// Caller holds RepoLock. A null file deletes unless directory=true; an empty
+// blob remains a file. Directory and file are mutually exclusive. New Directory
+// defaults to 0755; existing Directory without explicit permissions keeps its
+// mode. Directory requires owner-read/execute, plus owner-write if its WorkChange
+// has any planned descendants in either image. Absent cannot carry permissions.
 // plan.work must be empty. Protected files and empty directories are preserved.
 // Targets and owned paths each allow 200000 paths / 64 MiB of path bytes. The
 // expanded desired-node map and actual-node cache each obey those same limits,
 // incrementally before inserting or inspecting a new path.
 // Work and preplanned metadata together obey all transaction size budgets;
 // checked before capturing any new worktree backup objects.
+// Directory permission changes inventory all actual descendants, require exact
+// file / exact or descendant directory ownership, and record necessary noops.
+// Same Directory/mode is omitted without inventorying unrelated children.
 // Existing unchanged parent directories are omitted; leaf deletion keeps empty
 // parent directories. Planning may write immutable backup blobs, never metadata
 // or worktree files, and exceptions leave the supplied plan unchanged.

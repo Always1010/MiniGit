@@ -474,7 +474,12 @@ void apply(const Repository& repo, const Journal& journal, bool after, Steps& st
         if (target(i).kind != NodeKind::Directory) continue;
         const auto current = inspect_node(repo.root(), change.path);
         if (current.kind == NodeKind::Absent) {
-            detail::rename_staged(staging_path(repo) / stage_name(after, false, i, NodeKind::Directory), repo.root() / change.path);
+            // Moving a directory across parents requires write access to it on
+            // Linux. A read-only leaf is instead created exclusively with its
+            // exact mode; its journalled staging image remains for cleanup.
+            if ((target(i).permissions & 0200) == 0)
+                detail::create_directory_exact(repo.root() / change.path, target(i).permissions, true);
+            else detail::rename_staged(staging_path(repo) / stage_name(after, false, i, NodeKind::Directory), repo.root() / change.path);
             steps.notify("work.mkdir:" + change.path);
         } else {
             detail::chmod_directory(repo.root() / change.path, target(i).permissions);

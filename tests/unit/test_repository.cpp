@@ -265,6 +265,9 @@ TEST_CASE("Transaction filesystem publication pins nodes preserves modes and ref
     detail::chmod_directory(temp.path() / "published", 0755);
     REQUIRE(::stat((temp.path() / "published").c_str(), &state) == 0);
     REQUIRE((state.st_mode & 07777) == 0755);
+    REQUIRE_THROWS_AS(detail::create_directory_exact(temp.path() / "published", 0500, true), Error);
+    REQUIRE(::stat((temp.path() / "published").c_str(), &state) == 0);
+    REQUIRE((state.st_mode & 07777) == 0755);
     REQUIRE(detail::directory_device(staging) == detail::directory_device(temp.path()));
     REQUIRE(detail::node_device(target) == detail::directory_device(temp.path()));
     detail::create_directory_exact(staging / "directory", 0755);

@@ -10,7 +10,9 @@ Phase 3 的纯文本三方合并引擎已通过子项验收，无新 CLI。它�
 
 SnapshotMerge 适配器已通过子项验收，调用者持 RepoLock 后可读取 typed Blob、保存不可变合并／marker Blob，并返回候选 Index 与完整 work 布局；它不发布工作区、Index、HEAD 或日志，也不新增 CLI。文件存在、内容、模式和 D/F 冲突语义见 [快照合并学习笔记](docs/learning-notes.md#快照合并原始版本与呈现内容各有位置)，两种预设各 18 项定向检查及各 1000 组独立性质验证通过；完整范围见进度页。
 
-single-lowest merge-base helper 已通过子项验收：沿双方完整父图选择唯一最低共同祖先，不展开 Tree、不新增 CLI。零个基线返回缺失，多个基线明确拒绝，避免用提交时间选一个；两种预设各 14 项定向检查及各 500 组独立 DAG 性质验证通过。后续依赖为完整目录目标规划、CommitFactory 与持久操作，merge 业务尚未交付。
+single-lowest merge-base helper 已通过子项验收：沿双方完整父图选择唯一最低共同祖先，不展开 Tree、不新增 CLI。零个基线返回缺失，多个基线明确拒绝，避免用提交时间选一个；两种预设各 14 项定向检查及各 500 组独立 DAG 性质验证通过。完整目录目标规划也已验收，后续依赖为 CommitFactory 与持久操作，merge 业务尚未交付。
+
+共享 planner 的显式 Directory target 已通过子项验收，用于描述空目录与完整目录权限；接口与调用链已核对，两种预设各 28 项定向检查通过，无新 CLI。HEAD 快照不能替代真实 NodeImage，后续长操作中止需要这些镜像，但本项不交付 OperationState 或 abort 命令。
 
 ## 构建与运行
 
@@ -194,7 +196,7 @@ Phase 1 的暂存、提交与历史实验可直接运行。branch 管理已通�
 
 工作区短事务与 `minigit recover` 已完成子项验收。发生中断后，状态／历史查询和业务修改会提示先恢复，原始对象仍可通过 `cat-file` 或完整 Blob/Tree ID 的 `show` 观察。恢复拒绝损坏日志、缺失备份和计划外修改，并保留现场；不要通过手工删除日志来把未知状态当作成功。
 
-事务使用 `.minigit/transaction` 与内部 `transaction-staging`。当前 Linux 实现依赖可用的 `/proc/self/fd`，工作区相关目录和元数据暂存必须在同一文件系统；源文件需具备 owner-read 权限，目录需可读取和遍历，包含更新子项的目录需 owner-rwx。这些约束属于当前实现边界，具体已验证范围见 [进度](docs/progress.md)。commit 已接入共同事务与 reflog 规划；branch 已通过同一事务发布引用与分支日志的子项验收。工作区切换与恢复业务命令将在后续子项接入。
+事务使用 `.minigit/transaction` 与内部 `transaction-staging`。只读空目录在目标缺失时以 exclusive mkdir 设置精确权限，可写目录继续暂存后 rename；系统调用内部临时权限若不匹配日志镜像会严格拒绝恢复。当前 Linux 实现依赖可用的 `/proc/self/fd`，工作区相关目录和元数据暂存必须在同一文件系统；源文件需具备 owner-read 权限，目录需可读取和遍历，包含更新子项的目录需 owner-rwx。这些约束属于当前实现边界，具体已验证范围见 [进度](docs/progress.md)。commit 已接入共同事务与 reflog 规划；branch 已通过同一事务发布引用与分支日志的子项验收。工作区切换与恢复业务命令将在后续子项接入。
 
 可重复的 [事务实验](examples/experiments/transactions.sh) 使用单独构建的 C++ 教学程序，在 a 已更新、b 尚未更新时保留 Prepared 日志，再通过真实 CLI 恢复并核对两次结果：
 

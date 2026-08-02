@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，无合并业务 CLI。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，无合并业务 CLI。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -182,7 +182,7 @@ Index 增加独立的 `encode_index/decode_index`，`save_index/load_index` 复�
 
 ## 核心 API 练习：先规划，再统一执行
 
-[worktree_update.hpp](../include/minigit/worktree_update.hpp) 中，`WorktreeTargets` 是按路径索引的 map，owned_paths 是 set，两者承担目标描述与覆盖授权的不同职责。`WorktreeTarget` 的两个 optional 区分缺失文件、空 Blob、默认权限及明确权限；不要把缺失路径偷换成空文件。
+[worktree_update.hpp](../include/minigit/worktree_update.hpp) 中，`WorktreeTargets` 是按路径索引的 map，owned_paths 是 set，两者承担目标描述与覆盖授权的不同职责。`WorktreeTarget` 的两个 optional 与默认 directory=false 字段区分缺失、空 Blob、显式 Directory 及默认／明确权限；不要把缺失路径偷换成空文件或空目录。
 
 下面演示单路径临时仓库的调用顺序：假设唯一旧跟踪文件是 dir/note，业务层已确认它的当前修改可以覆盖。Index 参数是完整目标 Index，而 worktree targets 可以只描述部分路径。
 
@@ -212,6 +212,16 @@ execute_transaction(repo, std::move(plan));
 所有变化路径先检查完，最后才逐项 `capture_work_node` 保存实际 before；捕获值须与此前 NodeImage 一致，否则拒绝期间发生的变化。`auto next = plan` 隔离可抛异常的追加，完成后 move 赋回。`plan_index_update` 再独立编码完整目标、读取精确旧字节、校验全部 stage 的 typed Blob，并拒绝已有 index 计划。函数没有发布动作，最终发布仍由 Transaction 执行。
 
 [test_worktree_update.cpp](../tests/unit/test_worktree_update.cpp) 直接调用这些 API：多文件及空 Blob、明确权限、新父目录、双向文件目录转换、未变父目录的未知兄弟保护、精确授权、Index 缺失与冲突 stage、格式和预算拒绝，以及 Prepared／Committed 后工作区与 Index 的联合恢复。Debug 定向检查已通过，完整验证证据见进度页；本项没有 CLI 用例或命令实验。已有事务的完整崩溃矩阵不由这里重新实现，新测试只验证规划结果能交给共享执行器。
+
+### 显式目录目标：检查权限也检查子项
+
+共享 planner 的 directory=false 默认字段扩展已通过子项验收。用 WorktreeTarget{std::nullopt, 0700U, true} 描述显式 Directory，区别于原两字段的 Absent；file 与 directory 不能同时存在。既有调用仍可保持两字段 aggregate，默认第三字段为 false。冻结后的 header 与下述私有链已核对。
+
+阅读时分别找删除 inventory 与保留 inventory：前者要求旧文件明确删除，后者为目录权限变化保留已知子项，并生成必要的 before==after WorkChange。它不是随意增加无操作，而是满足 Transaction 对记录目录的完整实际子项契约。所有目标拓扑、权限和完整预算须先通过，之后才 capture；强异常保证仍保留原 plan。实际链为目录 schema／权限检查 → File 与 Directory 正目标父扩展 → current 缓存 → preserve_directory_permissions → inventory 的 keep／delete 访问记录与 forced 集合 → changed∪forced → 两侧拓扑／含后代目录 owner-rwx／validate_transaction_budget → capture 值一致性检查 → move 赋回 next。inventoried 的访问模式与 forced 同值记录分开，避免文件 noop 干扰目录遍历；KEEP 遇到明确的子目录删除／替换再转 DELETE，不擅自保留其旧子文件。
+
+[test_worktree_update.cpp](../tests/unit/test_worktree_update.cpp) 新增六组目录语义：空节点／完整权限与默认保持、双向文件目录转换／显式祖先权限、已知后代 noops 与普通执行及 Prepared／Committed 恢复、未知子项保护／相同目录跳过 inventory、schema／两侧权限与拓扑拒绝先于 backup，以及只读目录／文件双向转换的 Prepared／Committed 四个恢复场景。测试用真实执行核对包含 forced 子项的计划是否满足现有 Transaction，目录 inventory、外部修改保护与恢复镜像的安全契约没有放宽；执行器发布方式在本项中有必要修改。
+
+初次实际运行发现 Linux 跨父移动只读目录需要 owner-write；当前 transaction.cpp 对 current=Absent 的 readonly Directory 改用 create_directory_exact(..., true)，可写目录仍由暂存 rename。fs.hpp 的第三 default bool exclusive=false 保持既有调用，true 遇 EEXIST 立即拒绝且不 chmod；[test_repository.cpp](../tests/unit/test_repository.cpp) 已在现有文件工具组核对这项权限保护。mkdir／最终 chmod 之间若中断留下非 before／after 的 0000／0700 节点，恢复严格拒绝，不把公开步骤钩子测试扩大为任意 syscall 内部可恢复承诺。修正后两种预设构建与定向回归均通过，精确范围见进度页。无新 CLI；复用既有事务矩阵回归，没有复制矩阵实现。
 
 ## Switch：组合策略与现有规划器
 

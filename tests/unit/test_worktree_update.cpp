@@ -16,6 +16,17 @@ void update_file(const Repository& repo, std::string_view path, std::string_view
 WorktreeTarget update_target(const Repository& repo, std::string_view content, std::string mode = "100644", std::optional<std::uint32_t> permissions = std::nullopt) {
     return {FileState{std::move(mode), ObjectStore(repo.metadata() / "objects").write(ObjectType::Blob, to_bytes(content))}, permissions};
 }
+WorktreeTarget update_directory_target(std::optional<std::uint32_t> permissions = std::nullopt) {
+    return {std::nullopt, permissions, true};
+}
+void update_directory(const Repository& repo, std::string_view path, std::uint32_t permissions) {
+    const auto target = repo.root() / std::string(path);
+    detail::ensure_directory(target);
+    REQUIRE(::chmod(target.c_str(), permissions) == 0);
+}
+std::uint32_t directory_permissions(const Repository& repo, std::string_view path) {
+    return static_cast<std::uint32_t>(std::filesystem::status(repo.root() / std::string(path)).permissions()) & 07777;
+}
 const WorkChange& update_change(const TransactionPlan& plan, std::string_view path) {
     const auto found = std::find_if(plan.work.begin(), plan.work.end(), [&](const auto& change) { return change.path == path; });
     REQUIRE(found != plan.work.end());
@@ -212,6 +223,15 @@ TEST_CASE("WorktreeUpdate rejects invalid schemas unsafe types budgets and confl
         } catch (const Error& error) {
             REQUIRE(std::string(error.what()).find("展开目标路径") != std::string::npos);
         }
+        // The same bounded expansion applies when the leaf is an explicit
+        // Directory rather than a File, without a second oversized fixture.
+        for (auto& [path, target] : expanded) { (void)path; target = update_directory_target(); }
+        try {
+            plan_worktree_update(repo, plan, expanded, {});
+            FAIL("expanded Directory path budget must reject the plan");
+        } catch (const Error& error) {
+            REQUIRE(std::string(error.what()).find("展开目标路径") != std::string::npos);
+        }
     }
     SECTION("symlinks and FIFOs are rejected") {
         std::filesystem::create_symlink(repo.root() / "file", repo.root() / "link");
@@ -229,10 +249,24 @@ TEST_CASE("WorktreeUpdate rejects invalid schemas unsafe types budgets and confl
     SECTION("total work and metadata budget is rejected before writing backup blobs") {
         auto crowded = plan;
         crowded.metadata.resize(100000, plan.metadata.front());
-        const auto crowded_before = crowded;
+        auto crowded_before = crowded;
         try {
             plan_worktree_update(repo, crowded, {{"file", valid}}, {"file"});
             FAIL("combined journal change budget must reject the plan");
+        } catch (const Error& error) {
+            REQUIRE(std::string(error.what()).find("总数超过事务限制") != std::string::npos);
+        }
+        update_same_plan(crowded, crowded_before);
+        REQUIRE(update_object_count(repo) == count);
+        // Reuse the same metadata fixture: the Directory chmod and its required
+        // unchanged File image count as two WorkChanges before any backup write.
+        crowded.metadata.resize(99999);
+        crowded_before.metadata.resize(99999);
+        update_file(repo, "d/child", "unbacked child");
+        update_directory(repo, "d", 0755);
+        try {
+            plan_worktree_update(repo, crowded, {{"d", update_directory_target(0700)}}, {"d/child"});
+            FAIL("forced Directory inventory must count against the combined budget");
         } catch (const Error& error) {
             REQUIRE(std::string(error.what()).find("总数超过事务限制") != std::string::npos);
         }
@@ -322,4 +356,245 @@ TEST_CASE("WorktreeUpdate transaction recovery restores worktree permissions and
     REQUIRE(read_file(repo.metadata() / "index") == (after ? *plan.metadata.front().after : index_before));
     REQUIRE(read_file(repo.metadata() / "HEAD") == head_before);
     REQUIRE_NOTHROW(require_no_transaction(repo));
+}
+TEST_CASE("WorktreeUpdate explicit directories create and restore empty nodes with full permissions while defaults preserve existing modes", "[worktree-update]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    RepoLock lock(repo.metadata());
+    TransactionPlan plan;
+    std::uint32_t expected = 0755;
+    SECTION("new directory defaults to 0755") {
+        plan_worktree_update(repo, plan, {{"empty", update_directory_target()}}, {});
+    }
+    SECTION("an empty directory may have only owner read and execute plus special bits") {
+        expected = 02500;
+        plan_worktree_update(repo, plan, {{"empty", update_directory_target(expected)}}, {});
+    }
+    SECTION("restoring a removed empty directory preserves its exact original image") {
+        update_directory(repo, "empty", 04750);
+        const auto original = capture_work_node(repo, "empty");
+        REQUIRE(std::filesystem::remove(repo.root() / "empty"));
+        expected = original.permissions;
+        plan_worktree_update(repo, plan, {{"empty", update_directory_target(expected)}}, {});
+        REQUIRE(update_change(plan, "empty").after == original);
+    }
+    SECTION("existing default Directory target keeps its real full permissions") {
+        expected = 04750;
+        update_directory(repo, "empty", expected);
+        plan_worktree_update(repo, plan, {{"empty", update_directory_target()}}, {});
+        REQUIRE(plan.work.empty());
+    }
+    execute_transaction(repo, plan);
+    REQUIRE(std::filesystem::is_directory(repo.root() / "empty"));
+    REQUIRE(std::filesystem::is_empty(repo.root() / "empty"));
+    REQUIRE(directory_permissions(repo, "empty") == expected);
+}
+TEST_CASE("WorktreeUpdate explicit directories support file conversions and retain explicit parent modes through expansion", "[worktree-update]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    RepoLock lock(repo.metadata());
+    TransactionPlan plan;
+    SECTION("tracked file becomes an explicit directory with an empty child") {
+        update_file(repo, "item", "dirty original", 0640);
+        plan_worktree_update(repo, plan, {{"item", update_directory_target(04700)}, {"item/empty", update_directory_target(0500)}}, {"item"});
+        REQUIRE(update_change(plan, "item").before.kind == NodeKind::File);
+        REQUIRE(update_change(plan, "item").after.permissions == 04700);
+        execute_transaction(repo, plan);
+        REQUIRE(directory_permissions(repo, "item") == 04700);
+        REQUIRE(directory_permissions(repo, "item/empty") == 0500);
+    }
+    SECTION("owned directory becomes a file including its owned empty child") {
+        update_file(repo, "item/old", "old");
+        update_directory(repo, "item/empty", 0500);
+        const auto file = update_target(repo, "replacement");
+        plan_worktree_update(repo, plan, {{"item", file}, {"item/old", {}}}, {"item/old", "item/empty"});
+        REQUIRE(update_change(plan, "item/empty").before.permissions == 0500);
+        REQUIRE(update_change(plan, "item/empty").after.kind == NodeKind::Absent);
+        execute_transaction(repo, plan);
+        REQUIRE(to_string(read_file(repo.root() / "item")) == "replacement");
+    }
+    SECTION("automatic file and Directory ancestors preserve explicit permissions") {
+        const WorktreeTargets targets{{"item", update_directory_target(04700)},
+            {"item/deep", update_directory_target(02710)}, {"item/deep/file", update_target(repo, "child")},
+            {"item/empty", update_directory_target(0500)}};
+        plan_worktree_update(repo, plan, targets, {});
+        REQUIRE(update_change(plan, "item").after.permissions == 04700);
+        REQUIRE(update_change(plan, "item/deep").after.permissions == 02710);
+        execute_transaction(repo, plan);
+        REQUIRE(directory_permissions(repo, "item") == 04700);
+        REQUIRE(directory_permissions(repo, "item/deep") == 02710);
+        REQUIRE(directory_permissions(repo, "item/empty") == 0500);
+        REQUIRE(to_string(read_file(repo.root() / "item/deep/file")) == "child");
+    }
+    SECTION("parent keep inventory honors a child delete inventory and does not retain file noops below it") {
+        update_file(repo, "d/sub/file", "delete me");
+        update_file(repo, "d/keep", "keep dirty bytes", 0640);
+        plan_worktree_update(repo, plan, {{"d", update_directory_target(02700)}, {"d/sub", {}}, {"d/sub/file", {}}}, {"d/sub/file", "d/keep"});
+        REQUIRE(update_change(plan, "d/sub").after.kind == NodeKind::Absent);
+        REQUIRE(update_change(plan, "d/sub/file").after.kind == NodeKind::Absent);
+        REQUIRE(update_change(plan, "d/keep").before == update_change(plan, "d/keep").after);
+        execute_transaction(repo, plan);
+        REQUIRE_FALSE(std::filesystem::exists(repo.root() / "d/sub"));
+        REQUIRE(to_string(read_file(repo.root() / "d/keep")) == "keep dirty bytes");
+        REQUIRE(directory_permissions(repo, "d") == 02700);
+    }
+}
+TEST_CASE("WorktreeUpdate directory permission changes record known descendant noops and execute or recover complete images", "[worktree-update][transaction]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    RepoLock lock(repo.metadata());
+    update_file(repo, "d/sub/file", "dirty executable", 04751);
+    update_file(repo, "d/rootfile", "dirty ordinary", 0640);
+    update_directory(repo, "d", 0755);
+    update_directory(repo, "d/sub", 0710);
+    update_directory(repo, "d/empty", 0500);
+    const auto head = read_file(repo.metadata() / "HEAD");
+    TransactionPlan plan;
+    plan_worktree_update(repo, plan, {{"d", update_directory_target(02700)}}, {"d/sub/file", "d/rootfile", "d/empty"});
+    REQUIRE(plan.work.size() == 5);
+    REQUIRE(update_change(plan, "d").before.permissions == 0755);
+    REQUIRE(update_change(plan, "d").after.permissions == 02700);
+    for (const auto& path : {"d/sub", "d/sub/file", "d/rootfile", "d/empty"})
+        REQUIRE(update_change(plan, path).before == update_change(plan, path).after);
+    bool after = true;
+    std::string stop;
+    SECTION("ordinary transaction permits the complete forced inventory") {}
+    SECTION("Prepared after root chmod restores original full directory and file images") { stop = "work.chmod:d"; after = false; }
+    SECTION("Committed recovery finishes exact target images without repeated planning") { stop = "journal.committed"; }
+    if (stop.empty()) execute_transaction(repo, plan);
+    else {
+        REQUIRE_THROWS_AS(execute_transaction(repo, plan, [&](std::size_t, std::string_view label) { if (label == stop) throw Error("injected stop"); }), Error);
+        recover_transaction(repo);
+        recover_transaction(repo);
+    }
+    REQUIRE(directory_permissions(repo, "d") == (after ? 02700U : 0755U));
+    REQUIRE(directory_permissions(repo, "d/sub") == 0710);
+    REQUIRE(directory_permissions(repo, "d/empty") == 0500);
+    REQUIRE(to_string(read_file(repo.root() / "d/sub/file")) == "dirty executable");
+    REQUIRE(read_worktree_file(repo, "d/sub/file")->data.permissions == 04751);
+    REQUIRE(to_string(read_file(repo.root() / "d/rootfile")) == "dirty ordinary");
+    REQUIRE(read_worktree_file(repo, "d/rootfile")->data.permissions == 0640);
+    REQUIRE(read_file(repo.metadata() / "HEAD") == head);
+    REQUIRE_FALSE(std::filesystem::exists(repo.metadata() / "index"));
+    REQUIRE_NOTHROW(require_no_transaction(repo));
+}
+TEST_CASE("WorktreeUpdate directory inventory protects unknown children while identical directory targets skip inventory", "[worktree-update]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    RepoLock lock(repo.metadata());
+    update_file(repo, "d/tracked", "unbacked dirty bytes");
+    update_directory(repo, "d", 0750);
+    const auto changed_file = update_target(repo, "after");
+    TransactionPlan plan;
+    plan.metadata.push_back({"HEAD", read_file(repo.metadata() / "HEAD"), read_file(repo.metadata() / "HEAD")});
+    const auto saved = plan;
+    bool success = false, leaf = false, default_directory = false, own_file = true;
+    SECTION("exact directory ownership cannot authorize an ignored file child") {
+        update_file(repo, "d/ignored", "ignored bytes");
+        update_file(repo, ".minigitignore", "d/ignored\n");
+    }
+    SECTION("known sibling ownership cannot authorize an unknown empty directory") { update_directory(repo, "d/empty", 0500); }
+    SECTION("owning a Directory root cannot authorize its actual file") { own_file = false; }
+    SECTION("unsafe actual children reject a directory chmod") { std::filesystem::create_symlink(repo.root() / "d/tracked", repo.root() / "d/link"); }
+    SECTION("same explicit Directory mode is a noop even with unknown children") {
+        update_file(repo, "d/unknown", "unknown bytes"); update_directory(repo, "d/empty", 0500); success = true;
+    }
+    SECTION("default existing Directory target keeps real mode and skips unknown children") {
+        update_file(repo, "d/unknown", "unknown bytes"); update_directory(repo, "d/empty", 0500); success = true; default_directory = true;
+    }
+    SECTION("same Directory with an owned changed leaf omits the parent and preserves siblings") {
+        update_file(repo, "d/unknown", "unknown bytes"); update_directory(repo, "d/empty", 0500); success = true; leaf = true;
+    }
+    const auto count = update_object_count(repo);
+    if (success) {
+        WorktreeTargets targets{{"d", update_directory_target(default_directory ? std::optional<std::uint32_t>{} : std::optional<std::uint32_t>{0750})}};
+        if (leaf) targets.emplace("d/tracked", changed_file);
+        plan_worktree_update(repo, plan, targets, leaf ? std::set<std::string>{"d/tracked"} : std::set<std::string>{});
+        REQUIRE(plan.work.size() == (leaf ? 1 : 0));
+        REQUIRE(std::none_of(plan.work.begin(), plan.work.end(), [](const auto& change) { return change.path == "d"; }));
+        execute_transaction(repo, plan);
+        REQUIRE(to_string(read_file(repo.root() / "d/unknown")) == "unknown bytes");
+        REQUIRE(directory_permissions(repo, "d/empty") == 0500);
+    } else {
+        // Owning the root is never recursive file authorization. The root-only
+        // section intentionally omits d/tracked from its ownership set.
+        std::set<std::string> owned{"d"};
+        if (own_file) owned.insert("d/tracked");
+        REQUIRE_THROWS_AS(plan_worktree_update(repo, plan, {{"d", update_directory_target(02700)}}, owned), Error);
+        update_same_plan(plan, saved);
+        REQUIRE(update_object_count(repo) == count);
+    }
+    if (std::filesystem::exists(repo.root() / "d/ignored")) REQUIRE(to_string(read_file(repo.root() / "d/ignored")) == "ignored bytes");
+    if (std::filesystem::exists(repo.root() / "d/empty")) REQUIRE(directory_permissions(repo, "d/empty") == 0500);
+    if (std::filesystem::is_symlink(std::filesystem::symlink_status(repo.root() / "d/link")))
+        REQUIRE(std::filesystem::read_symlink(repo.root() / "d/link") == repo.root() / "d/tracked");
+    REQUIRE(directory_permissions(repo, "d") == 0750);
+    REQUIRE(to_string(read_file(repo.root() / "d/tracked")) == (leaf ? "after" : "unbacked dirty bytes"));
+}
+TEST_CASE("WorktreeUpdate read-only empty directories publish and recover both conversion images", "[worktree-update][transaction]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    RepoLock lock(repo.metadata());
+    bool creating = true, after = false;
+    std::string stop;
+    SECTION("Prepared creation restores the original dirty file") { stop = "work.mkdir:item"; }
+    SECTION("Committed creation finishes the read-only directory") { stop = "journal.committed"; after = true; }
+    SECTION("Prepared removal recreates the original read-only directory") { creating = false; stop = "work.write:item"; }
+    SECTION("Committed removal finishes the replacement file") { creating = false; stop = "journal.committed"; after = true; }
+    if (creating) update_file(repo, "item", "dirty original", 0640);
+    else update_directory(repo, "item", 02500);
+    TransactionPlan plan;
+    const auto target = creating ? update_directory_target(02500) : update_target(repo, "replacement");
+    plan_worktree_update(repo, plan, {{"item", target}}, {"item"});
+    REQUIRE_THROWS_AS(execute_transaction(repo, plan, [&](std::size_t, std::string_view label) {
+        if (label == stop) throw Error("injected stop");
+    }), Error);
+    recover_transaction(repo);
+    recover_transaction(repo);
+    if (creating == after) {
+        REQUIRE(std::filesystem::is_empty(repo.root() / "item"));
+        REQUIRE(directory_permissions(repo, "item") == 02500);
+    } else {
+        REQUIRE(to_string(read_file(repo.root() / "item")) == (creating ? "dirty original" : "replacement"));
+        REQUIRE(read_file_data(repo.root() / "item").permissions == (creating ? 0640U : 0644U));
+    }
+    REQUIRE_FALSE(std::filesystem::exists(repo.metadata() / "transaction-staging"));
+    REQUIRE_NOTHROW(require_no_transaction(repo));
+}
+TEST_CASE("WorktreeUpdate rejects conflicting directory schemas permissions and both image topology before backup capture", "[worktree-update]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    RepoLock lock(repo.metadata());
+    update_file(repo, "d/file", "unbacked dirty bytes", 0640);
+    update_directory(repo, "d", 0700);
+    const auto valid = update_target(repo, "valid");
+    TransactionPlan plan;
+    plan.metadata.push_back({"HEAD", read_file(repo.metadata() / "HEAD"), read_file(repo.metadata() / "HEAD")});
+    const auto saved = plan;
+    const auto count = update_object_count(repo);
+    SECTION("File Directory and Absent schema errors") {
+        const std::vector<WorktreeTarget> invalid{{valid.file, {}, true}, {std::nullopt, 0400, true},
+            {std::nullopt, 0100, true}, {std::nullopt, 0000, true}, {std::nullopt, 010000, true}, {std::nullopt, 0700, false}};
+        for (const auto& target : invalid) REQUIRE_THROWS_AS(plan_worktree_update(repo, plan, {{"d", target}}, {"d", "d/file"}), Error);
+    }
+    SECTION("File target cannot be ancestor of a positive Directory target") {
+        REQUIRE_THROWS_AS(plan_worktree_update(repo, plan, {{"d", valid}, {"d/child", update_directory_target()}}, {"d/file"}), Error);
+    }
+    SECTION("new Directory without owner write cannot have a planned Directory descendant") {
+        REQUIRE_THROWS_AS(plan_worktree_update(repo, plan, {{"new", update_directory_target(0500)}, {"new/child", update_directory_target()}}, {}), Error);
+    }
+    SECTION("after Directory needs owner write even when its planned child is deleted") {
+        REQUIRE_THROWS_AS(plan_worktree_update(repo, plan, {{"d", update_directory_target(0500)}, {"d/file", {}}}, {"d/file"}), Error);
+    }
+    SECTION("before Directory needs owner write for its forced actual descendants") {
+        update_directory(repo, "d", 0500);
+        REQUIRE_THROWS_AS(plan_worktree_update(repo, plan, {{"d", update_directory_target(0700)}}, {"d/file"}), Error);
+    }
+    SECTION("keep inventory with a deleted subdirectory still requires explicit descendant deletion") {
+        update_file(repo, "d/sub/child", "child");
+        REQUIRE_THROWS_AS(plan_worktree_update(repo, plan, {{"d", update_directory_target(02700)}, {"d/sub", {}}}, {"d/file", "d/sub/child"}), Error);
+    }
+    update_same_plan(plan, saved);
+    REQUIRE(update_object_count(repo) == count);
+    REQUIRE(to_string(read_file(repo.root() / "d/file")) == "unbacked dirty bytes");
 }
