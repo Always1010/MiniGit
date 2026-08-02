@@ -333,3 +333,13 @@ helper 已通过子项验收，尚无 merge 命令实验。先手画 R→X，X �
 C++ 练习用两位整数标记 left／right reachable。初值只设在两 root，按 child-before-parent 把当前位标记 OR 给每个 parent；最后值为 3 的节点是共同祖先。再以同一顺序，把当前节点是 common 或已有共同后代的事实传给每个 parent。不要把 common 自己直接设为“有共同后代”，否则连真正最低的 X 也被删掉。OR 对重复父边幂等，first parent 只是 parents 中的一项，不能漏掉其余边。
 
 即使 L=T 或 T 是 L 的祖先，也先读取完整闭包；末端快进关系不能证明更深的 Commit 没有缺损。无共同祖先返回 optional 空值，多基线抛 Error，不展开 Tree；语义组及用独立闭包算法核对的随机 DAG 性质验证均通过，范围见进度页。实际工作区的安全规划、提交工厂与持久操作仍是后续依赖，不能把 helper 完成当作 merge 已交付。
+
+## 空目录与目录权限为什么也需要恢复目标
+
+显式 Directory target 已通过子项验收，没有新的 CLI 实验。假设操作前 empty 是权限 0700 的空目录，操作后同名位置成为文件。用 HEAD／Index 的文件 Snapshot 回滚会把原目录当缺失；真实 before NodeImage 则告诉未来 abort 应恢复 Directory 和 0700。WorktreeTarget 用默认第三字段保留旧构造，以 directory=true 明确这个目标。
+
+再考虑 chmod dir：dir/a 是 exact owned，dir/private 未知。只记录 dir 的 mode 会违反短事务的完整子项契约；递归清理更会丢掉 private。规划器须枚举并拒绝未知项，对已知保留后代生成必要的同值记录，所有 combined 预算仍先于 backup capture。若目录权限完全相同，整个目录无需记录，也无需因未知兄弟而拒绝无操作。包含 work 后代的 Directory 需要 owner-rwx，即使那些后代的目标是 Absent；空 Directory 也仍需 owner-read／execute。
+
+C++ 练习分别构造 Absent、空 Blob File、显式 Directory，说明两个 optional 与 directory 布尔字段为何不能混用。根目录位置 exact owned 只允许原空节点本身，不授权陌生 child；后续长操作才会把真实 before 镜像转换成这些目标，本项不实现 continue／abort。
+
+只读空目录还给出一个系统调用边界：Linux 跨父目录 rename 需要目录 owner-write，0500 不能照搬可写目录的发布方式。因此当前只读目标缺失时用 exclusive mkdir，再设置精确权限；可写目录仍先暂存后 rename。exclusive 已存在立即拒绝，不修改陌生目录的 mode。mkdir 到最终权限之间可能暂为 0000／0700，中断后若它不是已记录的 before／after，recover 会保留并拒绝；持久化步骤后的测试不等于任意系统调用内部中断证明。

@@ -196,3 +196,9 @@ base=[a,b,c]，ours=[A,b,c]，theirs=[a,b,C] 可以得到 [A,b,C]；仅比较 ou
 single-lowest merge-base helper 已通过子项验收。两份 Commit 可以具有相同 Tree 却没有共同祖先，因此文件相等不能代替历史关系；共同祖先也不能只沿 first parent 寻找。若共同祖先有 R 和 X，且 X 是 R 的后代，X 才是最低基线，R 仍属于完整校验范围。
 
 先验证全部祖先，再沿 child-before-parent 顺序传播双方可达性与共同后代标记。没有共同后代的共同祖先才留下；多个这样的节点表示 crisscross，本版明确拒绝，不用 ObjectId 或 timestamp 任选一个。没有共同祖先返回 nullopt，未来业务才据此拒绝 unrelated merge。选择基线不展开 Tree；真正合并文件仍需读取选定快照并调用 SnapshotMerge。
+
+## 版本快照与恢复镜像各自保存什么
+
+MiniGit 的 HEAD Snapshot 保存文件 Blob 与 100644／100755，不保存空目录或完整 st_mode 权限。实际 work 的 NodeImage 还要区分 Directory 与 Absent，记录完整 07777 权限；否则原先存在的空目录在中止时会被误当作不存在，0700 目录也可能变成默认 0755。
+
+显式 Directory target 已补共享 planner 的这个表达缺口并通过子项验收，不意味着 abort 已实现。恢复目录权限同样受安全 inventory 约束：更改 root mode 不授权它的未知子项，精确授权空 root 也不授权陌生空 child。长期操作必须保存真实 before 镜像，短事务 recover 决定 Prepared／Committed 的 before／after，而未来 operation abort 才恢复操作开始时的镜像，二者不能混为一件事。

@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，合并业务与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，合并业务与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -383,14 +383,15 @@ flowchart TD
 
 [worktree_update.hpp](../include/minigit/worktree_update.hpp) 提供 `WorktreeTarget`、`WorktreeTargets`、`plan_worktree_update` 与 `plan_index_update`。二者都要求 caller-held RepoLock，不取得第二把锁。业务层选择目标、决定哪些旧路径可改，再把工作区、Index、HEAD 和引用日志组合到同一个 TransactionPlan；规划器不自行决定 switch 或 reset 的策略，也不提供这些 CLI。
 
-WorktreeTarget 的可选 FileState 表示目标文件，空 optional 表示该路径不再作为普通文件；若新子路径需要它成为父目录，最终节点会由文件转为目录，否则删除。指向空 Blob 则表示保留零字节文件。可选完整权限默认从模式取得 `0644`／`0755`，显式权限必须与 `100644`／`100755` 的执行位一致，仍遵循事务的权限边界。已接入的 mv 用显式权限保留实际文件完整权限，而不是只把内容变成普通 0644 文件。
+WorktreeTarget 的可选 FileState 表示目标文件，directory=true 表示显式 Directory，二者互斥。file 为空且 directory=false 表示该路径不再作为普通文件；若新子路径需要它成为父目录，最终节点会由文件转为目录，否则删除。指向空 Blob 则表示保留零字节文件。可选完整权限默认从模式取得 `0644`／`0755`，显式权限必须与 `100644`／`100755` 的执行位一致，仍遵循事务的权限边界。已接入的 mv 用显式权限保留实际文件完整权限，而不是只把内容变成普通 0644 文件。
 
 ```mermaid
 flowchart TD
-    T[Targets: 部分路径的目标 FileState 或缺失] --> V[路径 / 模式 / Blob 类型 / 预算检查]
-    O[Owned paths: 允许改写的旧跟踪文件] --> P[检查实际节点与目录拓扑]
+    T[Targets: 部分路径的 File / Directory / Absent] --> V[路径 / 模式 / Blob 类型 / 预算检查]
+    O[Owned paths: 允许改写的旧跟踪文件] --> P[实际节点 / keep-delete inventory / 必要同值子项]
     V --> P
-    P --> C[逐文件捕获实际 before Blob 与权限]
+    P --> B[两侧拓扑 / 权限 / combined 事务预算]
+    B --> C[逐文件捕获实际 before Blob 与权限]
     C --> W[TransactionPlan.work]
     I[目标 Index 与精确旧 Index 字节] --> M[TransactionPlan.metadata]
     W --> X[事务 Prepared / 发布 / Committed]
@@ -400,7 +401,7 @@ flowchart TD
 
 改变实际普通文件必须获得 owned_paths 对该路径的精确授权；授权某个目录名不能代替授权其中每个文件。新文件的路径确实缺失时可以创建。忽略规则不把已有未授权文件变成可覆盖内容，业务层还需决定何时允许覆盖已跟踪修改；这个授权集合本身不证明工作区与 HEAD 一致。
 
-部分更新只补新目标必要的缺失父目录，新目录权限为 0755；已有且不变化的父目录不记录，保留无关兄弟节点。目录变成文件或缺失时，递归检查完整实际目录：每个旧文件都要有精确授权及显式删除目标。精确 owned 的旧文件位置若实际变为空目录，可显式移除空节点；这不给子项递归授权。目录必须精确获授权或含已授权的后代路径，陌生空子目录、软链或 FIFO 拒绝。删除一个叶文件允许保留已空父目录，这是当前简化。执行器最终只删除已记录文件与空目录，不使用 remove_all。
+部分更新只补新目标必要的缺失父目录，新目录权限默认为 0755；已有且不变化的父目录不记录，保留无关兄弟节点。目录变成文件或缺失时，递归检查完整实际目录：每个旧文件都要有精确授权及显式删除目标。精确 owned 的旧文件位置若实际变为空目录，可显式移除空节点；这不给子项递归授权。目录必须精确获授权或含已授权的后代路径，陌生空子目录、软链或 FIFO 拒绝。删除一个叶文件允许保留已空父目录，这是当前简化。执行器最终只删除已记录文件与空目录，不使用 remove_all。
 
 每次工作区规划要求 plan.work 为空，但可保留其他已准备的 metadata。实现向副本添加 WorkChange，成功才赋回；异常保留原计划，已经写入的不可变备份对象可能留下。它不发布工作区或元数据，备份读取逐文件释放，不积累全部文件内容。
 
@@ -416,6 +417,14 @@ flowchart TD
 展开预算覆盖推导父目录与递归清单，roots 从受限 desired 复制；输入合法不意味着所有展开结果都能保留。该预算限制名称和节点数量，不将文件内容累计为总文件大小上限。
 
 本子项核心实现已完成，验证入口是核心单元测试，构建与验证证据见进度页；switch 已提供真实 CLI 学习实验。共享规划机制已实现，不代表各业务命令的覆盖策略已经交付。
+
+### 显式 Directory target：为真实目录镜像补齐表达
+
+本项扩展已通过子项验收：WorktreeTarget 第三个默认 bool directory=false，保持已有两字段 aggregate 的文件／缺失语义。directory=true 要求 file 为空，permissions 可指定完整目录权限；新目录默认 0755，已有目录未指定权限时保留真实权限。所有正目标都生成必要父目录，自动父目录不能覆盖显式目录权限，File 祖先仍拒绝。
+
+权限改变也使 Directory 成为事务记录，必须检查完整实际 inventory。保留模式不把 chmod 意图变成递归删除：已知文件需要 exact owned，沿已有明确目标或 actual 镜像保留；已知目录需要 exact owned 或已授权后代。已有删除／替换目标优先，未知文件、空子目录、软链与特殊节点仍阻止操作。必要的 before==after 后代也记入 work，满足执行器“记录目录的全部实际子项”契约；完全相同 Directory 的无操作不枚举无关兄弟。
+
+被记录的 Directory 两侧都至少具备 owner-read／execute；最终 work 中有后代（包括 after=Absent）时，两侧 Directory 须 owner-rwx。完整拓扑和 combined work／metadata 预算先于捕获备份，不放宽 Transaction。原空目录可按 exact owned 恢复，但这个位置授权不延伸到未知后代。此处仅补共享 planner；LongOperation 的持久镜像、abort 与语义 roots 仍是后续目的。
 
 ## 工作区短事务与恢复
 
@@ -439,17 +448,17 @@ stateDiagram-v2
     Rollforward --> [*]: 确认 after 后清理
 ```
 
-`.minigit/transaction` 使用 MGTR v1：大端版本和计数、状态字节、路径及双方 NodeImage、元数据备份 Blob ID，最后为整个主体的 SHA-256；总计最多 64 MiB，最多 100000 项改动、每路径 4096 字节和 128 分量。它是单个带校验的日志；Prepared/Committed 状态与全部数据一起原子发布。独立的“成功标记”会使两份文件的清理顺序产生歧义，因此不采用它。`.minigit/transaction-staging` 只保存本次待发布节点，名称可以由日志推导；目录先在内部暂存区创建并设置权限，再原子移动到工作区。工作目录不产生随机临时文件，文件／目录转换时也无需删除未知临时项。
+`.minigit/transaction` 使用 MGTR v1：大端版本和计数、状态字节、路径及双方 NodeImage、元数据备份 Blob ID，最后为整个主体的 SHA-256；总计最多 64 MiB，最多 100000 项改动、每路径 4096 字节和 128 分量。它是单个带校验的日志；Prepared/Committed 状态与全部数据一起原子发布。独立的“成功标记”会使两份文件的清理顺序产生歧义，因此不采用它。`.minigit/transaction-staging` 只保存本次待发布节点，名称可以由日志推导；owner-write 可写目录先在内部暂存区创建并设置精确权限，再原子移动到工作区；缺少 owner-write 的只读空目录若目标确实 Absent，则在目标父目录直接 exclusive mkdir 并设置精确权限。工作目录不产生随机临时文件，文件／目录转换时也无需删除未知临时项。
 
 恢复先检查整份日志、所有备份对象、当前工作节点和元数据，只有当前状态属于 before、after 或明确的合法中间缺失状态才开始修改。删除仅针对计划中的普通文件和空目录；目录内出现计划外条目、外部编辑、软链接、特殊文件、损坏备份或不支持的设备布局都会拒绝并保留现场。重复执行恢复必须收敛到同一结果。
 
-安全文件操作通过固定父目录 fd 的 `unlinkat`、`renameat` 和目录发布的 `renameat2(RENAME_NOREPLACE)` 实现，并同步受影响父目录。暂存目录在极端 umask 下可能最初为 0000；Linux 的 `O_PATH` 固定其 inode，再经 `/proc/self/fd` 设置访问权限以完成精确权限和同步。当前要求 Linux/POSIX、可用 procfs，并拒绝事务涉及的跨文件系统发布。写锁只协调 MiniGit 进程，不能锁住普通编辑器；预检后与单次系统调用之间的外部竞态仍是明确边界。
+安全文件操作固定父目录 fd：删除使用 `unlinkat`，文件及可写目录发布使用 `renameat`／`renameat2(RENAME_NOREPLACE)`，只读空目录使用 exclusive `mkdirat` 加精确权限设置，最后同步受影响父目录。暂存目录在极端 umask 下可能最初为 0000；Linux 的 `O_PATH` 固定其 inode，再经 `/proc/self/fd` 设置访问权限以完成精确权限和同步。当前要求 Linux/POSIX、可用 procfs，并拒绝事务涉及的跨文件系统发布。写锁只协调 MiniGit 进程，不能锁住普通编辑器；预检后与单次系统调用之间的外部竞态仍是明确边界。
 
 公开 API 的测试钩子在持久化步骤之后模拟子进程突然退出，不通过生产 CLI 或环境变量开启。阶段证据会记录实际覆盖的崩溃点；没有系统调用同步失败注入或真实断电实验时，不把进程退出测试写成断电证明。
 
 当前恢复不保存 owner/group 或文件时间戳；重新发布相同内容时 inode 和 mtime 可以变化。设备检查涵盖当前节点、已存在父链及元数据暂存，拒绝不同 st_dev；同设备挂载点等布局不作完整识别。同步发生在发布之后的失败重试，恢复会重发文件、核对目录权限并同步实际存在父链。
 
-进程在 `atomic_write` 的随机临时文件写入内部被终止时，内部暂存可能出现未记录的 `.minigit-tmp-*`；此时恢复拒绝自动删除未知项并保留现场。现有恢复设计和测试以公开持久化步骤完成边界为证据，不承诺任意系统调用内部中断均能自动恢复。系统调用级故障注入及已知临时项协议属于后续改进。
+进程在 `atomic_write` 的随机临时文件写入内部被终止时，内部暂存可能出现未记录的 `.minigit-tmp-*`；此时恢复拒绝自动删除未知项并保留现场。现有恢复设计和测试以公开持久化步骤完成边界为证据，不承诺任意系统调用内部中断均能自动恢复。只读目录的直接创建也有系统调用内部边界：mkdir 的初始 0700 受 umask 影响可能为 0000，设置最终权限之前还可能是 0700；中断后若这个节点既不等于 before 也不等于 after，严格恢复会拒绝并保留现场，不猜测它可被 chmod。exclusive=true 只允许新建，EEXIST 立即失败，不能趁重试改动外部已有目录。系统调用级故障注入及已知临时项协议属于后续改进。
 
 ## 纯文本合并：先隔离字节算法
 
@@ -480,4 +489,4 @@ flowchart LR
     D --> L[唯一 lowest / nullopt / 多基线 Error]
 ```
 
-继承 DAG 的 100000 节点、1000000 父边及 64 MiB 解码数据预算；重复父边的 OR 幂等。实际两轮传播与接口已核对，构建、语义测试及独立 DAG 性质验证通过，精确范围见进度页。下一层先补完整 Directory WorktreeTargets，再建立 caller-lock CommitFactory 与持久 Operation codec，之后才能组合 SnapshotMerge 与事务发布。
+继承 DAG 的 100000 节点、1000000 父边及 64 MiB 解码数据预算；重复父边的 OR 幂等。实际两轮传播与接口已核对，构建、语义测试及独立 DAG 性质验证通过，精确范围见进度页。完整 Directory WorktreeTargets 已通过子项验收，下一层建立 caller-lock CommitFactory 与持久 Operation codec，之后才能组合 SnapshotMerge 与事务发布。

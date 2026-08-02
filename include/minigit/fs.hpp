@@ -36,7 +36,8 @@ void sync_directory(const std::filesystem::path& path);
 // Pinned-directory operations for transaction publication; no symlink following.
 void remove_regular(const std::filesystem::path& path);
 void remove_empty_directory(const std::filesystem::path& path);
-void create_directory_exact(const std::filesystem::path& path, std::uint32_t permissions);
+// exclusive rejects even an existing directory rather than changing its mode.
+void create_directory_exact(const std::filesystem::path& path, std::uint32_t permissions, bool exclusive = false);
 void chmod_directory(const std::filesystem::path& path, std::uint32_t permissions);
 // Source must be a prepared regular file or directory on the same device.
 // Directory publication requires an absent destination; file replaces only a file.

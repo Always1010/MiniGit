@@ -114,12 +114,12 @@ void remove_entry(const std::filesystem::path& path, bool directory) {
 }
 void remove_regular(const std::filesystem::path& path) { remove_entry(path, false); }
 void remove_empty_directory(const std::filesystem::path& path) { remove_entry(path, true); }
-void create_directory_exact(const std::filesystem::path& path, std::uint32_t permissions) {
+void create_directory_exact(const std::filesystem::path& path, std::uint32_t permissions, bool exclusive) {
     if (permissions > 07777) throw Error("目录权限超过 07777 范围");
     const auto name = path.filename();
     validate_name(name);
     Fd parent(open_directory(parent_of(path)));
-    if (::mkdirat(parent.value, name.c_str(), 0700) != 0 && errno != EEXIST) fail("创建事务目录失败");
+    if (::mkdirat(parent.value, name.c_str(), 0700) != 0 && (exclusive || errno != EEXIST)) fail("创建事务目录失败");
     // mkdir is affected by umask, so pin even a mode-0000 inode before opening
     // it for fsync. /proc/self/fd refers to this inode, not a replaceable name.
     Fd pinned(::openat(parent.value, name.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
