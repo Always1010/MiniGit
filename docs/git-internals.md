@@ -202,3 +202,9 @@ single-lowest merge-base helper 已通过子项验收。两份 Commit 可以具�
 MiniGit 的 HEAD Snapshot 保存文件 Blob 与 100644／100755，不保存空目录或完整 st_mode 权限。实际 work 的 NodeImage 还要区分 Directory 与 Absent，记录完整 07777 权限；否则原先存在的空目录在中止时会被误当作不存在，0700 目录也可能变成默认 0755。
 
 显式 Directory target 已补共享 planner 的这个表达缺口并通过子项验收，不意味着 abort 已实现。恢复目录权限同样受安全 inventory 约束：更改 root mode 不授权它的未知子项，精确授权空 root 也不授权陌生空 child。长期操作必须保存真实 before 镜像，短事务 recover 决定 Prepared／Committed 的 before／after，而未来 operation abort 才恢复操作开始时的镜像，二者不能混为一件事。
+
+## Tree ID 与文件投影相等不是同一条件
+
+CommitSnapshot 工厂已通过子项验收，空提交策略仍由 create_commit 决定。一个合法父 Tree 可以含空子 Tree，展平 read_snapshot 看不到文件；write_snapshot(empty) 则构造空根 Tree。两份 Snapshot 同为空不保证这两个 Tree ID 相等，直接用 Snapshot equality 拒绝会改变既有业务判定。
+
+对象工厂允许显式空 Snapshot，支持初始或多父 Commit；它不猜当前分支，也不擅自认定消息相同或文件投影相同就不能保存。重放原 author 与当前 committer 同样是不同角色：前者保留源字段，后者记录本次显式身份；来源、parent 顺序与允许空的策略由后续业务选择，不让存储层从 Index 推断。

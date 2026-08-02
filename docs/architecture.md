@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，合并业务与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，合并业务与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -489,4 +489,12 @@ flowchart LR
     D --> L[唯一 lowest / nullopt / 多基线 Error]
 ```
 
-继承 DAG 的 100000 节点、1000000 父边及 64 MiB 解码数据预算；重复父边的 OR 幂等。实际两轮传播与接口已核对，构建、语义测试及独立 DAG 性质验证通过，精确范围见进度页。完整 Directory WorktreeTargets 已通过子项验收，下一层建立 caller-lock CommitFactory 与持久 Operation codec，之后才能组合 SnapshotMerge 与事务发布。
+继承 DAG 的 100000 节点、1000000 父边及 64 MiB 解码数据预算；重复父边的 OR 幂等。实际两轮传播与接口已核对，构建、语义测试及独立 DAG 性质验证通过，精确范围见进度页。完整 Directory WorktreeTargets 已通过子项验收，caller-lock CommitSnapshot 工厂也已验收，下一层建立持久 Operation codec／roots 与业务 guard，之后才能组合 SnapshotMerge 与事务发布。
+
+## CommitSnapshot 工厂：保存对象与移动 HEAD 分开
+
+本项已通过子项验收。caller-lock store_commit_snapshot：调用者提供 Snapshot、有序 parents、message 与可选原 author；工厂只读取当前显式 identity、校验输入并保存不可变 Tree／Commit，不读取 HEAD、Index 或 Work，不规划 ref／日志。它保留 pending transaction guard，不承担业务空提交策略；未来继续操作须在已持锁的内部调用它，而不是再次进入 self-lock create_commit。
+
+未提供 author 时，author／committer 都由当前 identity 与运行时 UTC 业务秒生成；提供原 author 时原字段连同其原业务时间按 Commit codec 校验并保留，committer 仍取当前身份。参数 parent 顺序和重复边原样保存，校验可按 ID 去重；每个显式父 Commit 自己的完整 Tree／Blob 必须可读，但不遍历其整个祖先 DAG。公开 store_commit_snapshot 的 100000 parents 与完整 Commit／ObjectStore frame 的 64 MiB 预算先于任何 Tree 写入；候选建树仍受含目录的 Tree entry 预算。
+
+create_commit 继续在消息拒绝后自己取锁，先检查 identity，再读取 HEAD parent／Index 并处理初始空与 allow-empty；已有 parent 的空提交检查比较实际 Tree ID，不改为展平 Snapshot 相等。ordinary create_commit 仍先 write_snapshot 并比较 Tree ID，再复用 prepare_commit／store_final_commit 保存对象，最后由原 plan_move_head／Transaction 一次发布；没有为了共享而改变原失败顺序。因而普通提交的晚期 actor／frame 错误可留下不可达 Tree；公开工厂的 actor／frame 前检则在写 Tree 前完成。五组新增测试与冻结私有链已核对，定向回归及完整只读审查通过；不可变准备不提前发布元数据。本项不引入 Factory 类、LongOperation codec 或 merge CLI。

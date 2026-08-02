@@ -332,7 +332,7 @@ helper 已通过子项验收，尚无 merge 命令实验。先手画 R→X，X �
 
 C++ 练习用两位整数标记 left／right reachable。初值只设在两 root，按 child-before-parent 把当前位标记 OR 给每个 parent；最后值为 3 的节点是共同祖先。再以同一顺序，把当前节点是 common 或已有共同后代的事实传给每个 parent。不要把 common 自己直接设为“有共同后代”，否则连真正最低的 X 也被删掉。OR 对重复父边幂等，first parent 只是 parents 中的一项，不能漏掉其余边。
 
-即使 L=T 或 T 是 L 的祖先，也先读取完整闭包；末端快进关系不能证明更深的 Commit 没有缺损。无共同祖先返回 optional 空值，多基线抛 Error，不展开 Tree；语义组及用独立闭包算法核对的随机 DAG 性质验证均通过，范围见进度页。实际工作区的安全规划、提交工厂与持久操作仍是后续依赖，不能把 helper 完成当作 merge 已交付。
+即使 L=T 或 T 是 L 的祖先，也先读取完整闭包；末端快进关系不能证明更深的 Commit 没有缺损。无共同祖先返回 optional 空值，多基线抛 Error，不展开 Tree；语义组及用独立闭包算法核对的随机 DAG 性质验证均通过，范围见进度页。实际目录规划与提交工厂已通过各自子项验收，持久操作仍是后续依赖，不能把 helper 完成当作 merge 已交付。
 
 ## 空目录与目录权限为什么也需要恢复目标
 
@@ -343,3 +343,11 @@ C++ 练习用两位整数标记 left／right reachable。初值只设在两 root
 C++ 练习分别构造 Absent、空 Blob File、显式 Directory，说明两个 optional 与 directory 布尔字段为何不能混用。根目录位置 exact owned 只允许原空节点本身，不授权陌生 child；后续长操作才会把真实 before 镜像转换成这些目标，本项不实现 continue／abort。
 
 只读空目录还给出一个系统调用边界：Linux 跨父目录 rename 需要目录 owner-write，0500 不能照搬可写目录的发布方式。因此当前只读目标缺失时用 exclusive mkdir，再设置精确权限；可写目录仍先暂存后 rename。exclusive 已存在立即拒绝，不修改陌生目录的 mode。mkdir 到最终权限之间可能暂为 0000／0700，中断后若它不是已记录的 before／after，recover 会保留并拒绝；持久化步骤后的测试不等于任意系统调用内部中断证明。
+
+## 提交工厂为何不读取当前 Index
+
+CommitSnapshot 工厂已通过子项验收。merge 有一份明确候选 Snapshot，重放还带源 author 与明确 parents；若调用 create_commit，它会重新取锁、读取当前 Index，并把当前 HEAD 当单个 parent，来源与父关系都可能错误。caller-lock store_commit_snapshot 只处理明确输入，真正移动 HEAD 由业务随后规划。
+
+C++ 练习把 parents 写成 [P2,P1,P2]，结果必须保留这个顺序和重复边，校验去重只减少读对象，不改变序列。每个父自己的 Tree／Blob 先完整校验，却不要求遍历其 parents 闭包；源 raw author 原样保存，committer 来自当前 identity。公开 store_commit_snapshot 的未配置身份、非法 actor 或已知超 frame 预算在 Tree 写入前拒绝，后期不可达对象不等于可变状态部分发布。
+
+再构造父根 Tree 内含空子 Tree：read_snapshot 投影为空，候选 empty Snapshot 的 write_snapshot 却得到另一 Tree ID。业务已有“无变化”判断应比较这些 ID，不能因为两个 map 都空而改变策略。工厂允许 empty Snapshot，不替 create_commit 或未来重放决定 allow-empty；身份错误次序、初始空与 HEAD/ref/log 事务规则仍保持。ordinary create_commit 为保持旧失败顺序，先写候选 Tree／比较 ID，再构造 actor／完整 frame；晚错误可留不可达 Tree，和公开工厂的写 Tree 前预检不能混为一条保证。冻结源码与五组语义已核对，定向验证与只读审查通过，本项不提供 merge 或继续操作。
