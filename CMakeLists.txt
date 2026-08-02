@@ -87,7 +87,7 @@ if(BUILD_TESTING)
     target_include_directories(minigit_tests PRIVATE tests/support)
     # Transaction crash scenarios also exercise recovery through the real CLI.
     add_dependencies(minigit_tests minigit)
-    target_link_libraries(minigit_tests PRIVATE minigit_core Catch2::Catch2WithMain)
+    target_link_libraries(minigit_tests PRIVATE minigit_core Catch2::Catch2WithMain ZLIB::ZLIB)
     include(Catch)
     catch_discover_tests(minigit_tests TEST_PREFIX "unit.")
     add_test(NAME cli_basics COMMAND ${CMAKE_COMMAND}

@@ -6,6 +6,9 @@
 #include "minigit/error.hpp"
 #include "temp_directory.hpp"
 #include <algorithm>
+#include <map>
+#include <utility>
+#include <zlib.h>
 using namespace minigit;
 namespace {
 void identity(const Repository& repo) {
@@ -22,6 +25,247 @@ ObjectId fixture_commit(const Repository& repo) {
     const auto tree = store.write(ObjectType::Tree, encode_tree({}));
     return store.write(ObjectType::Commit, encode_commit({tree, {}, "Test <a@b> 0 +0000", "Test <a@b> 0 +0000", "fixture"}));
 }
+ObjectId factory_parent(const Repository& repo, std::string_view message,
+                        std::vector<ObjectId> parents = {}, std::optional<ObjectId> tree = std::nullopt) {
+    ObjectStore store(repo.metadata() / "objects");
+    const auto root = tree ? *tree : store.write(ObjectType::Tree, encode_tree({}));
+    return store.write(ObjectType::Commit, encode_commit({root, std::move(parents), "Source <s@b> 0 +0000", "Source <s@b> 0 +0000", std::string(message)}));
+}
+std::map<std::string, Bytes> history_files(const Repository& repo, bool include_objects = false) {
+    std::map<std::string, Bytes> result;
+    const auto objects = (repo.metadata() / "objects").lexically_relative(repo.root()).generic_string() + "/";
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(repo.root())) {
+        if (!std::filesystem::is_regular_file(entry.symlink_status())) continue;
+        const auto path = entry.path().lexically_relative(repo.root()).generic_string();
+        if (include_objects || !path.starts_with(objects)) result.emplace(path, read_file(entry.path()));
+    }
+    return result;
+}
+template<class Action>
+void history_error_contains(Action&& action, std::string_view expected) {
+    bool failed = false;
+    try { action(); }
+    catch (const Error& error) {
+        failed = true;
+        REQUIRE(std::string_view(error.what()).find(expected) != std::string_view::npos);
+    }
+    REQUIRE(failed);
+}
+ObjectId malformed_factory_parent(const Repository& repo) {
+    const auto payload = to_bytes("tree " + ObjectId{}.hex() + "\n\nmissing actors");
+    auto framed = to_bytes("commit " + std::to_string(payload.size()));
+    framed.push_back(0);
+    framed.insert(framed.end(), payload.begin(), payload.end());
+    const auto id = sha256(framed);
+    uLongf size = ::compressBound(static_cast<uLong>(framed.size()));
+    Bytes compressed(static_cast<std::size_t>(size));
+    REQUIRE(::compress2(compressed.data(), &size, framed.data(), static_cast<uLong>(framed.size()), Z_DEFAULT_COMPRESSION) == Z_OK);
+    compressed.resize(static_cast<std::size_t>(size));
+    const auto path = ObjectStore(repo.metadata() / "objects").object_path(id);
+    detail::ensure_directory(path.parent_path());
+    atomic_write(path, compressed);
+    return id;
+}
+}
+TEST_CASE("Commit snapshot storage uses explicit inputs and preserves ordered repeated parents without mutable publication", "[history][commit-snapshot]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path() / "repo");
+    identity(repo);
+    RepoLock lock(repo.metadata());
+    ObjectStore store(repo.metadata() / "objects");
+    // Explicit parent snapshots are complete; missing ancestors are not read.
+    const auto first = factory_parent(repo, "first", {ObjectId{}});
+    const auto second = factory_parent(repo, "second");
+    const auto binary = store.write(ObjectType::Blob, Bytes{0, 255, '\n'});
+    const auto empty = store.write(ObjectType::Blob, {});
+    const Snapshot candidate{{"empty", {"100644", empty}}, {"nested/run", {"100755", binary}}};
+    atomic_write(repo.metadata() / "HEAD", to_bytes("broken HEAD\n"));
+    atomic_write(repo.metadata() / "index", to_bytes("broken Index"));
+    atomic_write_with_permissions(repo.root() / "dirty", to_bytes("unstaged"), 0640);
+    atomic_write(temp.path() / "outside", to_bytes("outside"));
+    std::filesystem::create_symlink(temp.path() / "outside", repo.root() / "unsafe-work");
+    const auto before = history_files(repo);
+    const std::vector<ObjectId> parents{second, first, second};
+    const auto id = store_commit_snapshot(repo, candidate, parents, "explicit\n\nbody");
+    const auto commit = read_commit(repo, id);
+    REQUIRE(commit.parents == parents);
+    REQUIRE(read_snapshot(repo, commit.tree) == candidate);
+    REQUIRE(commit.message == "explicit\n\nbody");
+    REQUIRE(commit.author == commit.committer);
+    REQUIRE(history_files(repo) == before);
+    REQUIRE(read_file_data(repo.root() / "dirty").permissions == 0640);
+    REQUIRE(std::filesystem::is_symlink(std::filesystem::symlink_status(repo.root() / "unsafe-work")));
+    REQUIRE(to_string(read_file(temp.path() / "outside")) == "outside");
+    REQUIRE_FALSE(std::filesystem::exists(repo.metadata() / "transaction"));
+    REQUIRE_FALSE(std::filesystem::exists(repo.metadata() / "transaction-staging"));
+    const auto initial = store_commit_snapshot(repo, {}, {}, "initial empty");
+    const auto same_tree = store_commit_snapshot(repo, {}, {initial}, "same tree");
+    REQUIRE(read_snapshot(repo, read_commit(repo, initial).tree).empty());
+    REQUIRE(read_commit(repo, initial).parents.empty());
+    REQUIRE(read_commit(repo, same_tree).tree == read_commit(repo, initial).tree);
+    REQUIRE(read_commit(repo, same_tree).parents == std::vector<ObjectId>{initial});
+    REQUIRE(history_files(repo) == before);
+}
+TEST_CASE("Commit snapshot storage preserves source author bytes and uses the current configured committer", "[history][commit-snapshot]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    identity(repo);
+    RepoLock lock(repo.metadata());
+    const auto parent = fixture_commit(repo);
+    const std::string author = "Original\t<old@example.test> 0 +0000" + std::string(1, char(128));
+    const auto before = history_files(repo);
+    const auto overridden = read_commit(repo, store_commit_snapshot(repo, {}, {parent}, "source author", std::string_view(author)));
+    REQUIRE(overridden.author == author);
+    REQUIRE(overridden.committer.starts_with("测试作者 <author@example.test> "));
+    REQUIRE(overridden.committer.ends_with(" +0000"));
+    REQUIRE(overridden.author != overridden.committer);
+    const auto current = read_commit(repo, store_commit_snapshot(repo, {}, {parent}, "current author"));
+    REQUIRE(current.author == current.committer);
+    REQUIRE(history_files(repo) == before);
+}
+TEST_CASE("Commit snapshot storage preflights all parent snapshots schemas and explicit inputs before Tree writes", "[history][commit-snapshot]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    identity(repo);
+    RepoLock lock(repo.metadata());
+    ObjectStore store(repo.metadata() / "objects");
+    const auto parent = fixture_commit(repo);
+    const auto blob = store.write(ObjectType::Blob, to_bytes("candidate"));
+    const Snapshot candidate{{"new/leaf", {"100644", blob}}};
+    SECTION("every parent has a readable complete snapshot") {
+        const auto empty_tree = store.write(ObjectType::Tree, encode_tree({}));
+        const auto missing_file = store.write(ObjectType::Tree, encode_tree({{"file", "100644", ObjectId{}}}));
+        const auto wrong_file = store.write(ObjectType::Tree, encode_tree({{"file", "100644", empty_tree}}));
+        const auto missing_directory = store.write(ObjectType::Tree, encode_tree({{"dir", "40000", ObjectId{}}}));
+        for (const auto tree : {ObjectId{}, blob, missing_file, wrong_file, missing_directory}) {
+            const auto incomplete = factory_parent(repo, "incomplete", {}, tree);
+            const auto before = history_files(repo, true);
+            REQUIRE_THROWS_AS(store_commit_snapshot(repo, candidate, {parent, incomplete}, "reject"), Error);
+            REQUIRE(history_files(repo, true) == before);
+        }
+    }
+    SECTION("parent typed Commit and schema are required") {
+        const auto malformed = malformed_factory_parent(repo);
+        for (const auto bad : {ObjectId{}, blob, malformed}) {
+            const auto before = history_files(repo, true);
+            REQUIRE_THROWS_AS(store_commit_snapshot(repo, candidate, {parent, bad}, "reject"), Error);
+            REQUIRE(history_files(repo, true) == before);
+        }
+    }
+    SECTION("candidate paths modes objects and topology validate before all Trees") {
+        for (const auto& bad : std::vector<Snapshot>{
+                {{"new/leaf", {"100644", ObjectId{}}}},
+                {{"new/leaf", {"100644", read_commit(repo, parent).tree}}},
+                {{"../bad", {"100644", blob}}},
+                {{"new/leaf", {"120000", blob}}},
+                {{"new", {"100644", blob}}, {"new/leaf", {"100644", blob}}}}) {
+            const auto before = history_files(repo, true);
+            REQUIRE_THROWS_AS(store_commit_snapshot(repo, bad, {parent}, "reject"), Error);
+            REQUIRE(history_files(repo, true) == before);
+        }
+    }
+    SECTION("message and raw author retain their existing codec contracts") {
+        const auto before = history_files(repo, true);
+        for (const auto& message : std::vector<std::string>{"", " \t\r\n", std::string("m\0x", 3)})
+            REQUIRE_THROWS_AS(store_commit_snapshot(repo, candidate, {parent}, message), Error);
+        for (const auto& author : std::vector<std::string>{"", "a\nb", "a\rb", std::string("a\0b", 3)})
+            REQUIRE_THROWS_AS(store_commit_snapshot(repo, candidate, {parent}, "reject", std::string_view(author)), Error);
+        REQUIRE(history_files(repo, true) == before);
+    }
+    SECTION("missing and malformed identity remain failures with an author override") {
+        std::filesystem::remove(repo.metadata() / "identity");
+        auto before = history_files(repo, true);
+        REQUIRE_THROWS_AS(store_commit_snapshot(repo, candidate, {parent}, "reject", "Source <s@b> 0 +0000"), Error);
+        REQUIRE(history_files(repo, true) == before);
+        atomic_write(repo.metadata() / "identity", to_bytes("version=2\n"));
+        before = history_files(repo, true);
+        REQUIRE_THROWS_AS(store_commit_snapshot(repo, candidate, {parent}, "reject"), Error);
+        REQUIRE(history_files(repo, true) == before);
+    }
+}
+TEST_CASE("Commit snapshot storage rejects parent frame and pending transaction limits before copying or Tree writes", "[history][commit-snapshot]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    identity(repo);
+    RepoLock lock(repo.metadata());
+    ObjectStore store(repo.metadata() / "objects");
+    const auto parent = fixture_commit(repo);
+    const auto blob = store.write(ObjectType::Blob, to_bytes("candidate"));
+    const Snapshot candidate{{"new/leaf", {"100644", blob}}};
+    SECTION("100001 repeated parents are rejected without a large object fixture") {
+        const std::vector<ObjectId> parents(100001, parent);
+        const auto before = history_files(repo, true);
+        history_error_contains([&] { (void)store_commit_snapshot(repo, candidate, parents, "reject"); }, "100000");
+        REQUIRE(history_files(repo, true) == before);
+    }
+    SECTION("payload fits but its ObjectStore frame exceeds 64 MiB") {
+        const auto probe = read_commit(repo, store_commit_snapshot(repo, {}, {}, "measure committer"));
+        // Leave eight payload bytes spare; the framing needs at least sixteen.
+        const std::string message(max_file_size - 90 - 1 - probe.committer.size() - 8, 'm');
+        const auto before = history_files(repo, true);
+        history_error_contains([&] { (void)store_commit_snapshot(repo, candidate, {}, message, "a"); }, "frame");
+        REQUIRE(history_files(repo, true) == before);
+    }
+    SECTION("a short transaction journal or staging node blocks the caller-lock API") {
+        for (const auto name : {"transaction", "transaction-staging"}) {
+            atomic_write(repo.metadata() / name, to_bytes("pending"));
+            const auto before = history_files(repo, true);
+            REQUIRE_THROWS_AS(store_commit_snapshot(repo, candidate, {parent}, "reject"), Error);
+            REQUIRE(history_files(repo, true) == before);
+            std::filesystem::remove(repo.metadata() / name);
+        }
+    }
+}
+TEST_CASE("Commit retains Tree identity empty-subtree behavior and message identity error ordering", "[history][commit-snapshot]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    identity(repo);
+    SECTION("an empty subtree is removed by a real Tree change despite equal projected snapshots") {
+        ObjectId original;
+        ObjectId empty_tree;
+        {
+            RepoLock lock(repo.metadata());
+            ObjectStore store(repo.metadata() / "objects");
+            empty_tree = store.write(ObjectType::Tree, encode_tree({}));
+            const auto with_empty_directory = store.write(ObjectType::Tree, encode_tree({{"empty-dir", "40000", empty_tree}}));
+            original = factory_parent(repo, "contains empty directory", {}, with_empty_directory);
+            update_ref(repo, "refs/heads/main", std::nullopt, original);
+            save_index(repo, {});
+        }
+        REQUIRE(head_snapshot(repo).empty());
+        const auto next = create_commit(repo, "remove empty directory");
+        REQUIRE(read_commit(repo, next).tree == empty_tree);
+        REQUIRE(read_commit(repo, next).parents == std::vector<ObjectId>{original});
+        REQUIRE(read_head(repo).id == next);
+        REQUIRE_THROWS_AS(create_commit(repo, "unchanged"), Error);
+    }
+    SECTION("message precedes pending and identity errors and identity precedes HEAD and Index") {
+        {
+            RepoLock lock(repo.metadata());
+            std::filesystem::remove(repo.metadata() / "identity");
+            atomic_write(repo.metadata() / "HEAD", to_bytes("invalid HEAD\n"));
+            atomic_write(repo.metadata() / "index", to_bytes("invalid Index"));
+            atomic_write(repo.metadata() / "transaction", to_bytes("pending"));
+        }
+        auto before = history_files(repo, true);
+        history_error_contains([&] { (void)create_commit(repo, " \t\n"); }, "提交消息");
+        REQUIRE(history_files(repo, true) == before);
+        std::filesystem::remove(repo.metadata() / "transaction");
+        before = history_files(repo, true);
+        history_error_contains([&] { (void)create_commit(repo, "valid"); }, "显式配置");
+        REQUIRE(history_files(repo, true) == before);
+        identity(repo);
+        before = history_files(repo, true);
+        history_error_contains([&] { (void)create_commit(repo, "valid"); }, "引用对象编号格式");
+        REQUIRE(history_files(repo, true) == before);
+        {
+            RepoLock lock(repo.metadata());
+            atomic_write(repo.metadata() / "HEAD", to_bytes("ref: refs/heads/main\n"));
+        }
+        before = history_files(repo, true);
+        history_error_contains([&] { (void)create_commit(repo, "valid"); }, "索引被截断");
+        REQUIRE(history_files(repo, true) == before);
+    }
 }
 TEST_CASE("Snapshots round trip nested binary executable and empty files canonically", "[history]") {
     test::TempDirectory temp;

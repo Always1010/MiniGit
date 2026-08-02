@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，无合并业务 CLI。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，无合并业务 CLI。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -78,9 +78,10 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 17 | 纯文本合并（已验收） | 基线坐标、点插入、完整区块重放与 LF 怎样决定冲突？ |
 | 18 | SnapshotMerge（已验收） | 原始 stages、marker 工作内容与 D/F 区域如何区分？ |
 | 19 | Single-lowest merge base（已验收） | 如何从完整父图剔除非最低共同祖先？ |
-| 20 | Operations（计划） | 继续／中止怎样跨进程保持？ |
+| 20 | CommitSnapshot 工厂（已验收） | 显式内容存储为何不能从当前 Index 或 HEAD 推断？ |
+| 21 | Operations（计划） | 继续／中止怎样跨进程保持？ |
 
-表中前十九项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
+表中前二十项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -308,3 +309,15 @@ D/F 用可能的最终存在路径找最短区域，而不是机械合并三个�
 find_merge_base 已通过子项验收，不是新命令。先复习 [dag.hpp](../include/minigit/dag.hpp) 与 [dag.cpp](../src/core/dag.cpp)：load_commit_graph 有界加载完整 Commit 闭包，topological_order 验证全部 parent membership 与环，提供 child-before-parent 顺序，available-node ties 用 ObjectId 字节顺序。这个 tie 规则只保证遍历稳定，不可代替多个基线的业务定义。
 
 实际链为 load_commit_graph → topological_order → Reach 的 mask／common_descendant 初始化 → 两 root 的两位标记 → 第一轮沿全部 parents OR → 第二轮向 parents 传播共同祖先／共同后代 → 收集 common 且无共同后代的节点。不能在 same ID／ancestor 检查前漏掉完整图校验；重复父边不应改变集合含义。[test_merge_base.cpp](../tests/unit/test_merge_base.cpp) 已有八组语义，涵盖 same tip、祖先双方向、私有链、非 first-parent／父顺序、diamond、crisscross、无关同 Tree／重复父边及损坏深祖先。无 Tree 展开也有实际 fixture：删除 Tree 对象后，父图查询仍应得到相同结果；它不承诺该 Commit 可被发布。未重复已有 incomplete／cycle／大预算测试，八组与相关 DAG／日志回归均通过，实际范围见进度页。返回 optional 区分“没有共同祖先”，多最低基线则 Error；后续业务另处理这个缺失值。
+
+## CommitSnapshot：caller-lock 存储供业务复用
+
+工厂接口与核心已通过子项验收。阅读 [history.hpp](../include/minigit/history.hpp) 与 [history.cpp](../src/core/history.cpp) 时先区分 self-lock create_commit 和 store_commit_snapshot：前者选择当前 Index、HEAD parent 与空提交策略并发布，后者只接收明确输入、构造 actors／frame 和保存对象。
+
+校验顺序是可观察行为：create_commit 消息仍在锁前拒绝，显式 identity 缺失仍先于 HEAD／Index 损坏报错。公开 store_commit_snapshot 对全部显式父 Commit 的本身快照、候选模式／Blob、raw author 与完整 framing 提前校验，之后才写 Tree；parents 可重复但不重排，不以 first parent 省掉其他父的快照校验。不加载父 DAG，不在共享入口再次取锁。已保存对象不可变，后期错误不回滚对象，也不改变任何可变状态。
+
+实际公开签名借用 const Snapshot&、const vector<ObjectId>&、message string_view 与 optional<string_view> original_author；author 只借用本次调用，prepare_commit 拷贝为 Commit 的拥有字符串。调用链为 validate_message → require_no_transaction → validate_parent_count → required_identity／prepare_commit（validate_commit_frame＋placeholder Tree ID 的 encode_commit）→ 去重逐 parent 的 read_commit／read_snapshot → write_snapshot → store_final_commit。已知 frame 超预算在复制 parents／message 前拒绝。
+
+ordinary create_commit 的链保持 validate_message → 取锁／pending → required_identity → HEAD／parent 自快照 → Index／root-empty → write_snapshot／Tree ID empty → prepare_commit／store_final_commit → plan_move_head／execute_transaction。共享私有构造器不代表它改为经 public factory：普通提交的 actor／frame 仍晚于候选 Tree，可能留下不可达 Tree，绝无提前可变发布。
+
+[test_history.cpp](../tests/unit/test_history.cpp) 新增五组：明确输入不读取损坏当前 HEAD／Index 与有序重复 parents（含不遍历父祖先）、原 author 字节／当前 committer、全部父和候选对象／schema 写 Tree 前校验、100001 parent／完整 frame／pending 拒绝、ordinary 空子 Tree 与消息→身份→HEAD→Index 错误顺序。显式 empty Snapshot 及 same-tree 存储允许。两种预设构建与定向回归通过，精确范围见进度页；无 CLI 或新实验，下一依赖为持久 Operation codec／roots、业务 guard 与生命周期。

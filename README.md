@@ -10,9 +10,11 @@ Phase 3 的纯文本三方合并引擎已通过子项验收，无新 CLI。它�
 
 SnapshotMerge 适配器已通过子项验收，调用者持 RepoLock 后可读取 typed Blob、保存不可变合并／marker Blob，并返回候选 Index 与完整 work 布局；它不发布工作区、Index、HEAD 或日志，也不新增 CLI。文件存在、内容、模式和 D/F 冲突语义见 [快照合并学习笔记](docs/learning-notes.md#快照合并原始版本与呈现内容各有位置)，两种预设各 18 项定向检查及各 1000 组独立性质验证通过；完整范围见进度页。
 
-single-lowest merge-base helper 已通过子项验收：沿双方完整父图选择唯一最低共同祖先，不展开 Tree、不新增 CLI。零个基线返回缺失，多个基线明确拒绝，避免用提交时间选一个；两种预设各 14 项定向检查及各 500 组独立 DAG 性质验证通过。完整目录目标规划也已验收，后续依赖为 CommitFactory 与持久操作，merge 业务尚未交付。
+single-lowest merge-base helper 已通过子项验收：沿双方完整父图选择唯一最低共同祖先，不展开 Tree、不新增 CLI。零个基线返回缺失，多个基线明确拒绝，避免用提交时间选一个；两种预设各 14 项定向检查及各 500 组独立 DAG 性质验证通过。完整目录目标规划也已验收，CommitSnapshot 工厂也已验收，后续依赖为持久操作，merge 业务尚未交付。
 
 共享 planner 的显式 Directory target 已通过子项验收，用于描述空目录与完整目录权限；接口与调用链已核对，两种预设各 28 项定向检查通过，无新 CLI。HEAD 快照不能替代真实 NodeImage，后续长操作中止需要这些镜像，但本项不交付 OperationState 或 abort 命令。
+
+caller-lock CommitSnapshot 存储工厂已通过子项验收，接收明确 Snapshot 和有序 parents，只保存不可变 Tree／Commit；不读取 HEAD／Index 或发布引用。create_commit 保持业务入口与原空提交策略，merge／重放和长期操作仍未交付。本项无新 CLI 或实验，接口和调用链已核对，两种预设各 22 项定向检查通过；下一依赖为 Operation codec／roots 与业务 guard。
 
 ## 构建与运行
 
