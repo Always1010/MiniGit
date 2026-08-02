@@ -24,6 +24,7 @@ add_library(minigit_core
     src/core/object_store.cpp
     src/core/repository.cpp
     src/core/transaction.cpp
+    src/core/operation.cpp
     src/core/reflog.cpp
     src/core/branches.cpp
     src/core/switch.cpp
@@ -65,6 +66,8 @@ if(BUILD_TESTING)
     add_executable(minigit_tests
         tests/unit/test_objects.cpp
         tests/unit/test_transaction.cpp
+        tests/unit/test_operation.cpp
+        tests/unit/test_operation_guards.cpp
         tests/unit/test_reflog.cpp
         tests/unit/test_branches.cpp
         tests/unit/test_switch.cpp

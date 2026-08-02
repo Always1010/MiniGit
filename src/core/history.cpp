@@ -5,6 +5,7 @@
 #include "minigit/error.hpp"
 #include "minigit/transaction.hpp"
 #include "minigit/reflog.hpp"
+#include "minigit/operation.hpp"
 #include <algorithm>
 #include <chrono>
 #include <map>
@@ -146,6 +147,7 @@ ObjectId create_commit(const Repository& repo, std::string_view message, bool al
     validate_message(message);
     RepoLock lock(repo.metadata());
     require_no_transaction(repo);
+    require_no_operation(repo);
     const auto identity = required_identity(repo);
     const auto head = read_head(repo);
     std::optional<Commit> parent;

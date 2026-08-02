@@ -332,7 +332,7 @@ helper 已通过子项验收，尚无 merge 命令实验。先手画 R→X，X �
 
 C++ 练习用两位整数标记 left／right reachable。初值只设在两 root，按 child-before-parent 把当前位标记 OR 给每个 parent；最后值为 3 的节点是共同祖先。再以同一顺序，把当前节点是 common 或已有共同后代的事实传给每个 parent。不要把 common 自己直接设为“有共同后代”，否则连真正最低的 X 也被删掉。OR 对重复父边幂等，first parent 只是 parents 中的一项，不能漏掉其余边。
 
-即使 L=T 或 T 是 L 的祖先，也先读取完整闭包；末端快进关系不能证明更深的 Commit 没有缺损。无共同祖先返回 optional 空值，多基线抛 Error，不展开 Tree；语义组及用独立闭包算法核对的随机 DAG 性质验证均通过，范围见进度页。实际目录规划与提交工厂已通过各自子项验收，持久操作仍是后续依赖，不能把 helper 完成当作 merge 已交付。
+即使 L=T 或 T 是 L 的祖先，也先读取完整闭包；末端快进关系不能证明更深的 Commit 没有缺损。无共同祖先返回 optional 空值，多基线抛 Error，不展开 Tree；语义组及用独立闭包算法核对的随机 DAG 性质验证均通过，范围见进度页。实际目录规划与提交工厂已通过各自子项验收，持久状态基础也已通过子项验收，Merge 生命周期仍是后续依赖，不能把 helper 完成当作 merge 已交付。
 
 ## 空目录与目录权限为什么也需要恢复目标
 
@@ -351,3 +351,13 @@ CommitSnapshot 工厂已通过子项验收。merge 有一份明确候选 Snapsho
 C++ 练习把 parents 写成 [P2,P1,P2]，结果必须保留这个顺序和重复边，校验去重只减少读对象，不改变序列。每个父自己的 Tree／Blob 先完整校验，却不要求遍历其 parents 闭包；源 raw author 原样保存，committer 来自当前 identity。公开 store_commit_snapshot 的未配置身份、非法 actor 或已知超 frame 预算在 Tree 写入前拒绝，后期不可达对象不等于可变状态部分发布。
 
 再构造父根 Tree 内含空子 Tree：read_snapshot 投影为空，候选 empty Snapshot 的 write_snapshot 却得到另一 Tree ID。业务已有“无变化”判断应比较这些 ID，不能因为两个 map 都空而改变策略。工厂允许 empty Snapshot，不替 create_commit 或未来重放决定 allow-empty；身份错误次序、初始空与 HEAD/ref/log 事务规则仍保持。ordinary create_commit 为保持旧失败顺序，先写候选 Tree／比较 ID，再构造 actor／完整 frame；晚错误可留不可达 Tree，和公开工厂的写 Tree 前预检不能混为一条保证。冻结源码与五组语义已核对，定向验证与只读审查通过，本项不提供 merge 或继续操作。
+
+## 状态备份与当前解决内容不是同一份值
+
+OperationState v1 基础已通过子项验收。假设合并前 note 是 dirty，冲突发布后 work 变成 marker，用户再改成 solved。State 的 before 保存 dirty，after 保存上次发布的 marker；若将来 abort 强制要求当前文件仍等于 marker，就会错误拒绝正常解决过程。未来业务应重新读取实际 solved，由共享 planner 保护本次恢复；新 unknown 子项仍可阻挡，不能借长期操作强删。
+
+元数据范围也要分开：original raw HEAD 与整份 optional raw Index 备份保留精确原字节，受影响 Work 镜像只涉及已记录路径。Index 原先缺失和编码后的合法空 Index 不能共用 null；raw detached HEAD 大写也不能偷偷规范成小写。v1 original/current Head 相同是 Merge／Conflicted 历史不变量，不是在 read／roots 时要求现盘永远相等，current CAS 是后续业务的职责。
+
+C++ 练习给 original_index_blob 画两条边：它自己是 Blob root，payload 内 decode 的每个 stage ID 也是 Blob root。再给删除 State 的短事务画 before 与 after，after 为空也不能让 before 备份先失去根。纯结构 codec 与 typed semantic roots 分开，历史 Commit 的 Tree 展开又留给业务和 GC，避免一个 helper 无意完成整套遍历。
+
+本项只建立状态与 guard。现存损坏／空文件／软链／Directory operation 节点都会阻止 commit／switch／reset／branch mutations；config、查询及解决工具仍允许，但原业务保护不放宽。单 State 合法不意味着 combined 事务预算合法；首版没有 merge、continue／abort 或 Ready／其他 kind；状态与 guard 的实际定向验证已通过，范围见进度页。

@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-Phase 0、Phase 1 与 Phase 2 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/mv/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收；Phase 2 整体验收的两个预设各 147 项全量检查全部通过；Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，业务命令与 Phase 4 尚未交付，继续推进至 Phase 4。
+Phase 0、Phase 1 与 Phase 2 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/mv/reflog`，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收；Phase 2 整体验收的两个预设各 147 项全量检查全部通过；Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，业务命令与 Phase 4 尚未交付，继续推进至 Phase 4。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 164 个单元及 17 个 CLI，共 181 项；CommitSnapshot 工厂本轮两种预设各 22 项通过，未执行全 181 项，Phase 2 全量 147 项是此前独立验收证据 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前注册 171 个单元及 17 个 CLI，共 188 项；OperationState 本轮两种预设各 31 项通过，未执行全 188 项，Phase 2 全量 147 项是此前独立验收证据 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
 | 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
 | Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
@@ -38,6 +38,7 @@ Phase 0、Phase 1 与 Phase 2 已验收，版本为 `0.1.0`。当前 CLI 完成 
 | Phase 3 子项：single-lowest merge base | 已验收 | 两种预设各 14 项定向检查及各 500 组独立 DAG 性质验证通过，无新 CLI |
 | Phase 3 共享依赖：显式 Directory target | 已验收 | 空目录／完整权限及权限变化 inventory，两种预设各 28 项定向回归通过，无新 CLI |
 | Phase 3 共享依赖：CommitSnapshot 工厂 | 已验收 | 两种预设各 22 项定向回归与只读审查通过，只存不可变对象，无新 CLI |
+| Phase 3 共享依赖：OperationState v1 基础 | 已验收 | 两种预设各 31 项定向检查与完整审查通过，Merge／Conflicted codec、roots 与 guard，无合并 CLI |
 | Phase 3 其余与 Phase 4 | 计划 | merge、cherry-pick、revert、stash、rebase 与 gc 尚未交付 |
 
 已执行的 Debug 验证：
@@ -337,7 +338,7 @@ EOF 去 LF 与另一侧追加普通行或空行须合为冲突，不得粘连或
 
 临时独立验证器在每种预设各核对 500 组固定种子 DAG pairs，双方参数顺序都检查。它使用 Floyd–Warshall 数值闭包计算共同祖先与 lowest 集合，独立于生产两轮传播；实际覆盖 253 组无共同祖先、216 组唯一基线及 31 组多基线，全部通过。验证器保持本地，不新增生产接口、CLI 或大预算 fixture。
 
-该轮的下一依赖为下节已验收的完整 Directory WorktreeTargets；caller-lock CommitSnapshot 工厂也已通过下节子项验收，现在继续持久 Operation codec／roots 与业务 guard。SnapshotMerge 与基线 helper 不替代业务保护、冲突解决、continue／abort 或 gc roots，Phase 3／4 仍未完成。
+该轮的下一依赖为下节已验收的完整 Directory WorktreeTargets；caller-lock CommitSnapshot 工厂也已通过下节子项验收，持久 Operation codec／roots 与业务 guard 也已通过下节验收，下一项是 Merge 生命周期。SnapshotMerge 与基线 helper 不替代业务保护、冲突解决、continue／abort 或 gc roots，Phase 3／4 仍未完成。
 
 ### 显式 Directory WorktreeTarget：已验收
 
@@ -351,7 +352,7 @@ Directory 权限变化需完整 keep／delete inventory，保护未知文件、�
 
 修正后 `ctest --preset debug -R '^unit\.(WorktreeUpdate|Transaction)|^(switch_cli|restore_cli|reset_cli|remove_cli|move_cli|recovery_cli)$' --output-on-failure` 与 sanitized 对应命令各 28 项全部通过，分别用时 71.27／161.26 秒：13 个 WorktreeUpdate、8 个 Transaction、1 个事务文件工具用例及 6 个关联 CLI。两种预设最终构建无警告，无 ASan／UBSan 报告；本轮未执行全 176 项。既有大预算 fixture 在 sanitized 用时 50.27 秒，保持全部实际限值，没有缩减 fixture 或跳过检查。因修改了事务目录发布方式，本轮复用重跑既有事务完整 hook／恢复矩阵，没有复制矩阵实现。显式 Directory 共享依赖已通过子项验收，无新增 CLI，Phase 3 整体仍未完成。
 
-该轮的下一依赖为下节已验收的 caller-lock CommitSnapshot 工厂，再接持久 Operation codec；真实 before NodeImage 才能支持未来 abort，当前没有交付该命令或长期操作状态。
+该轮的下一依赖为下节已验收的 caller-lock CommitSnapshot 工厂，再接持久 Operation codec；真实 before NodeImage 才能支持未来 abort，abort 命令仍未交付；持久状态基础已在下节验收。
 
 ### Caller-lock CommitSnapshot 工厂：已验收
 
@@ -359,11 +360,25 @@ Directory 权限变化需完整 keep／delete inventory，保护未知文件、�
 
 公开 store_commit_snapshot 的 100000 parent 与完整 Commit／ObjectStore frame 的 64 MiB 预算、非法 author／message、全部父与候选对象前检在 Tree 写入前完成。create_commit 保持消息锁前拒绝、identity 优先、Index 来源、HEAD parent、初始空／allow-empty 与 Tree ID 空提交策略；空子 Tree 的文件投影不是 Tree 身份，不能用 Snapshot equality 替代。工厂允许 empty Snapshot，业务政策不移入存储。
 
-实际公开 API 借用 const Snapshot&／const vector<ObjectId>&／string_view／optional<string_view>。私有链 validate_message → pending → validate_parent_count → required_identity／prepare_commit 的 frame＋codec → 每个 distinct parent 完整自快照 → write_snapshot → store_final_commit 已核对。ordinary create_commit 保持 identity→HEAD／Index→候选 writeTree／Tree ID empty→prepare／storeFinal→MoveHead／Txn，晚 actor／frame 错误可遗留不可达 Tree，不能把 public factory 的前检保证泛化到原业务。新增五组 tests 已冻结，涵盖明确输入、有序重复与无父 DAG 遍历、作者、全部父／候选前检、parent／frame／pending、原 empty-subtree／错误次序，并已通过验证；上一 Directory 的 176 是历史验收规模，本项实际注册与执行范围见下段。后期错误可留下不可达 Tree／Commit，绝无可变发布。本项无新 CLI／实验，也不引入 LongOperation、Factory 类或 merge 业务；下一依赖为 Operation codec／roots、业务 guard 与生命周期。
+实际公开 API 借用 const Snapshot&／const vector<ObjectId>&／string_view／optional<string_view>。私有链 validate_message → pending → validate_parent_count → required_identity／prepare_commit 的 frame＋codec → 每个 distinct parent 完整自快照 → write_snapshot → store_final_commit 已核对。ordinary create_commit 保持 identity→HEAD／Index→候选 writeTree／Tree ID empty→prepare／storeFinal→MoveHead／Txn，晚 actor／frame 错误可遗留不可达 Tree，不能把 public factory 的前检保证泛化到原业务。新增五组 tests 已冻结，涵盖明确输入、有序重复与无父 DAG 遍历、作者、全部父／候选前检、parent／frame／pending、原 empty-subtree／错误次序，并已通过验证；上一 Directory 的 176 是历史验收规模，本项实际注册与执行范围见下段。后期错误可留下不可达 Tree／Commit，绝无可变发布。本项无新 CLI／实验，也不引入 LongOperation、Factory 类或 merge 业务；Operation codec／roots 与业务 guard 的验收见下节，下一依赖为 Merge 生命周期。
 
-新增 5 个 CommitSnapshot 单元、无新 CLI；CTest 实际注册 164 单元、17 CLI，共 181 项。测试目标显式 PRIVATE 链接 ZLIB::ZLIB，以支持损坏父对象 fixture 的直接 zlib 调用，核心库依赖可见性保持原样；初次两个预设构建及依赖修正后的两个预设构建均无警告。`ctest --preset debug -R '^unit\.(Commit|Identity|References)|^unit\.Reflog (HEAD|transaction)|^(commits_cli|reflog_cli|recovery_cli)$' --output-on-failure` 与 sanitized 对应命令各 22 项全部通过，分别用时 9.38／14.94 秒，无 ASan／UBSan 报告。范围为 Commit codec 1、新工厂 5、原 Commit 4、Identity 1、References 4、Reflog 4 及关联 CLI 3；本轮未执行全 181 项，只读完整审查通过。
+新增 5 个 CommitSnapshot 单元、无新 CLI；该轮 CTest 实际注册 164 单元、17 CLI，共 181 项。测试目标显式 PRIVATE 链接 ZLIB::ZLIB，以支持损坏父对象 fixture 的直接 zlib 调用，核心库依赖可见性保持原样；初次两个预设构建及依赖修正后的两个预设构建均无警告。`ctest --preset debug -R '^unit\.(Commit|Identity|References)|^unit\.Reflog (HEAD|transaction)|^(commits_cli|reflog_cli|recovery_cli)$' --output-on-failure` 与 sanitized 对应命令各 22 项全部通过，分别用时 9.38／14.94 秒，无 ASan／UBSan 报告。范围为 Commit codec 1、新工厂 5、原 Commit 4、Identity 1、References 4、Reflog 4 及关联 CLI 3；本轮未执行全 181 项，只读完整审查通过。
 
-本项已子项验收，公开 actor／frame 前检与 ordinary 原失败顺序分别经验证。Operation 状态、语义根、业务 guard、continue／abort 和 merge CLI 仍待后续，Phase 3 整体与 Phase 4 尚未完成。
+本项已子项验收，公开 actor／frame 前检与 ordinary 原失败顺序分别经验证。该轮 Operation 状态、语义根与业务 guard 当时仍待后续，后续验收见下节；continue／abort 和 merge CLI 尚未交付，Phase 3 整体与 Phase 4 尚未完成。
+
+### OperationState v1 基础：已验收
+
+首版仅 Merge／Conflicted，original/current logical Head 相同且非 unborn；保存 original raw HEAD、optional whole Index backup Blob、单个 source Commit、message 及 affected Work 的 first-before／latest-after。codec 只验证历史结构、canonical 字段／路径、双方节点拓扑权限、checksum 与 64 MiB／100000 records 预算；不读取现盘 HEAD、Index 或 Work，也不支持 Ready／其他 kinds／todo／position。
+
+state_roots 校验 Head／source typed Commit、Work File Blob、Index backup Blob 内合法 MGIX 与所有 stages 的 typed Blob，不展开历史 Commit 的 Tree／parents。事务 operation before／after 共用 decode／roots 分支取并集，删除也保留 before 根至清理；State 的原 Index backup 与 journal 的 metadata backup 是不同层。单文件编码合法不保证与其他 metadata 合并能通过现有 combined 事务预算。
+
+caller-lock read／guard／roots／plan 不保存新对象；expected State CAS 用唯一编码比较但 before 仍取真实磁盘字节，创建／删除／同值 noop、existing 改成不同 State 拒绝，所有 desired／combined 前检完成才赋回 caller plan。历史 Head 与当前 HEAD 的业务 CAS 分开，后者不放进 codec 或 roots。guard 仅接 commit／switch／reset／branch mutations；config／query／add／rm／restore／mv／tag／hash-object 允许，内部 planner／CommitSnapshot 工厂不加 operation guard，原安全规则不放宽。
+
+实际 operation.hpp／cpp 的 API 已落盘并核对，纯 validate_state／Reader、raw_operation→decode／roots、typed map 去重及 Index stages reserve 前检、expected canonical CAS→next combined budget 链符合上述边界。State 五组、业务 guard 两组单元与完整审查通过，全部源码／构建输入已冻结；此前工厂基线 181 保持历史语境，本项注册与执行范围见下段。无 merge CLI、continue／abort 或新实验；状态基础之后还需实际 Merge 生命周期与原 raw metadata／affected Work 恢复验证，Phase 3／4 目标仍未完成。
+
+新增 5 个 OperationState 单元及 2 个 guard 单元，无新 CLI／实验；CTest 实际注册 171 单元、17 CLI，共 188 项。测试中的两处循环复制警告改为 const auto& 后，两个预设最终构建均无警告。`ctest --preset debug -R '^unit\.(Operation|Commit|Identity)|^unit\.Transaction (validates|preserves)|^unit\.Reflog transactions|^(commits_cli|branches_cli|switch_cli|reset_cli|recovery_cli|staging_cli|restore_cli|remove_cli|move_cli|status_cli)$' --output-on-failure` 与 sanitized 对应命令各 31 项全部通过，分别用时 32.58／51.69 秒，无 ASan／UBSan 报告。范围为 21 单元、10 关联 CLI，本轮未执行全 188 项；冻结后的完整审查通过。
+
+本项仅验收 Merge／Conflicted v1 状态与语义根／CAS 规划／guard，仍无 Ready 或其他 kind。下一独立目的为 Merge 完整 start／continue／abort：业务须校验当前 HEAD、完整源快照和解决后的 Index，并验证精确 raw metadata／affected Work 恢复，不把此基础验收当作 Merge CLI 或 Phase 3 整体验收。
 
 ## Phase 4：历史编辑与对象回收
 
@@ -373,4 +388,4 @@ Directory 权限变化需完整 keep／delete inventory，保护未知文件、�
 
 ## 下一步
 
-Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，Mv 文件与目录迁移已完成子项验收，Phase 2 两个预设各 147 项全量检查已通过、整体验收完成；纯文本三方合并引擎已通过子项验收，Snapshot 合并的模式／存在／D/F 适配器已通过子项验收，完整 DAG 上的 single-lowest merge-base helper 已通过子项验收，显式 Directory 目标规划已通过子项验收，CommitSnapshot 工厂已通过子项验收，下一依赖为 Operation codec／roots、业务 guard 与生命周期，按上述依赖推进 Phase 3 和 Phase 4，最终目标尚未完成。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，Mv 文件与目录迁移已完成子项验收，Phase 2 两个预设各 147 项全量检查已通过、整体验收完成；纯文本三方合并引擎已通过子项验收，Snapshot 合并的模式／存在／D/F 适配器已通过子项验收，完整 DAG 上的 single-lowest merge-base helper 已通过子项验收，显式 Directory 目标规划已通过子项验收，CommitSnapshot 工厂已通过子项验收，OperationState v1 codec／roots 与业务 guard 已通过子项验收，下一项为 Merge 完整 start／continue／abort 生命周期，按上述依赖推进 Phase 3 和 Phase 4，最终目标尚未完成。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。

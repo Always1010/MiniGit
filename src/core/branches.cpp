@@ -1,6 +1,7 @@
 #include "minigit/branches.hpp"
 #include "minigit/dag.hpp"
 #include "minigit/error.hpp"
+#include "minigit/operation.hpp"
 #include "minigit/reflog.hpp"
 #include "minigit/refs.hpp"
 #include "minigit/snapshot.hpp"
@@ -85,6 +86,7 @@ void plan_create_branch(const Repository& repo, TransactionPlan& plan, std::stri
 void create_branch(const Repository& repo, std::string_view name, std::string_view revision, bool force) {
     RepoLock lock(repo.metadata());
     require_no_transaction(repo);
+    require_no_operation(repo);
     (void)branch_ref(name);
     TransactionPlan plan;
     plan_create_branch(repo, plan, name, resolve_commit(repo, revision), force);
@@ -93,6 +95,7 @@ void create_branch(const Repository& repo, std::string_view name, std::string_vi
 void delete_branch(const Repository& repo, std::string_view name, bool force) {
     RepoLock lock(repo.metadata());
     require_no_transaction(repo);
+    require_no_operation(repo);
     const auto ref = branch_ref(name);
     const auto head = read_head(repo);
     if (head.symbolic == ref) throw Error("不能删除当前分支");
