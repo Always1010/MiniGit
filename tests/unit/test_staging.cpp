@@ -52,6 +52,15 @@ TEST_CASE("Worktree file reads retain bytes permissions and matching state witho
     REQUIRE_THROWS_AS(read_worktree_file(repo, "link"), Error);
     REQUIRE_THROWS_AS(read_worktree_file(repo, "../file"), Error);
     REQUIRE_THROWS_AS(read_worktree_file(repo, ".minigit/HEAD"), Error);
+    SECTION("scan bounds visited directories even without file descendants") {
+        std::filesystem::remove(repo.root() / "link");
+        auto nested = repo.root();
+        for (std::size_t depth = 0; depth < 128; ++depth) nested /= "d";
+        detail::ensure_directory(nested);
+        REQUIRE(scan_worktree(repo).size() == 1);
+        std::filesystem::create_directory(nested / "d");
+        REQUIRE_THROWS_AS(scan_worktree(repo), Error);
+    }
     REQUIRE(std::filesystem::is_empty(repo.metadata() / "objects"));
     REQUIRE_FALSE(std::filesystem::exists(repo.metadata() / "index"));
 }

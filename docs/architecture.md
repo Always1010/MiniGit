@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，stash 与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收，apply／pop 与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -83,6 +83,8 @@ Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/
   transaction            MGTR v1，未完成短事务时存在
   transaction-staging/   本次双方节点的内部暂存
   operation              MGOP v1，Merge／CherryPick／Revert 的 Conflicted 状态
+  stashstack             MGST v1，newest-first 活跃 Work Commit 列表
+  refs/stash             活跃栈 top，与 stashstack 配对
   objects/ab/<62位ID>     zlib 松散对象
   refs/heads/<分支>       完整提交 ID 与换行
   refs/tags/<标签>        完整提交 ID 与换行
@@ -563,4 +565,25 @@ flowchart LR
 
 成功即使没有文件变化也创建新提交，不借 Merge 的 up-to-date／FF 快捷分支丢掉一次重放事件。CherryPick 默认来源消息与原 author 字节，Revert 默认 Revert 加完整来源 ID，author 为当前身份；两者 committer 均为当前身份，--message 只在启动覆盖消息。非法来源消息不能默默修补，CherryPick 须提供合法覆盖。当前 HEAD 必须 non-unborn，启动仍要求干净跟踪状态。
 
-本项已将 MGOP v1 kind 闭集扩为 Merge=1／CherryPick=2／Revert=3，保持原 layout、Conflicted、equal Heads 与原 raw bytes CAS，不添加 Ready。已提取 core-private operation_support 共享真实受影响区域捕获与中止，不复制另一套恢复器；continue 不读取未暂存 Work，入口 kind 不匹配即拒绝。full permissions、D/F 同值镜像、未知子项、outsideaffected Work 与 whole Index 恢复范围保留原约束。实际源码和私有调用链已冻结核对，完整只读审查、两预设构建与相关 31 项检查及实验通过，stash／重放序列仍未交付。
+本项已将 MGOP v1 kind 闭集扩为 Merge=1／CherryPick=2／Revert=3，保持原 layout、Conflicted、equal Heads 与原 raw bytes CAS，不添加 Ready。已提取 core-private operation_support 共享真实受影响区域捕获与中止，不复制另一套恢复器；continue 不读取未暂存 Work，入口 kind 不匹配即拒绝。full permissions、D/F 同值镜像、未知子项、outsideaffected Work 与 whole Index 恢复范围保留原约束。实际源码和私有调用链已冻结核对，完整只读审查、两预设构建与相关 31 项检查及实验通过，Stash 恢复／重放序列仍未交付。
+
+
+## Stash 保存：四份内容，两份栈元数据
+
+本批已实现并验收 push／list／show／drop／clear，不接入 apply／pop 的合并生命周期。H 是当前已提交快照；I 是当时 stage0 Index，父为 H；W 是 HEAD∪Index exact tracked 路径的实际工作文件，父有序为 [H,I]；仅 -u 时增加 U，U 为独立 root，W 的第三父指向 U。dirty Index／Work 是 push 的输入，不能沿用 Merge／Replay 的 cleantracked 启动条件；未出生 HEAD、Index 冲突与 unsafe 节点仍拒绝。
+
+```mermaid
+flowchart LR
+    H[HEAD H] --> I[Index Commit / parent H]
+    H --> W[Work Commit / parents H,I,optional U]
+    I --> W
+    U[非忽略 untracked root U / -u] --> W
+    W --> S[MGST newest-first stack / 每个 entry 均为根]
+    S --> T[stack + refs/stash + Index/Work cleanup / 一次短事务]
+```
+
+MGST v1 保存 newest-first Work Commit IDs，允许重复 ID 的独立位置。stack 与 refs/stash top 必须一致；drop／clear 同事务修改两份元数据，不用 reflog 代替仍存活条目。read 保留整份 optional 原 bytes，包含 encoded-empty／missing 和 ref 的大写拼写，planning 用 expected entries＋exact raw stack/ref CAS；相同逻辑 no-op 保留原字节。所有 stack entries 的 typed W/H/I/U 是语义根，不能只保护 top。root 查询不展开 Tree／DAG，也不依赖 live Index／Work；具体 show 再读取所选完整快照。
+
+push 无内容变化返回 NoChanges，不要求身份、不重写原 raw Index；真正保存才使用提交工厂和明确身份。-u 仅捕获 ignore-aware 未跟踪普通文件，ignored 内容不被清除。保存结果只含文件 bytes／100644 或 100755，不归档完整 07777 或 emptyDir；短事务 before 镜像另保存这些真实节点和权限，保障失败与中断恢复。HEAD／分支／日志不动，query 不探测当前 Index／Work。本批源码已冻结核对，两个预设的相关 38 项及实验通过，交叉完整审查通过，不承诺 apply／pop／--index／continue／abort。
+
+scan_worktree 的预算统计 visited 节点，含目录和随后因 ignore 略过的节点，逐节点在 stat 前检查 200000／累计路径 64 MiB／4096 字节／128 components；不能只计最终文件。add 的 walk 仍以 budget=null 调用，原策略未改。保存树另对 File＋隐式 Directory 共 100000 entries 与展开路径／Tree 数据 64 MiB 前检，W∪U 还须 100000 files 且无 D/F。cleanup 同 FileState 无需改写时保留原 full permissions。list／show 允许 active State；push／drop／clear 禁止。栈 roots 不展开 Tree，show 展开所选全部自快照；drop／clear 的旧 top refs/stash 事务预检仍要求 Work Tree 完整。

@@ -14,13 +14,15 @@ single-lowest merge-base helper 已通过子项验收：沿双方完整父图选
 
 共享 planner 的显式 Directory target 已通过子项验收，用于描述空目录与完整目录权限；接口与调用链已核对，两种预设各 28 项定向检查通过，无新 CLI。HEAD 快照不能替代真实 NodeImage，后续长操作中止需要这些镜像，目录扩展本身不提供 abort；状态基础见下文。
 
-caller-lock CommitSnapshot 存储工厂已通过子项验收，接收明确 Snapshot 和有序 parents，只保存不可变 Tree／Commit；不读取 HEAD／Index 或发布引用。create_commit 保持业务入口与原空提交策略，Merge 生命周期现已实现，CherryPick／Revert 的后续验收见下文，stash 与重放序列仍未交付。本项无新 CLI 或实验，接口和调用链已核对，两种预设各 22 项定向检查通过；Operation codec／roots 与业务 guard 也已验收，Merge 的 start／continue／abort 已通过子项验收。
+caller-lock CommitSnapshot 存储工厂已通过子项验收，接收明确 Snapshot 和有序 parents，只保存不可变 Tree／Commit；不读取 HEAD／Index 或发布引用。create_commit 保持业务入口与原空提交策略，Merge 生命周期现已实现，CherryPick／Revert 的后续验收见下文，Stash 恢复与重放序列仍未交付。本项无新 CLI 或实验，接口和调用链已核对，两种预设各 22 项定向检查通过；Operation codec／roots 与业务 guard 也已验收，Merge 的 start／continue／abort 已通过子项验收。
 
 OperationState v1 基础已通过子项验收：该基础验收轮仅支持 Merge／Conflicted，保存原始 HEAD 字节、整份可选 Index 备份及受影响 Work 的真实镜像，接入事务语义根与业务 guard；该基础验收轮无 merge CLI、continue／abort 或其他操作 kind，现由下文 Merge 生命周期使用。接口和冻结源码已核对，两种预设各 31 项定向检查通过，既有解决工具的安全策略不放宽。
 
 完整 Merge 生命周期已通过子项验收，首版以干净跟踪状态启动，覆盖 up-to-date、fast-forward、unborn 与唯一基线三方合并。冲突以原始 stages、呈现 Work 和 OperationState 同事务发布；继续取当前 Index，中止恢复 raw HEAD／整份原 Index 与受影响 Work 的真实 before。两个预设的相关检查、真实实验及完整只读审查通过，不提供 Ready 或其他操作 kind。
 
-CherryPick／Revert 完整生命周期已通过子项验收，接口接收单一来源并提供 start／continue／abort。它们不要求共同祖先或快进关系，但校验完整历史；当前 HEAD 必须已出生且 tracked Index／Work 干净。每次成功保存以原 HEAD 为唯一父的新 Commit，结果为空也保留；CherryPick 保留来源作者，Revert 用当前作者。CLI 消息覆盖仅用启动专用 --message text，拒绝 -m／--mainline（多父来源基线选择未实现）；Merge 的 -m 保持不变。状态与实际恢复复用 Merge 已验收机制，核心与 CLI 已冻结、调用链已核对，两预设相关 31 项、重放与原 Merge 实验及完整审查通过；stash 与 Phase 4 尚未实现。
+CherryPick／Revert 完整生命周期已通过子项验收，接口接收单一来源并提供 start／continue／abort。它们不要求共同祖先或快进关系，但校验完整历史；当前 HEAD 必须已出生且 tracked Index／Work 干净。每次成功保存以原 HEAD 为唯一父的新 Commit，结果为空也保留；CherryPick 保留来源作者，Revert 用当前作者。CLI 消息覆盖仅用启动专用 --message text，拒绝 -m／--mainline（多父来源基线选择未实现）；Merge 的 -m 保持不变。状态与实际恢复复用 Merge 已验收机制，核心与 CLI 已冻结、调用链已核对，两预设相关 31 项、重放与原 Merge 实验及完整审查通过；Stash 恢复与 Phase 4 尚未实现。
+
+Stash 保存子项已通过验收，仅覆盖 push（-u／-m message）、list／show／drop／clear。它分别保存 HEAD、Index、实际 tracked Work 与可选未忽略 untracked，push 清理和栈更新通过一次短事务，HEAD／reflog 不移动。持久快照保存字节与可执行模式，失败回滚另用真实完整权限／目录镜像。apply／pop／--index／continue／abort 尚未实现，不能把本批保存能力当作完整 Stash 或 Phase 3 已交付；实际 API 与源码已冻结核对，两预设相关 38 项、保存实验和交叉完整审查通过。
 
 ## 构建与运行
 
@@ -70,6 +72,9 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `merge [-m message] [--] revision`、`merge --continue`、`merge --abort` | 单源合并、从 Index 继续或恢复真实备份；已验收 |
 | `cherry-pick [--message text] [--] revision`、`cherry-pick --continue`、`cherry-pick --abort` | 应用单来源变化并保留来源作者；已验收 |
 | `revert [--message text] [--] revision`、`revert --continue`、`revert --abort` | 反向应用单来源变化，保存新的单父提交；已验收 |
+| `stash`、`stash push [-u] [-m message]` | 保存独立 Index／Work 与可选 untracked 后清理；已验收 |
+| `stash list`、`stash show [--] [stash@{N}]` | 列表与已保存 H→W+U 差异，不读取当前 Index／Work |
+| `stash drop [--] [stash@{N}]`、`stash clear` | 删除位置或清空活跃栈，不移动 HEAD／日志；已验收 |
 
 对象 ID 必须为完整 64 位十六进制文本，尚不支持缩写。不带 `-w` 的摘要计算可以在仓库外执行；写入和读取需要当前目录或祖先存在有效 `.minigit` 仓库。当前文件读取上限为 64 MiB，软链接和非普通文件被拒绝。
 
@@ -110,6 +115,8 @@ Mv 已通过子项验收，每次接受一个源和一个目的：源为 Index �
 Merge 首版不提供强制覆盖、--no-ff 或多源形式。-m 只用于启动，continue／abort 不接收修订或消息；-- 可传入选项样式修订。正常结果输出说明并返回 0，已发布冲突输出路径并返回 1，业务错误返回 1，参数错误返回 2。冲突展示有 64 MiB 上限，超限省略剩余路径并提示使用 status，Index／State 仍记录完整结果。受影响 Work 备份包含保持 ours 的冲突同值节点及 D/F 区域内必要真实目录权限；abort 不只撤销实际写过的文件。实际覆盖仍保护未知内容；incoming 未跟踪节点若与目标字节及权限相同、无需改写，可保留并跟踪，不表示支持覆盖。[合并实验](examples/experiments/merge.sh) 已在两种构建运行通过，核对原 stages、完整权限／raw metadata 中止和从 Index 继续。精确验证范围见进度页。
 
 CherryPick／Revert 的 [重放实验](examples/experiments/replay.sh) 在两种构建均运行通过。它检验正向变化与反向变化、来源 author／当前 committer、单父与空重放，以及 0640 权限／raw Index／raw HEAD 中止。成功结果返回 0，已发布冲突报告路径并返回 1，业务错误为 1，参数错误为 2；冲突展示沿用有界省略提示，完整 Index／State 不裁剪。
+
+Stash 无参数等于 push，-u 的别名为 --include-untracked；show／drop 默认位置 0，仅接受 stash@{N}，不接受裸数字或对象 ID。list／show 可在 active operation 下查询，push／drop／clear 拒绝 active operation。list 不展开历史 Tree；show 完整校验所选 H/I/W/U，但只展示 H→W+U，独立 I 不在补丁中显示。drop／clear 的事务 refs/stash 预检会展开旧 top Work Tree，损坏时可保守拒绝；不读取当前 Index／Work不能推导为不读历史 Tree。[保存实验](examples/experiments/stash.sh) 在两种预设构建均运行通过。
 
 首次提交前设置显式身份。身份单独保存在 `.minigit/identity`，不改写仓库格式标识：
 

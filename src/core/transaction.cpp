@@ -6,6 +6,7 @@
 #include "minigit/refs.hpp"
 #include "minigit/reflog.hpp"
 #include "minigit/snapshot.hpp"
+#include "minigit/stash_stack.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <fcntl.h>
@@ -49,7 +50,7 @@ void validate_path(std::string_view path) {
 }
 void validate_metadata_path(std::string_view path) {
     validate_path(path);
-    if (path == "index" || path == "HEAD" || path == "refs/stash" || path == "logs/HEAD" || path == "operation") return;
+    if (path == "index" || path == "HEAD" || path == "refs/stash" || path == "logs/HEAD" || path == "operation" || path == "stashstack") return;
     if (path.starts_with("refs/heads/") || path.starts_with("refs/tags/")) { validate_ref_name(path); return; }
     if (path.starts_with("logs/refs/heads/")) { validate_ref_name(path.substr(5)); return; }
     throw Error("事务元数据路径不在白名单中");
@@ -108,6 +109,11 @@ void validate_metadata_bytes(const Repository& repo, const MetadataChange& chang
         if (roots) roots->insert(semantic.begin(), semantic.end());
         return;
     }
+    if (change.path == "stashstack") {
+        const auto semantic = stash_roots(repo, decode_stash_stack(bytes));
+        if (roots) roots->insert(semantic.begin(), semantic.end());
+        return;
+    }
     const ObjectStore store(repo.metadata() / "objects");
     auto keep = [&](const ObjectId& id, ObjectType type) {
         const auto object = store.read(id);
@@ -141,7 +147,36 @@ void validate_metadata_bytes(const Repository& repo, const MetadataChange& chang
         return;
     }
     if (text.size() != 65 || text.back() != '\n') throw Error("事务引用格式非法");
-    keep(ObjectId::from_hex(std::string_view(text).substr(0, 64)), ObjectType::Commit);
+    const auto id = ObjectId::from_hex(std::string_view(text).substr(0, 64));
+    if (change.path == "refs/stash") {
+        const auto semantic = stash_roots(repo, {id});
+        if (roots) roots->insert(semantic.begin(), semantic.end());
+    }
+    keep(id, ObjectType::Commit);
+}
+void validate_stash_pair(const TransactionPlan& plan) {
+    const MetadataChange* stack = nullptr;
+    const MetadataChange* ref = nullptr;
+    for (const auto& change : plan.metadata) {
+        if (change.path == "stashstack") stack = &change;
+        if (change.path == "refs/stash") ref = &change;
+    }
+    if (!stack) return; // Preserve the existing independent ref primitive.
+    if (!ref) throw Error("stashstack 事务必须同时记录 refs/stash");
+    for (const bool after : {false, true}) {
+        const auto& stack_bytes = after ? stack->after : stack->before;
+        const auto& ref_bytes = after ? ref->after : ref->before;
+        const auto entries = stack_bytes ? decode_stash_stack(*stack_bytes) : StashStack{};
+        if (entries.empty()) {
+            if (ref_bytes) throw Error("事务空 stash 栈不能带引用");
+        } else {
+            if (!ref_bytes) throw Error("事务 stash 栈缺少栈顶引用");
+            const auto text = to_string(*ref_bytes);
+            if (text.size() != 65 || text.back() != '\n' ||
+                ObjectId::from_hex(std::string_view(text).substr(0, 64)) != entries.front())
+                throw Error("事务 stash 栈顶与引用不一致");
+        }
+    }
 }
 void validate_plan(const Repository& repo, const TransactionPlan& plan) {
     validate_transaction_budget(plan);
@@ -188,6 +223,7 @@ void validate_plan(const Repository& repo, const TransactionPlan& plan) {
             validate_metadata_bytes(repo, change, **bytes);
         }
     }
+    validate_stash_pair(plan);
     // Metadata file/ancestor conversions need a separate directory schema.
     for (const auto& path : metadata) {
         const auto prefix = path + "/";

@@ -1,4 +1,5 @@
 #include "minigit/worktree.hpp"
+#include "checkout_support.hpp"
 #include "minigit/error.hpp"
 #include "minigit/transaction.hpp"
 #include "minigit/object_store.hpp"
@@ -95,7 +96,7 @@ bool tracked_below(const std::set<std::string>& tracked, const std::string& dire
 }
 template<class Visitor>
 void walk(const Repository& repo, const std::string& directory, const std::vector<IgnoreRule>& rules,
-          const std::set<std::string>& tracked, Visitor& visitor) {
+          const std::set<std::string>& tracked, Visitor& visitor, checkout_support::BoundedPaths* budget = nullptr) {
     std::error_code error;
     std::filesystem::directory_iterator children(repo.root() / directory, error);
     if (error) throw Error("遍历工作区目录失败: " + error.message());
@@ -103,14 +104,15 @@ void walk(const Repository& repo, const std::string& directory, const std::vecto
         const auto name = child.path().filename().string();
         if (name == ".git" || name == ".minigit") continue;
         const auto path = directory.empty() ? name : directory + "/" + name;
-        validate_repo_path(path);
+        if (budget) budget->add(path);
+        else validate_repo_path(path);
         const auto status = child.symlink_status(error);
         if (error) throw Error("检查工作区文件失败: " + error.message());
         if (std::filesystem::is_symlink(status)) throw Error("工作区禁止软链接: " + path);
         const bool is_directory = std::filesystem::is_directory(status);
         if (!is_directory && !std::filesystem::is_regular_file(status)) throw Error("工作区包含不支持的文件类型: " + path);
         if (ignored(path, is_directory, rules) && !tracked.contains(path) && (!is_directory || !tracked_below(tracked, path))) continue;
-        if (is_directory) walk(repo, path, rules, tracked, visitor);
+        if (is_directory) walk(repo, path, rules, tracked, visitor, budget);
         else visitor(path, status);
     }
 }
@@ -164,11 +166,12 @@ Snapshot scan_worktree(const Repository& repo) {
     const auto tracked = tracked_paths(load_index(repo));
     const auto rules = read_ignore(repo);
     Snapshot result;
+    checkout_support::BoundedPaths visited;
     auto visitor = [&](const std::string& path, const std::filesystem::file_status& status) {
         const auto file = read_working_file(repo, path, status);
         result.emplace(path, FileState{file.mode, hash_object(ObjectType::Blob, file.data.bytes)});
     };
-    walk(repo, "", rules, tracked, visitor);
+    walk(repo, "", rules, tracked, visitor, &visited);
     return result;
 }
 void add_paths(const Repository& repo, const std::vector<std::filesystem::path>& input, bool all) {
