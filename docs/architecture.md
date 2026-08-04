@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，其他合并应用与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，stash 与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -82,7 +82,7 @@ Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/
   write.lock             持久锁文件；解锁不删除
   transaction            MGTR v1，未完成短事务时存在
   transaction-staging/   本次双方节点的内部暂存
-  operation              MGOP v1，Merge／Conflicted 核心状态
+  operation              MGOP v1，Merge／CherryPick／Revert 的 Conflicted 状态
   objects/ab/<62位ID>     zlib 松散对象
   refs/heads/<分支>       完整提交 ID 与换行
   refs/tags/<标签>        完整提交 ID 与换行
@@ -542,4 +542,25 @@ continue 读取当前完整 Index，拒绝残留非零 stages，允许未暂存 
 
 State.work 记录受影响区域，不限于实际写入的 plan.work：非零 stages 与 D/F root 的冲突节点即使保持 ours，也捕获真实 before==after；D/F 区域内 root→leaf 的实际目录祖先同样记录，避免中止重建时把 0710 变成默认 0755。未受影响 parent 与未知空目录不纳入授权，codec 的双侧目录后代 0700 约束不放宽；不能形成可恢复镜像时拒绝启动。
 
-abort 不用 HEAD Snapshot 代替备份：整份 raw Index、精确 original raw HEAD 与受影响区域的真实 before NodeImages 恢复。若原 File／Absent 在解决过程中变成目录，为恢复 root 下当前 Index 新跟踪子项补删除目标；unknown 子项仍拒绝。区域外新跟踪文件的 Work 保留，但整份 Index 回退会撤掉其暂存信息。额外 unknown 子项或外部 HEAD／ref 变化阻挡恢复时整笔拒绝，不递归强删。短事务 recover 始终先于长期动作；规划失败可留不可达 immutable Blob，执行中断则可能留 journal，恢复后再继续／中止。首版仅单步 Merge／Conflicted，不交付 Ready 或其他 kind。
+abort 不用 HEAD Snapshot 代替备份：整份 raw Index、精确 original raw HEAD 与受影响区域的真实 before NodeImages 恢复。若原 File／Absent 在解决过程中变成目录，为恢复 root 下当前 Index 新跟踪子项补删除目标；unknown 子项仍拒绝。区域外新跟踪文件的 Work 保留，但整份 Index 回退会撤掉其暂存信息。额外 unknown 子项或外部 HEAD／ref 变化阻挡恢复时整笔拒绝，不递归强删。短事务 recover 始终先于长期动作；规划失败可留不可达 immutable Blob，执行中断则可能留 journal，恢复后再继续／中止。该 Merge 子项仅实现单步 Merge／Conflicted；下节扩展 CherryPick／Revert，仍不交付 Ready。
+
+
+## 单来源重放：同一个三方引擎，不同的基线方向
+
+CherryPick／Revert 已通过完整 start／continue／abort 子项验收。令来源提交为 S，其唯一父或空快照为 P，当前提交为 H：CherryPick 输入 (base=P, ours=H, theirs=S)；Revert 交换 base／theirs，输入 (base=S, ours=H, theirs=P)。这里 P 取自来源的父关系，不是 find_merge_base；完整 source／current DAG 只作完整性校验，允许无共同历史与 root 来源，多父 source 因首版没有 mainline 选择而拒绝。
+
+```mermaid
+flowchart LR
+    S[来源 S 与唯一父 P / root 则空] --> C[CherryPick / P,H,S]
+    S --> R[Revert / S,H,P]
+    C --> M[SnapshotMerge]
+    R --> M
+    M --> N[clean / 单父 H 的新 Commit / 一次事务]
+    M --> X[conflict / stages + Work + matching State]
+    X --> I[continue / resolved Index / 新 Commit]
+    X --> A[abort / 实际受影响 Work + raw metadata]
+```
+
+成功即使没有文件变化也创建新提交，不借 Merge 的 up-to-date／FF 快捷分支丢掉一次重放事件。CherryPick 默认来源消息与原 author 字节，Revert 默认 Revert 加完整来源 ID，author 为当前身份；两者 committer 均为当前身份，--message 只在启动覆盖消息。非法来源消息不能默默修补，CherryPick 须提供合法覆盖。当前 HEAD 必须 non-unborn，启动仍要求干净跟踪状态。
+
+本项已将 MGOP v1 kind 闭集扩为 Merge=1／CherryPick=2／Revert=3，保持原 layout、Conflicted、equal Heads 与原 raw bytes CAS，不添加 Ready。已提取 core-private operation_support 共享真实受影响区域捕获与中止，不复制另一套恢复器；continue 不读取未暂存 Work，入口 kind 不匹配即拒绝。full permissions、D/F 同值镜像、未知子项、outsideaffected Work 与 whole Index 恢复范围保留原约束。实际源码和私有调用链已冻结核对，完整只读审查、两预设构建与相关 31 项检查及实验通过，stash／重放序列仍未交付。

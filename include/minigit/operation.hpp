@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 namespace minigit {
-enum class OperationKind : std::uint8_t { Merge = 1 };
+enum class OperationKind : std::uint8_t { Merge = 1, CherryPick = 2, Revert = 3 };
 enum class OperationPhase : std::uint8_t { Conflicted = 1 };
 struct OperationState {
     OperationKind kind = OperationKind::Merge;
@@ -22,7 +22,8 @@ struct OperationState {
     std::string message;
     std::vector<WorkChange> work; // Original before and last published after.
 };
-// Pure canonical MGOP v1 codec: Merge/Conflicted only, equal non-unborn Heads.
+// Pure canonical MGOP v1 codec: Merge/CherryPick/Revert, Conflicted only,
+// equal non-unborn Heads. Existing Merge layout and canonical bytes are unchanged.
 // At most 64 MiB encoded, 100000 sorted unique paths, 4096 bytes/128 components
 // per work path. Both image topologies and full permissions follow Transaction.
 Bytes encode_operation(const OperationState& state);

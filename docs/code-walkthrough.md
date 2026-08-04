@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，Merge 生命周期已通过子项验收。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -81,8 +81,9 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 20 | CommitSnapshot 工厂（已验收） | 显式内容存储为何不能从当前 Index 或 HEAD 推断？ |
 | 21 | OperationState v1（已验收） | 状态、语义根与业务 guard 怎样分工？ |
 | 22 | Merge 生命周期（已验收） | start／continue／abort 如何组合已验收的 primitives？ |
+| 23 | CherryPick／Revert（已验收） | 如何由来源父快照决定正向／反向变化？ |
 
-表中二十二项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
+表中二十三项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -331,7 +332,7 @@ plan 首先 require_no_transaction、拒绝已有 operation metadata change，�
 
 检验两个不同的根层：journal 保存 operation metadata payload 的 backup Blob；State 自己另保存 original raw Index backup Blob。后者必须继续解码所有 stages 与 typed Blob，不是只验它为 Blob。original／current 是保存的历史结构，不可和现盘 HEAD 在 codec／roots 中比较；当前 HEAD CAS 留给后续业务。事务 execute／recover／roots 共用 operation before／after 的语义分支，避免只有正常执行支持而恢复不保根。
 
-guard 只在 self-lock commit／switch／reset／branch mutations 加入，内部 store_commit_snapshot 与各 planner 不加；允许解决工具与身份配置仍遵守原规则。首版只有 Merge／Conflicted，read／plan 本身不会捕获新的备份 Blob，当前没有 Ready／todo／position 的万能字段包。实际 encode 链为 validate_state 的增量大小／Head／NodeImage／双侧拓扑预验 → reserve 有界空间 → BE 字段写入 → SHA-256；decode 先总大小与 checksum，再 Reader 消费字段、在 count reserve 前验证上限与最小剩余字节，最后复验 validate_state 并拒绝 trailing bytes。roots 用 ObjectId→ObjectType map 去重 typed 校验，Index header 的 300000 stages 前检早于 decode_index 的 reserve，再按完整 Index budget 与所有 stage Blob 取根。
+guard 只在 self-lock commit／switch／reset／branch mutations 加入，内部 store_commit_snapshot 与各 planner 不加；允许解决工具与身份配置仍遵守原规则。该基础验收轮仅 Merge／Conflicted；现已增加 CherryPick／Revert kind，read／plan 本身不会捕获新的备份 Blob，当前没有 Ready／todo／position 的万能字段包。实际 encode 链为 validate_state 的增量大小／Head／NodeImage／双侧拓扑预验 → reserve 有界空间 → BE 字段写入 → SHA-256；decode 先总大小与 checksum，再 Reader 消费字段、在 count reserve 前验证上限与最小剩余字节，最后复验 validate_state 并拒绝 trailing bytes。roots 用 ObjectId→ObjectType map 去重 typed 校验，Index header 的 300000 stages 前检早于 decode_index 的 reserve，再按完整 Index budget 与所有 stage Blob 取根。
 
 read_operation 为 raw_operation → decode_operation → state_roots，刻意不自加短事务 guard、也不 inspect live HEAD／Work，以便 recovery 复用。plan 为原 plan／before 语义 → expected 编码 CAS → desired 编码／roots → same noop 或 v1 replacement 拒绝 → next combined budget → move 赋回。原 metadata 精确字节而不是重编码值进入短事务 CAS。
 
@@ -341,4 +342,19 @@ read_operation 为 raw_operation → decode_operation → state_roots，刻意�
 
 [merge.hpp](../include/minigit/merge.hpp) 已冻结：MergeOptions 指定 Start／Continue／Abort，revision 仅启动且最多 4096 字节，optional message 也仅启动；MergeResult 返回 outcome、Head 与冲突列表。merge_repository 自取一次锁，hook 只用于持久边界测试。已落盘 [merge.cpp](../src/core/merge.cpp)，相关回归、实验及完整只读审查通过。merge_repository 为 validate_options→一次 RepoLock／pending→三个动作分发。start_merge 为 operation guard→raw_metadata／checked_index／resolved_snapshot→source 完整快照／find_merge_base（unborn 用完整 graph＋topo）→clean_work→快捷分支或 SnapshotMerge→final Index schema→changed_targets／Index＋Work planners→check_work_before。clean 存两父 Commit 后 plan_move_head；conflict 的 conflict_work 扩充完整受影响区域，再备份 whole raw Index／raw HEAD 与 plan_operation_update。check_original_metadata 后才执行一次事务，不另从历史生成工作备份。
 
-continue_merge 为 active_merge 的 State／current Head CAS→checked_index／resolved_snapshot→store_commit_snapshot 两父完整自快照→MoveHead＋删除 State→raw Index 复检→一次事务，不读取 Work。abort_merge 从精确备份生成 File／Directory／Absent 目标，保留 full permissions／emptyDir／dirty bytes；require_untouched_parents 保护区域外 parent，再补当前 Index 下必要删除目标，恢复整份可选 Index 与 raw HEAD，并复用 Work planner／State CAS／metadata 复检／一次事务。unknown 后代仍由共享 planner 拒绝。受影响区域还包括非零 stages／D/F root 的同值节点：Binary／Mode／D/F 保持 ours 时也必须备份，D/F root→leaf 的真实目录权限同样记录；外部未受影响 parent 不因此获得授权。原 File／Absent 在解决中变为目录，abort 仅为该恢复 root 下当前 Index 新跟踪子项补删除目标，unknown 子项仍拒绝。0700 后代约束不放宽，无法生成可恢复镜像的启动应拒绝。[test_merge.cpp](../tests/unit/test_merge.cpp) 已落盘八组：unborn／FF／detached／up-to-date，clean 两父，Index 继续，raw metadata／权限中止，同值 Mode／Binary／D/F 区域，dirty／unsafe／历史损坏，State CAS／未知中止子项，以及 Prepared 冲突／Committed 继续恢复。八组单元与 [merge_cli.cmake](../tests/integration/merge_cli.cmake) 的对应检查在两种预设均通过，精确初轮／单项复验范围见进度页；完整只读审查通过，无另一份差异算法或恢复执行器。CLI 支持 --；已发布冲突返回 1，展示预算不足省略剩余路径，完整 Index／State 不裁剪。
+continue_merge 为共享 active_operation(Merge) 的 State／current Head CAS→checked_index／resolved_snapshot→store_commit_snapshot 两父完整自快照→MoveHead＋删除 State→raw Index 复检→一次事务，不读取 Work。abort_merge 现调用共享 plan_abort_operation，从精确备份生成 File／Directory／Absent 目标，保留 full permissions／emptyDir／dirty bytes；require_untouched_parents 保护区域外 parent，再补当前 Index 下必要删除目标，恢复整份可选 Index 与 raw HEAD，并复用 Work planner／State CAS／metadata 复检／一次事务。unknown 后代仍由共享 planner 拒绝。受影响区域还包括非零 stages／D/F root 的同值节点：Binary／Mode／D/F 保持 ours 时也必须备份，D/F root→leaf 的真实目录权限同样记录；外部未受影响 parent 不因此获得授权。原 File／Absent 在解决中变为目录，abort 仅为该恢复 root 下当前 Index 新跟踪子项补删除目标，unknown 子项仍拒绝。0700 后代约束不放宽，无法生成可恢复镜像的启动应拒绝。[test_merge.cpp](../tests/unit/test_merge.cpp) 已落盘八组：unborn／FF／detached／up-to-date，clean 两父，Index 继续，raw metadata／权限中止，同值 Mode／Binary／D/F 区域，dirty／unsafe／历史损坏，State CAS／未知中止子项，以及 Prepared 冲突／Committed 继续恢复。八组单元与 [merge_cli.cmake](../tests/integration/merge_cli.cmake) 的对应检查在两种预设均通过，精确初轮／单项复验范围见进度页；完整只读审查通过，无另一份差异算法或恢复执行器。CLI 支持 --；已发布冲突返回 1，展示预算不足省略剩余路径，完整 Index／State 不裁剪。
+
+
+## Replay：公开两入口，kind 由入口决定
+
+已落盘 [replay.hpp](../include/minigit/replay.hpp)：cherry_pick_repository／revert_repository 各接收 ReplayOptions，字段为 action（Start／Continue／Abort）、启动专用 revision 与 optional message；ReplayResult 为 Applied／Conflicted／Aborted、Head 与冲突列表。两入口 self-lock，hook 只作持久步骤测试，不让调用者另传任意 operation kind。
+
+[replay.cpp](../src/core/replay.cpp) 已冻结：两个公开函数固定 kind 后进入 replay_repository，validate_options→一次锁／pending→Start／Continue／Abort 分发。start_replay 为 operation guard／non-unborn→raw metadata／checked_index／HEAD full Snapshot→source≤1 parent→双方完整 graph＋topo→source 与唯一 parent full Snapshot→默认消息校验→clean_work→正向或反向 SnapshotMerge→final Index budget／encode→Index／Work planners。clean 总调用 factory 单父 [current]，CP original_author 返回 source.author，Revert 返回 nullopt；conflict 保存 kind、真实 conflict_work、whole optional Index／raw HEAD 后创建 State。最后 metadata 复检再 execute 一次，没有空变化 shortcut。
+
+continue_replay 为 active_operation 的 kind／HEAD CAS→typed resolved Index→source Commit 重验≤1 parent→单父 factory→MoveHead＋State 删除→raw Index 复检→一次事务，不重新遍历 source DAG／Tree，也不探测 Work。factory 验证当前父的完整自快照，不能把 continue 与 start 的历史校验范围混写。abort 由 shared plan_abort_operation 构造 fresh plan，调用方统一执行；logical Head noop 不造日志，必要 raw HEAD patch 保留原精确字节。
+
+[operation_support.hpp](../src/core/operation_support.hpp) 与 [operation_support.cpp](../src/core/operation_support.cpp) 仅供 core：借用 caller-held RepoLock，不自加锁或执行事务，公共 capture、same-value noops、D/F Directory 祖先与 require_untouched_parents 的实际恢复约束由 Merge／Replay 两个 caller 共用。业务作者、父数、基线方向仍留在各业务，不新增支持任意 kind 的公开包装器。
+
+[test_replay.cpp](../tests/unit/test_replay.cpp) 八组覆盖跨历史／root CP 与原作者、反向／root Revert、preserve-empty、kind-aware Index 继续（含 Work FIFO 不读取）、raw HEAD／whole optional Index／权限／D/F 中止、unsafe／多父／深历史拒绝、CAS／未知中止子项，以及 Prepared／Committed durable 恢复。旧 Operation tests 增加两种 kind 只改现有 byte 与 checksum、拒绝闭集外值；[replay_cli.cmake](../tests/integration/replay_cli.cmake) 用一个注册入口覆盖两命令及 usage／wrong kind。完整只读审查、两个预设的相关 31 项及两个实验回归通过，精确范围见进度页。
+
+CLI 的两命令消息覆盖统一为启动专用 --message text，拒绝 -m／--mainline；共用 parse_history_arguments 的 message_option 选择与 有界 report_conflicts 展示，不改变 Merge 的 -m。CLI 与实验已冻结，两个预设运行验收通过。

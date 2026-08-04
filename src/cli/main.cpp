@@ -21,6 +21,7 @@
 #include "minigit/remove.hpp"
 #include "minigit/move.hpp"
 #include "minigit/merge.hpp"
+#include "minigit/replay.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -41,6 +42,55 @@ std::size_t parse_count(std::string_view value, std::string_view description) {
     if (value.empty() || parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
         throw UsageError(std::string(description) + " must be a nonnegative integer");
     return count;
+}
+
+enum class HistoryAction { Start, Continue, Abort };
+struct HistoryArguments {
+    HistoryAction action = HistoryAction::Start;
+    std::string revision;
+    std::optional<std::string> message;
+};
+HistoryArguments parse_history_arguments(const std::vector<std::string_view>& args, std::string_view message_option) {
+    HistoryArguments parsed;
+    bool options = true, action_set = false, revision_set = false;
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        if (options && args[i] == "--") { options = false; continue; }
+        if (options && (args[i] == "--continue" || args[i] == "--abort")) {
+            if (action_set) throw UsageError("history action may be specified once");
+            action_set = true;
+            parsed.action = args[i] == "--continue" ? HistoryAction::Continue : HistoryAction::Abort;
+            continue;
+        }
+        if (options && args[i] == message_option) {
+            if (parsed.message || i + 1 == args.size()) throw UsageError("message option requires one message");
+            parsed.message = args[++i];
+            continue;
+        }
+        if ((options && args[i].starts_with('-')) || revision_set)
+            throw UsageError("history operation accepts one revision");
+        revision_set = true;
+        parsed.revision = args[i];
+    }
+    if ((!action_set && (!revision_set || parsed.revision.empty())) ||
+        (action_set && (revision_set || parsed.message)))
+        throw UsageError("history operation requires a revision, or --continue/--abort without other arguments");
+    return parsed;
+}
+int report_conflicts(std::string_view label, std::string_view command,
+                     const std::vector<minigit::MergeConflict>& conflicts) {
+    std::string output = std::string(label) + " paused; resolve conflicts, add paths, then use " +
+        std::string(command) + " --continue or " + std::string(command) + " --abort.\n";
+    constexpr std::string_view omitted = "Additional conflict paths omitted; use status to inspect them.\n";
+    for (const auto& conflict : conflicts) {
+        const auto line = "CONFLICT " + minigit::quote_path(conflict.path) + "\n";
+        if (line.size() > minigit::max_file_size - output.size() - omitted.size()) {
+            output += omitted;
+            break;
+        }
+        output += line;
+    }
+    std::cout << output;
+    return 1;
 }
 
 int run(const std::vector<std::string_view>& args) {
@@ -69,6 +119,8 @@ int run(const std::vector<std::string_view>& args) {
                      "  rm [-r] [-f] [--cached] [--] <paths...>  Remove tracked paths\n"
                      "  mv [--] <source> <destination>  Move a tracked file or directory\n"
                      "  merge [-m message] <revision> | merge --continue|--abort\n"
+                     "  cherry-pick [--message text] <revision> | cherry-pick --continue|--abort\n"
+                     "  revert [--message text] <revision> | revert --continue|--abort\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -458,51 +510,42 @@ int run(const std::vector<std::string_view>& args) {
         return 0;
     }
     if (command == "merge") {
+        const auto parsed = parse_history_arguments(args, "-m");
         minigit::MergeOptions merge;
-        bool options = true;
-        bool action_set = false;
-        bool revision_set = false;
-        for (std::size_t i = 1; i < args.size(); ++i) {
-            if (options && args[i] == "--") { options = false; continue; }
-            if (options && (args[i] == "--continue" || args[i] == "--abort")) {
-                if (action_set) throw UsageError("merge action may be specified once");
-                action_set = true;
-                merge.action = args[i] == "--continue" ? minigit::MergeAction::Continue : minigit::MergeAction::Abort;
-                continue;
-            }
-            if (options && args[i] == "-m") {
-                if (merge.message || i + 1 == args.size()) throw UsageError("merge -m requires one message");
-                merge.message = args[++i];
-                continue;
-            }
-            if ((options && args[i].starts_with('-')) || revision_set)
-                throw UsageError("merge accepts one revision");
-            revision_set = true;
-            merge.revision = args[i];
+        switch (parsed.action) {
+        case HistoryAction::Start: merge.action = minigit::MergeAction::Start; break;
+        case HistoryAction::Continue: merge.action = minigit::MergeAction::Continue; break;
+        case HistoryAction::Abort: merge.action = minigit::MergeAction::Abort; break;
         }
-        if ((!action_set && (!revision_set || merge.revision.empty())) ||
-            (action_set && (revision_set || merge.message)))
-            throw UsageError("merge requires a revision, or --continue/--abort without other arguments");
+        merge.revision = parsed.revision;
+        merge.message = parsed.message;
         const auto result = minigit::merge_repository(minigit::Repository::discover(), merge);
         switch (result.outcome) {
         case minigit::MergeOutcome::UpToDate: std::cout << "Already up to date.\n"; break;
         case minigit::MergeOutcome::FastForward: std::cout << "Fast-forward " << result.head.id->hex() << '\n'; break;
         case minigit::MergeOutcome::Merged: std::cout << "Merged " << result.head.id->hex() << '\n'; break;
         case minigit::MergeOutcome::Aborted: std::cout << "Merge aborted.\n"; break;
-        case minigit::MergeOutcome::Conflicted: {
-            std::string output = "Merge paused; resolve conflicts, add paths, then use merge --continue or merge --abort.\n";
-            constexpr std::string_view omitted = "Additional conflict paths omitted; use status to inspect them.\n";
-            for (const auto& conflict : result.conflicts) {
-                const auto line = "CONFLICT " + minigit::quote_path(conflict.path) + "\n";
-                if (line.size() > minigit::max_file_size - output.size() - omitted.size()) {
-                    output += omitted;
-                    break;
-                }
-                output += line;
-            }
-            std::cout << output;
-            return 1;
+        case minigit::MergeOutcome::Conflicted: return report_conflicts("Merge", command, result.conflicts);
         }
+        return 0;
+    }
+    if (command == "cherry-pick" || command == "revert") {
+        const auto parsed = parse_history_arguments(args, "--message");
+        minigit::ReplayOptions replay;
+        switch (parsed.action) {
+        case HistoryAction::Start: replay.action = minigit::ReplayAction::Start; break;
+        case HistoryAction::Continue: replay.action = minigit::ReplayAction::Continue; break;
+        case HistoryAction::Abort: replay.action = minigit::ReplayAction::Abort; break;
+        }
+        replay.revision = parsed.revision;
+        replay.message = parsed.message;
+        const auto repo = minigit::Repository::discover();
+        const bool cherry = command == "cherry-pick";
+        const auto result = cherry ? minigit::cherry_pick_repository(repo, replay) : minigit::revert_repository(repo, replay);
+        switch (result.outcome) {
+        case minigit::ReplayOutcome::Applied: std::cout << (cherry ? "Cherry-picked " : "Reverted ") << result.head.id->hex() << '\n'; break;
+        case minigit::ReplayOutcome::Aborted: std::cout << (cherry ? "Cherry-pick aborted.\n" : "Revert aborted.\n"); break;
+        case minigit::ReplayOutcome::Conflicted: return report_conflicts(cherry ? "Cherry-pick" : "Revert", command, result.conflicts);
         }
         return 0;
     }

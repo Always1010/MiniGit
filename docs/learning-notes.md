@@ -368,4 +368,13 @@ C++ 练习给 original_index_blob 画两条边：它自己是 Blob root，payloa
 
 解决冲突后 add 保存 solved，再把 Work 改为 later：continue 应提交 Index 的 solved，保留未暂存 later，不用 marker 字符串推断 stage0 合法性。abort 则恢复操作开始时的实际 before，而不是 Index 的 solved 或 HEAD 的历史文件；整份 raw Index 回到原值，Work 只处理受影响区域。Binary／Mode 冲突保持 ours 时虽然未写文件，也须记录同值镜像；否则用户后来编辑它，中止便无法恢复。D/F 区域的真实目录祖先也须备份 full permissions。
 
-C++ 练习为 abort 画三个范围：原 raw HEAD、whole optional Index、affected Work NodeImages。原空 Directory／full permissions 和 dirty bytes 只能来自真实 before；若解决过程把原 File／Absent 变成目录，中止可删该恢复 root 下当前 Index 新跟踪子项；新 unknown child 仍阻挡整笔恢复，父目录 exact owned 不能递归授权。区域外新增 tracked Work 保留，只撤回它在整份 Index 中的暂存。业务 current Head CAS 与 State 的历史结构校验分别执行，短 journal 先 recover。首版只覆盖单步 Merge／Conflicted，Ready、重放与其他 kind 仍未交付，展示也与存储分开：CONFLICT 路径列表达 64 MiB 时省略并提示 status，完整 Index／State 仍保留。另试 incoming 未跟踪文件恰等于目标字节与权限：它可原样保留并进入 Index；改变字节使它需要覆盖，则 unknown 保护拒绝。相关单元、CLI 与实验已通过，范围见进度页；其他 Phase 3 命令与 Phase 4 尚未实现。
+C++ 练习为 abort 画三个范围：原 raw HEAD、whole optional Index、affected Work NodeImages。原空 Directory／full permissions 和 dirty bytes 只能来自真实 before；若解决过程把原 File／Absent 变成目录，中止可删该恢复 root 下当前 Index 新跟踪子项；新 unknown child 仍阻挡整笔恢复，父目录 exact owned 不能递归授权。区域外新增 tracked Work 保留，只撤回它在整份 Index 中的暂存。业务 current Head CAS 与 State 的历史结构校验分别执行，短 journal 先 recover。该 Merge 验收轮只覆盖单步 Merge／Conflicted，后续 CherryPick／Revert 见下节，Ready 和其他操作仍未交付，展示也与存储分开：CONFLICT 路径列表达 64 MiB 时省略并提示 status，完整 Index／State 仍保留。另试 incoming 未跟踪文件恰等于目标字节与权限：它可原样保留并进入 Index；改变字节使它需要覆盖，则 unknown 保护拒绝。相关单元、CLI 与实验已通过，范围见进度页；stash 与 Phase 4 尚未实现。
+
+
+## 用三个快照理解正向与反向重放
+
+CherryPick／Revert 已通过子项验收。设 P=[a,b,c]、S=[A,b,c]、当前 H=[a,b,C]，CherryPick 的输入 P,H,S 得到 [A,b,C]；若当前已经是 [A,b,C]，Revert 的输入 S,H,P 得到 [a,b,C]，撤掉来源 a→A 并保留当前 c→C。基线不是按两个 tip 求共同祖先，而是来源自己的父快照；root 来源的 P 为空。
+
+给一次空变化画一个仍存在的单父 Commit：它的父是操作开始的当前 HEAD，不是来源 S。再区分作者和提交者：CherryPick 保留来源原作者字段，当前身份生成 committer；Revert 两者为当前身份。来源消息不合法时使用启动 --message 覆盖，继续不重新指定消息。
+
+冲突后 stage0 Index 决定继续保存内容，未暂存 Work 仍保留；中止恢复受影响真实 before 与整份原 raw Index／HEAD，区域外新增 Work 不随 Index 回退删除。kind 校验使 cherry-pick --continue 不能继续 Revert，反之亦然。未知 D/F 子项保护与权限镜像约束继续有效；真实 CLI／测试已冻结；[重放实验](../examples/experiments/replay.sh) 先正向 pick 再 inverse revert，核对作者与单父、重复 inverse 的空提交，然后冲突中止恢复实际权限和 raw metadata。完整只读审查、两个预设相关检查及重放／原 Merge 实验通过，本项已子项验收，未宣称 Phase 3 整体完成。
