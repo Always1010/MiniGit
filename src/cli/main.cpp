@@ -22,6 +22,7 @@
 #include "minigit/move.hpp"
 #include "minigit/merge.hpp"
 #include "minigit/replay.hpp"
+#include "minigit/stash.hpp"
 
 #include <charconv>
 #include <filesystem>
@@ -93,6 +94,32 @@ int report_conflicts(std::string_view label, std::string_view command,
     return 1;
 }
 
+std::size_t parse_stash_position(std::string_view value) {
+    if (value.size() > 4096 || !value.starts_with("stash@{") || !value.ends_with('}'))
+        throw UsageError("stash entry must be stash@{number}");
+    return parse_count(value.substr(7, value.size() - 8), "stash position");
+}
+void append_stash_line(std::string& output, const minigit::StashListEntry& entry) {
+    const auto prefix = "stash@{" + std::to_string(entry.position) + "} " + entry.work.hex() + " ";
+    bool quoted = false;
+    std::size_t quoted_size = 0;
+    for (const unsigned char c : entry.message) {
+        const bool special = c <= ' ' || c == 127 || c == '"' || c == '\\';
+        quoted = quoted || special;
+        const std::size_t width = c == '\n' || c == '\t' || c == '\r' || c == '"' || c == '\\' ? 2 :
+            c < 32 || c == 127 ? 4 : 1;
+        if (width > minigit::max_file_size - quoted_size) throw minigit::Error("stash list output exceeds 64 MiB");
+        quoted_size += width;
+    }
+    const auto remaining = minigit::max_file_size - output.size();
+    const auto framing = prefix.size() + 1 + (quoted ? 2 : 0);
+    if (framing > remaining || quoted_size > remaining - framing)
+        throw minigit::Error("stash list output exceeds 64 MiB");
+    output += prefix;
+    output += minigit::quote_path(entry.message);
+    output += '\n';
+}
+
 int run(const std::vector<std::string_view>& args) {
     if (args.empty()) throw UsageError("invalid arguments; use --help");
     const auto command = args.front();
@@ -121,6 +148,8 @@ int run(const std::vector<std::string_view>& args) {
                      "  merge [-m message] <revision> | merge --continue|--abort\n"
                      "  cherry-pick [--message text] <revision> | cherry-pick --continue|--abort\n"
                      "  revert [--message text] <revision> | revert --continue|--abort\n"
+                     "  stash [push [-u] [-m message]] | stash list|show|drop|clear\n"
+                     "  stash show|drop [stash@{number}]  Inspect or remove an entry\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -528,6 +557,51 @@ int run(const std::vector<std::string_view>& args) {
         case minigit::MergeOutcome::Conflicted: return report_conflicts("Merge", command, result.conflicts);
         }
         return 0;
+    }
+    if (command == "stash") {
+        const auto action = args.size() == 1 ? std::string_view("push") : args[1];
+        if (action == "push") {
+            minigit::StashPushOptions options;
+            bool untracked_set = false;
+            for (std::size_t i = 2; i < args.size(); ++i) {
+                if (args[i] == "-u" || args[i] == "--include-untracked") {
+                    if (untracked_set) throw UsageError("stash untracked option may be specified once");
+                    untracked_set = true;
+                    options.include_untracked = true;
+                } else if (args[i] == "-m") {
+                    if (options.message || i + 1 == args.size()) throw UsageError("stash -m requires one message");
+                    options.message = args[++i];
+                } else if (args[i] == "--" && i + 1 == args.size()) {
+                    break;
+                } else throw UsageError("stash push accepts only -u and -m message");
+            }
+            const auto id = minigit::stash_push(minigit::Repository::discover(), options);
+            if (id) std::cout << "Saved stash " << id->hex() << '\n';
+            else std::cout << "No local changes to save.\n";
+            return 0;
+        }
+        if (action == "list" || action == "clear") {
+            if (args.size() != 2) throw UsageError("stash list/clear accepts no arguments");
+            const auto repo = minigit::Repository::discover();
+            if (action == "clear") minigit::stash_clear(repo);
+            else {
+                std::string output;
+                for (const auto& entry : minigit::stash_list(repo)) append_stash_line(output, entry);
+                std::cout << output;
+            }
+            return 0;
+        }
+        if (action == "show" || action == "drop") {
+            std::size_t i = 2;
+            if (i < args.size() && args[i] == "--") ++i;
+            if (args.size() > i + 1) throw UsageError("stash show/drop accepts one entry");
+            const auto position = i == args.size() ? 0 : parse_stash_position(args[i]);
+            const auto repo = minigit::Repository::discover();
+            if (action == "drop") minigit::stash_drop(repo, position);
+            else std::cout << minigit::stash_show(repo, position);
+            return 0;
+        }
+        throw UsageError("unknown stash action");
     }
     if (command == "cherry-pick" || command == "revert") {
         const auto parsed = parse_history_arguments(args, "--message");

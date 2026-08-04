@@ -28,6 +28,8 @@ add_library(minigit_core
     src/core/merge.cpp
     src/core/operation_support.cpp
     src/core/replay.cpp
+    src/core/stash_stack.cpp
+    src/core/stash.cpp
     src/core/reflog.cpp
     src/core/branches.cpp
     src/core/switch.cpp
@@ -73,6 +75,8 @@ if(BUILD_TESTING)
         tests/unit/test_operation_guards.cpp
         tests/unit/test_merge.cpp
         tests/unit/test_replay.cpp
+        tests/unit/test_stash_stack.cpp
+        tests/unit/test_stash.cpp
         tests/unit/test_reflog.cpp
         tests/unit/test_branches.cpp
         tests/unit/test_switch.cpp
@@ -136,4 +140,6 @@ if(BUILD_TESTING)
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/merge_cli.cmake)
     add_test(NAME replay_cli COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/replay_cli.cmake)
+    add_test(NAME stash_cli COMMAND ${CMAKE_COMMAND}
+        -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/stash_cli.cmake)
 endif()

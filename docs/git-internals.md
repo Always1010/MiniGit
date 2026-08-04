@@ -229,3 +229,10 @@ Merge 生命周期已通过子项验收。fast-forward 只移动现有历史 tip
 成功提交只有父 H，并始终保存一次新历史节点，包括空结果。CherryPick 保留 S 的 author，默认 S 的消息；Revert 由当前 actor 作 author，默认消息标出完整 S ID，committer 都由当前身份生成。冲突 stages 1／2／3 对应本次实际 base／ours／theirs，Revert 的 stage1 是 S、stage3 是 P；它们不是固定等于某个分支名。消息覆盖仅启动使用，继续读取已保存消息。实际 API 与状态闭集扩展已冻结并通过完整只读审查，相关单元、CLI 与实验在两种预设均通过，完整范围见进度页。
 
 [Git 官方 cherry-pick 文档](https://git-scm.com/docs/git-cherry-pick)与 [Git 官方 revert 文档](https://git-scm.com/docs/git-revert)中的 -m／--mainline 是选择多父来源的父序号，决定相对哪份父快照重放。MiniGit 本版不提供该功能，明确拒绝这两个选项；启动专用 --message text 是 MiniGit 的消息覆盖选项，不能把它误读为 mainline。Merge 继续使用自己的 -m 消息选项。
+
+
+## Stash 的 Index 与 Work 必须分别保存
+
+[Git 官方 stash 文档](https://git-scm.com/docs/git-stash)用 H、I、W 的父关系解释保存：W 的第一父为当时 HEAD，第二父记录当时 Index，I 自身以 H 为父；同页的 apply／pop --index 会尝试恢复 Index 与 Work 两层修改。MiniGit 已通过保存／查询子项验收，采用明确 H/I/W 和可选 U root 关系，却尚未交付 apply／pop／--index，不能由模型相似推断恢复能力已存在。
+
+MiniGit 的活跃列表使用单独 MGST 校验栈，不依赖 refs/stash 的 reflog；newest-first 的每项都要保留根，refs/stash 只指 top。push 保存 H=A、I=B、W=C，不能因两个层次同一路径就用一个 Snapshot 替代。-u 的 U 仅包含未忽略的未跟踪文件，持久 Trees 保存 bytes 与执行位；实际完整权限与空目录属于短事务回滚镜像，不是 Stash 的完整归档格式。show 完整验证 I，却只展示 H→W+U，不把暂存内容与实际 Work 混成一个版本；list 仅看 typed Commit 消息，drop／clear 仍受旧 top Work Tree 的事务预检。保存子项及下一批恢复生命周期分别验收，当前源码已冻结，两个预设的相关检查、保存实验及交叉完整审查通过。

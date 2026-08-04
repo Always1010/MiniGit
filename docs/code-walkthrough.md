@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -82,8 +82,9 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 21 | OperationState v1（已验收） | 状态、语义根与业务 guard 怎样分工？ |
 | 22 | Merge 生命周期（已验收） | start／continue／abort 如何组合已验收的 primitives？ |
 | 23 | CherryPick／Revert（已验收） | 如何由来源父快照决定正向／反向变化？ |
+| 24 | Stash 保存（已验收） | H/I/W/U 与活跃栈、回滚镜像怎样分开？ |
 
-表中二十三项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
+表中二十四项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -358,3 +359,20 @@ continue_replay 为 active_operation 的 kind／HEAD CAS→typed resolved Index�
 [test_replay.cpp](../tests/unit/test_replay.cpp) 八组覆盖跨历史／root CP 与原作者、反向／root Revert、preserve-empty、kind-aware Index 继续（含 Work FIFO 不读取）、raw HEAD／whole optional Index／权限／D/F 中止、unsafe／多父／深历史拒绝、CAS／未知中止子项，以及 Prepared／Committed durable 恢复。旧 Operation tests 增加两种 kind 只改现有 byte 与 checksum、拒绝闭集外值；[replay_cli.cmake](../tests/integration/replay_cli.cmake) 用一个注册入口覆盖两命令及 usage／wrong kind。完整只读审查、两个预设的相关 31 项及两个实验回归通过，精确范围见进度页。
 
 CLI 的两命令消息覆盖统一为启动专用 --message text，拒绝 -m／--mainline；共用 parse_history_arguments 的 message_option 选择与 有界 report_conflicts 展示，不改变 Merge 的 -m。CLI 与实验已冻结，两个预设运行验收通过。
+
+
+## StashStack：条目内容和列表 CAS 分开
+
+已落盘 [stash_stack.hpp](../include/minigit/stash_stack.hpp)：StashStack 是 newest-first vector<ObjectId>，StashStackState 同时保存 entries 和 optional raw_stack／raw_ref；StashEntry 给出 work／head／index／optional untracked。encode／decode 为纯 MGST v1，BE version/count、固定 32-byte ID、SHA256，最多 100000 entries／64 MiB，编码恰为 44+32×count，合法 encoded-empty 与 metadata 缺失都表示空列表。
+
+caller-lock read_stash_entry 只验证 W parents=[H,I,(U)]、I parents=[H]、U root 和 typed Commit schema；stash_roots 校验每个条目，缓存读取并限制合计 decoded payload 64 MiB，不展开 Tree／父 DAG，不读当前 Index／Work。read_stash_stack 再检查 top 与 refs/stash 一致，并保留 exact raw bytes。plan_stash_stack_update 在 expected entries 与两份 raw CAS、desired 全部 roots 及 combined 预算成功后赋回计划，不写对象或执行事务；desired-empty 删除两份 metadata，相同逻辑 no-op 保留原 bytes。
+
+[stash.hpp](../include/minigit/stash.hpp) 与 [stash.cpp](../src/core/stash.cpp) 已冻结：StashPushOptions 为 include_untracked／optional message，stash_push 返回 optional Work ID，nullopt 为 NoChanges；list 返回 position／work／message，show 接受 position 与默认 context=3，drop／clear 支持测试 hook。业务一次锁／pending，mutators 再 operation guard；query 不加 operation guard。
+
+push 实际链为 stack／HEAD／raw Index→typed resolved Index／HEAD Snapshot→snapshot_index(H) 与 validate_saved_tree(I)→H∪I exact tracked capture_saved_file→可选 scan_worktree 减 tracked 的 U→combined_work→NoChanges 的 metadata／stack CAS，或 cleanup targets／Index＋Work planner→before 观察比较→store_commit_snapshot 保存 I／可选 U／W→stack CAS→metadata 复检→一次 Txn。三份 factory 共用真实保存消息（默认 WIP 加完整 HEAD ID），不硬编码独立 Index 标签。capture 逐文件保存 bytes 并观察 full permissions；相同 FileState 的 cleanup 不改完整权限。
+
+validate_saved_tree 在写 Tree 前检查 File＋Directory 共 100000 条目与展开数据 64 MiB，combined_work 拒绝 W／U 重复或 D/F。scan_worktree 的 walk 对 visited 节点（含 Directory／ignored 节点）在 stat 前检查 200000、累计路径 64 MiB、4096 字节／128 components；Add 仍用 budget=null，不能把新 scanner 预算说成所有 add 路径的行为。
+
+[stash_stack.cpp](../src/core/stash_stack.cpp) 的 Entries 缓存 typed Commit、entry 校验父角色；read stack raw pair→decode／roots→top 一致，plan 再 exact entries/raw CAS→desired roots→next combined budget。Txn 对 stashstack＋refs/stash 的两侧镜像配对从 journal bytes 校验，不依赖正在半发布的 live pair。list 仅 Commit message；show 完整 H/I/W/U 自快照校验、combined W+U 后 diff_snapshots；drop／clear 的 Txn 对旧 refs/stash 仍验证 top Work Tree，不能声称这些更新完全不展开 Tree。
+
+[test_stash.cpp](../tests/unit/test_stash.cpp) 八组涵盖分层保存、增删／missing／binary／D/F、NoChanges、ignore-aware -u、query／middle drop／clear、unknown cleanup、非法保存及完整树预算、Prepared push／Committed drop。[test_stash_stack.cpp](../tests/unit/test_stash_stack.cpp) 八组涵盖 codec、有界认证帧、全部 roots、原 bytes／paired reader、strong CAS/noop、空栈／pending、Txn 两侧 schema、Prepared／Committed 恢复。实际 [stash_cli.cmake](../tests/integration/stash_cli.cmake) 已落盘，交叉完整审查及两个预设的相关 38 项／保存实验通过，范围见进度页；无 apply／pop／--index／continue／abort。
