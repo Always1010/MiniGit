@@ -220,3 +220,12 @@ OperationState v1 基础的独立验收当时未包含 merge／continue／abort 
 Merge 生命周期已通过子项验收。fast-forward 只移动现有历史 tip，up-to-date 无新 Commit；真正分叉的 clean 合并记录有序 [ours, theirs] 两父，即使结果文件恰与一侧相同，历史连接仍有意义。共同基线来自完整父图，unrelated／crisscross 首版明确拒绝。
 
 冲突时 HEAD 保持，Index stages 1／2／3 是原始版本，Work marker 是呈现，State 保存未来继续／中止所需上下文。继续以用户已解决的整份 stage0 Index 为来源，不把未暂存 Work 自动提交。中止范围则不同：整份 Index 恢复原字节，Work 恢复受影响区域，含未改写但发生冲突的 ours 同值节点与 D/F 区域内真实目录权限。原 File／Absent 变为目录时，恢复 root 下当前 Index 新跟踪子项可删除，unknown 不获授权；区域外新跟踪 Work 保留，其暂存信息随整份 Index 恢复而撤销。incoming 未跟踪文件与目标内容／权限相同而无需写入时可保留并加入 Index，实际覆盖仍受 unknown 保护，不能视为完整原生 Git 行为兼容。实际 CLI 与生命周期检查、实验通过，完整只读审查通过；状态基础和业务分别验证，不把此子项当作 Phase 3 整体验收。
+
+
+## CherryPick 是搬变化，Revert 是应用反向变化
+
+两项生命周期已通过子项验收。来源 S 的父快照 P 与 S 的差异是要搬来的变化，CherryPick 将 P→S 应用到当前 H；Revert 以 S 为 base、P 为 theirs，将反向变化应用到 H。因此两项允许跨历史，来源 root 用空 P，多父来源没有唯一 P 且不提供 mainline，明确拒绝；不能套用 merge-base 或 fast-forward 的决策。
+
+成功提交只有父 H，并始终保存一次新历史节点，包括空结果。CherryPick 保留 S 的 author，默认 S 的消息；Revert 由当前 actor 作 author，默认消息标出完整 S ID，committer 都由当前身份生成。冲突 stages 1／2／3 对应本次实际 base／ours／theirs，Revert 的 stage1 是 S、stage3 是 P；它们不是固定等于某个分支名。消息覆盖仅启动使用，继续读取已保存消息。实际 API 与状态闭集扩展已冻结并通过完整只读审查，相关单元、CLI 与实验在两种预设均通过，完整范围见进度页。
+
+[Git 官方 cherry-pick 文档](https://git-scm.com/docs/git-cherry-pick)与 [Git 官方 revert 文档](https://git-scm.com/docs/git-revert)中的 -m／--mainline 是选择多父来源的父序号，决定相对哪份父快照重放。MiniGit 本版不提供该功能，明确拒绝这两个选项；启动专用 --message text 是 MiniGit 的消息覆盖选项，不能把它误读为 mainline。Merge 继续使用自己的 -m 消息选项。

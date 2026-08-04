@@ -99,6 +99,20 @@ TEST_CASE("Operation codec preserves exact HEAD bytes optional Index and actual 
         state.original_index_blob.reset();
         state.work.clear();
     }
+    SECTION("replay kinds change only the existing kind byte and checksum without changing Merge bytes") {
+        const auto merge_bytes = encode_operation(state);
+        REQUIRE(merge_bytes[8] == 1);
+        for (const auto kind : {OperationKind::CherryPick, OperationKind::Revert}) {
+            state.kind = kind;
+            auto expected = merge_bytes;
+            expected[8] = static_cast<std::uint8_t>(kind);
+            operation_checksum(expected);
+            REQUIRE(encode_operation(state) == expected);
+            operation_equal(decode_operation(expected), state);
+        }
+        state.kind = OperationKind::Merge;
+        REQUIRE(encode_operation(state) == merge_bytes);
+    }
     const auto bytes = encode_operation(state);
     REQUIRE(to_string(std::span<const std::uint8_t>(bytes).first(4)) == "MGOP");
     operation_equal(decode_operation(bytes), state);
@@ -124,6 +138,17 @@ TEST_CASE("Operation codec rejects authenticated malformed fields unsafe topolog
         broken.insert(broken.end() - 32, 0);
         operation_checksum(broken);
         REQUIRE_THROWS_AS(decode_operation(broken), Error);
+    }
+    SECTION("kind is a closed set and authenticated unknown values remain invalid") {
+        const auto original = encode_operation(state);
+        for (const auto value : {0U, 4U, 255U}) {
+            state.kind = static_cast<OperationKind>(value);
+            REQUIRE_THROWS_AS(encode_operation(state), Error);
+            auto broken = original;
+            broken[8] = static_cast<std::uint8_t>(value);
+            operation_checksum(broken);
+            REQUIRE_THROWS_AS(decode_operation(broken), Error);
+        }
     }
     SECTION("length and count bounds reject before count-driven allocation") {
         // Minimal detached state: raw HEAD length at 78, message length at 180,

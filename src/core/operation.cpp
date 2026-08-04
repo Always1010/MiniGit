@@ -10,12 +10,15 @@ namespace minigit {
 namespace {
 constexpr std::size_t max_work = 100000;
 constexpr std::size_t max_raw_head = 4102;
+bool known_kind(OperationKind kind) {
+    return kind == OperationKind::Merge || kind == OperationKind::CherryPick || kind == OperationKind::Revert;
+}
 void add_size(std::size_t& size, std::size_t count) {
     if (count > max_file_size - size) throw Error("operation 数据超过 64 MiB 限制");
     size += count;
 }
 void validate_head(const Head& head) {
-    if (!head.id) throw Error("Merge operation HEAD 必须有提交");
+    if (!head.id) throw Error("operation HEAD 必须有提交");
     if (!head.symbolic) return;
     const auto& ref = *head.symbolic;
     if (!ref.starts_with("refs/heads/") || ref.size() > 4091 ||
@@ -39,11 +42,11 @@ void validate_image(const NodeImage& image) {
     }
 }
 std::size_t validate_state(const OperationState& state) {
-    if (state.kind != OperationKind::Merge || state.phase != OperationPhase::Conflicted)
-        throw Error("operation v1 仅支持 Merge/Conflicted");
+    if (!known_kind(state.kind) || state.phase != OperationPhase::Conflicted)
+        throw Error("operation v1 仅支持已知 kind 与 Conflicted");
     validate_head(state.original_head);
     validate_head(state.current_head);
-    if (state.original_head != state.current_head) throw Error("Merge operation 原始和当前 HEAD 必须相同");
+    if (state.original_head != state.current_head) throw Error("operation 原始和当前 HEAD 必须相同");
     if (state.original_head_bytes.size() > max_raw_head) throw Error("operation 原始 HEAD 字节过长");
     const auto raw = to_string(state.original_head_bytes);
     if (state.original_head.symbolic) {
@@ -211,7 +214,7 @@ OperationState decode_operation(std::span<const std::uint8_t> bytes) {
     OperationState state;
     state.kind = static_cast<OperationKind>(reader.byte());
     state.phase = static_cast<OperationPhase>(reader.byte());
-    if (state.kind != OperationKind::Merge || state.phase != OperationPhase::Conflicted) throw Error("operation v1 仅支持 Merge/Conflicted");
+    if (!known_kind(state.kind) || state.phase != OperationPhase::Conflicted) throw Error("operation v1 仅支持已知 kind 与 Conflicted");
     state.original_head = reader.head();
     state.current_head = reader.head();
     const auto head_length = reader.number();

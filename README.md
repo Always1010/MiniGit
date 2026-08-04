@@ -14,11 +14,13 @@ single-lowest merge-base helper 已通过子项验收：沿双方完整父图选
 
 共享 planner 的显式 Directory target 已通过子项验收，用于描述空目录与完整目录权限；接口与调用链已核对，两种预设各 28 项定向检查通过，无新 CLI。HEAD 快照不能替代真实 NodeImage，后续长操作中止需要这些镜像，目录扩展本身不提供 abort；状态基础见下文。
 
-caller-lock CommitSnapshot 存储工厂已通过子项验收，接收明确 Snapshot 和有序 parents，只保存不可变 Tree／Commit；不读取 HEAD／Index 或发布引用。create_commit 保持业务入口与原空提交策略，Merge 生命周期现已实现，重放和其他长期操作仍未交付。本项无新 CLI 或实验，接口和调用链已核对，两种预设各 22 项定向检查通过；Operation codec／roots 与业务 guard 也已验收，Merge 的 start／continue／abort 已通过子项验收。
+caller-lock CommitSnapshot 存储工厂已通过子项验收，接收明确 Snapshot 和有序 parents，只保存不可变 Tree／Commit；不读取 HEAD／Index 或发布引用。create_commit 保持业务入口与原空提交策略，Merge 生命周期现已实现，CherryPick／Revert 的后续验收见下文，stash 与重放序列仍未交付。本项无新 CLI 或实验，接口和调用链已核对，两种预设各 22 项定向检查通过；Operation codec／roots 与业务 guard 也已验收，Merge 的 start／continue／abort 已通过子项验收。
 
-OperationState v1 基础已通过子项验收：首版只支持 Merge／Conflicted，保存原始 HEAD 字节、整份可选 Index 备份及受影响 Work 的真实镜像，接入事务语义根与业务 guard；该基础验收轮无 merge CLI、continue／abort 或其他操作 kind，现由下文 Merge 生命周期使用。接口和冻结源码已核对，两种预设各 31 项定向检查通过，既有解决工具的安全策略不放宽。
+OperationState v1 基础已通过子项验收：该基础验收轮仅支持 Merge／Conflicted，保存原始 HEAD 字节、整份可选 Index 备份及受影响 Work 的真实镜像，接入事务语义根与业务 guard；该基础验收轮无 merge CLI、continue／abort 或其他操作 kind，现由下文 Merge 生命周期使用。接口和冻结源码已核对，两种预设各 31 项定向检查通过，既有解决工具的安全策略不放宽。
 
 完整 Merge 生命周期已通过子项验收，首版以干净跟踪状态启动，覆盖 up-to-date、fast-forward、unborn 与唯一基线三方合并。冲突以原始 stages、呈现 Work 和 OperationState 同事务发布；继续取当前 Index，中止恢复 raw HEAD／整份原 Index 与受影响 Work 的真实 before。两个预设的相关检查、真实实验及完整只读审查通过，不提供 Ready 或其他操作 kind。
+
+CherryPick／Revert 完整生命周期已通过子项验收，接口接收单一来源并提供 start／continue／abort。它们不要求共同祖先或快进关系，但校验完整历史；当前 HEAD 必须已出生且 tracked Index／Work 干净。每次成功保存以原 HEAD 为唯一父的新 Commit，结果为空也保留；CherryPick 保留来源作者，Revert 用当前作者。CLI 消息覆盖仅用启动专用 --message text，拒绝 -m／--mainline（多父来源基线选择未实现）；Merge 的 -m 保持不变。状态与实际恢复复用 Merge 已验收机制，核心与 CLI 已冻结、调用链已核对，两预设相关 31 项、重放与原 Merge 实验及完整审查通过；stash 与 Phase 4 尚未实现。
 
 ## 构建与运行
 
@@ -66,6 +68,8 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `rm [-r] [-f] [--cached] [--] paths...` | 删除 Index 已知路径，默认同时删工作文件；已验收 |
 | `mv [--] source destination` | 同事务迁移 Index 路径与实际工作文件，首版无覆盖选项；已验收 |
 | `merge [-m message] [--] revision`、`merge --continue`、`merge --abort` | 单源合并、从 Index 继续或恢复真实备份；已验收 |
+| `cherry-pick [--message text] [--] revision`、`cherry-pick --continue`、`cherry-pick --abort` | 应用单来源变化并保留来源作者；已验收 |
+| `revert [--message text] [--] revision`、`revert --continue`、`revert --abort` | 反向应用单来源变化，保存新的单父提交；已验收 |
 
 对象 ID 必须为完整 64 位十六进制文本，尚不支持缩写。不带 `-w` 的摘要计算可以在仓库外执行；写入和读取需要当前目录或祖先存在有效 `.minigit` 仓库。当前文件读取上限为 64 MiB，软链接和非普通文件被拒绝。
 
@@ -104,6 +108,8 @@ Mv 已通过子项验收，每次接受一个源和一个目的：源为 Index �
 目的若为已有普通目录，只追加一次源 basename；解析后的目的必须没有实际节点或 Index 占用，同字节文件也拒绝覆盖。目录源必须完整由所选跟踪文件构成，未知／忽略子文件、陌生空目录、软链与特殊节点均阻止迁移。首版不支持 -f、多源或 dry-run，自身／祖先／后代及仓库根迁移拒绝；新父目录为 0755，已有父目录权限保留，不迁移源目录权限。规划拒绝不发布 Work／Index，可遗留不可变备份 Blob；执行中断可能留下 pending journal 与部分更新，需 recover。源删除、目的发布和 Index 映射一起事务执行，[迁移实验](examples/experiments/move.sh) 两种预设均已运行通过。
 
 Merge 首版不提供强制覆盖、--no-ff 或多源形式。-m 只用于启动，continue／abort 不接收修订或消息；-- 可传入选项样式修订。正常结果输出说明并返回 0，已发布冲突输出路径并返回 1，业务错误返回 1，参数错误返回 2。冲突展示有 64 MiB 上限，超限省略剩余路径并提示使用 status，Index／State 仍记录完整结果。受影响 Work 备份包含保持 ours 的冲突同值节点及 D/F 区域内必要真实目录权限；abort 不只撤销实际写过的文件。实际覆盖仍保护未知内容；incoming 未跟踪节点若与目标字节及权限相同、无需改写，可保留并跟踪，不表示支持覆盖。[合并实验](examples/experiments/merge.sh) 已在两种构建运行通过，核对原 stages、完整权限／raw metadata 中止和从 Index 继续。精确验证范围见进度页。
+
+CherryPick／Revert 的 [重放实验](examples/experiments/replay.sh) 在两种构建均运行通过。它检验正向变化与反向变化、来源 author／当前 committer、单父与空重放，以及 0640 权限／raw Index／raw HEAD 中止。成功结果返回 0，已发布冲突报告路径并返回 1，业务错误为 1，参数错误为 2；冲突展示沿用有界省略提示，完整 Index／State 不裁剪。
 
 首次提交前设置显式身份。身份单独保存在 `.minigit/identity`，不改写仓库格式标识：
 
