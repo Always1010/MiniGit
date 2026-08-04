@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收，apply／pop 与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收，MGOP v2 StashApply context 已通过子项验收，apply／pop 与历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -82,7 +82,7 @@ Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/
   write.lock             持久锁文件；解锁不删除
   transaction            MGTR v1，未完成短事务时存在
   transaction-staging/   本次双方节点的内部暂存
-  operation              MGOP v1，Merge／CherryPick／Revert 的 Conflicted 状态
+  operation              MGOP v1 三种历史操作；v2 为 StashApply context（业务未接）
   stashstack             MGST v1，newest-first 活跃 Work Commit 列表
   refs/stash             活跃栈 top，与 stashstack 配对
   objects/ab/<62位ID>     zlib 松散对象
@@ -587,3 +587,14 @@ MGST v1 保存 newest-first Work Commit IDs，允许重复 ID 的独立位置。
 push 无内容变化返回 NoChanges，不要求身份、不重写原 raw Index；真正保存才使用提交工厂和明确身份。-u 仅捕获 ignore-aware 未跟踪普通文件，ignored 内容不被清除。保存结果只含文件 bytes／100644 或 100755，不归档完整 07777 或 emptyDir；短事务 before 镜像另保存这些真实节点和权限，保障失败与中断恢复。HEAD／分支／日志不动，query 不探测当前 Index／Work。本批源码已冻结核对，两个预设的相关 38 项及实验通过，交叉完整审查通过，不承诺 apply／pop／--index／continue／abort。
 
 scan_worktree 的预算统计 visited 节点，含目录和随后因 ignore 略过的节点，逐节点在 stat 前检查 200000／累计路径 64 MiB／4096 字节／128 components；不能只计最终文件。add 的 walk 仍以 budget=null 调用，原策略未改。保存树另对 File＋隐式 Directory 共 100000 entries 与展开路径／Tree 数据 64 MiB 前检，W∪U 还须 100000 files 且无 D/F。cleanup 同 FileState 无需改写时保留原 full permissions。list／show 允许 active State；push／drop／clear 禁止。栈 roots 不展开 Tree，show 展开所选全部自快照；drop／clear 的旧 top refs/stash 事务预检仍要求 Work Tree 完整。
+
+
+## MGOP v2：保存选中栈的历史上下文
+
+本共享基础已实现并验收，仅新 kind=4 StashApply 使用 v2；Merge／CherryPick／Revert 的 kind=1／2／3 仍编码 v1，旧字节与 expected CAS 保持。StashApply 必须有 StashOperation：pop 布尔、u32 position、完整原 MGST 的 stack_blob 和精确 65-byte raw_ref。它只允许 Conflicted 和相等非 unborn Heads，没有 Ready；内部消息固定为 stash:apply 或 stash:pop，与 pop 一致，不是未来 Commit 消息，也不要求身份。
+
+v2 保留 common body，在 Work records 后、checksum 前附 context presence／pop／position／stack ID／raw-ref 长度及字节；仅支持真实 kind 的固定布局，拒绝缺 context、非法 presence、旧 kind 带 context 与未知 kind／version，不给未来 rebase 预留万能字段。64 MiB／100000 Work／4096 bytes／128 components 与双侧权限拓扑预算不放宽。
+
+state_roots 除原 Head／source／Work／raw Index roots，还读取 typed Stack Blob、decode 完整 MGST 并校验全部 entries 的 W/H/I/U schema；position 必须选中 source，saved raw_ref 则必须指向当时 top，非 top 选择不能将二者混成一个 ID。历史语义校验不读取 live stashstack／ref、Index／Work，不展开 Commit Tree／DAG，恢复中短 journal 可复用。read／plan 仍不写对象；existing State 仍只可删除或同值 noop，拒绝 replacement。
+
+未来业务成功时另绑定 live exact Stack/ref，在最终 Txn 中 pin 两份同值 metadata；pop 只有完整成功才删选中位置。保存 context 并不等于完成 restore 合并／continue／abort，也不表示单 State 合法就满足 combined Txn 预算。本项无新 CLI／实验，实际 core／五组 tests 已冻结核对，独立审查与两个预设的相关 45 项回归通过。

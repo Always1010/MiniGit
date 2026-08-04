@@ -387,3 +387,10 @@ Stash 保存子项已通过验收。先提交 A，将 note 改成 B 并 add，�
 C++ 练习给 NoChanges 分支排错误顺序：没有可保存的变化时，不应先要求身份，也不能为合法 missing Index 写一个 empty Index。然后给 stack 中每个 W 画 roots，不能仅看 refs/stash top；同一 ID 出现两次仍是两个列表位置，操作前绑定整份 raw stack／ref CAS。
 
 再比较两种“保存”：stash Trees 只有 bytes 与 executable mode，事务 before NodeImage 还有 full permissions、Directory／Absent，后者用于恢复失败前的现场。不能承诺未来 apply 会恢复所有权限或空目录。当前已验收 push／list／show／drop／clear，apply／pop／--index 与冲突继续／中止是下一批，[保存实验](../examples/experiments/stash.sh) 已落盘，实际检查 A/B/C/U 的 parent 关系、cleanup、NoChanges 原 bytes、中间 drop 保持 top 和 clear／HEAD／日志不动；源码已冻结，两种预设的保存实验、相关 38 项和交叉完整审查通过。
+
+
+## 一份 context Blob 还要展开全部语义根
+
+MGOP v2 StashApply context 已通过子项验收。假设栈为 [W0,W1,W2]，选 position=2：source 必须为 W2，raw_ref 必须解析为 W0。把整份 MGST 保存成普通 Blob 后，不能以为 GC 会自动认识它的 ID 列表；state_roots 必须 decode，再取全部 entries 的 W/H/I/U，包括没有选中的 W0/W1。Tree 与父图闭包仍由业务或未来 GC 展开。
+
+C++ 练习比较 v1 和 v2 字节：旧 kind 不能因为新增 optional 字段就多写一个空标志，否则旧 expected CAS 会改变。只有 StashApply 使用新版固定 context，presence／pop／position 的读取先验证长度和取值；raw ref 的大小写保存为 bytes，解析 ID 仅供语义核对。当前消息是 stash:apply/pop，不是提交来源，因此 context 恢复不应要求 identity。结构 codec、typed roots、live CAS 与最终 pop 删除是四个不同步骤；五组 tests 与 codec 已冻结并核对，两个预设的相关 45 项和独立审查通过；本批尚未新增 apply／pop／continue／abort。
