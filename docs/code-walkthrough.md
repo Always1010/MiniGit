@@ -1,6 +1,6 @@
 # 代码导读
 
-当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收。完成和验证状态见 [进度](progress.md)。
+当前实现包括 Phase 0 构建基础、Phase 1 的初始化、对象库、Index、引用、快照及对应命令，以及 Phase 2 的差异引擎、diff/show 查询与短事务恢复。Reflog 编解码、移动规划及 commit 事务发布已通过子项验收，branch 管理已通过子项验收，共享工作区与 Index 规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收。Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收，MGOP v2 StashApply context 已通过子项验收。完成和验证状态见 [进度](progress.md)。
 
 ## 工程目录
 
@@ -83,8 +83,9 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 22 | Merge 生命周期（已验收） | start／continue／abort 如何组合已验收的 primitives？ |
 | 23 | CherryPick／Revert（已验收） | 如何由来源父快照决定正向／反向变化？ |
 | 24 | Stash 保存（已验收） | H/I/W/U 与活跃栈、回滚镜像怎样分开？ |
+| 25 | StashApply context（已验收） | saved stack 的历史语义与 live CAS 怎样分开？ |
 
-表中二十四项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
+表中二十五项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -376,3 +377,10 @@ validate_saved_tree 在写 Tree 前检查 File＋Directory 共 100000 条目与�
 [stash_stack.cpp](../src/core/stash_stack.cpp) 的 Entries 缓存 typed Commit、entry 校验父角色；read stack raw pair→decode／roots→top 一致，plan 再 exact entries/raw CAS→desired roots→next combined budget。Txn 对 stashstack＋refs/stash 的两侧镜像配对从 journal bytes 校验，不依赖正在半发布的 live pair。list 仅 Commit message；show 完整 H/I/W/U 自快照校验、combined W+U 后 diff_snapshots；drop／clear 的 Txn 对旧 refs/stash 仍验证 top Work Tree，不能声称这些更新完全不展开 Tree。
 
 [test_stash.cpp](../tests/unit/test_stash.cpp) 八组涵盖分层保存、增删／missing／binary／D/F、NoChanges、ignore-aware -u、query／middle drop／clear、unknown cleanup、非法保存及完整树预算、Prepared push／Committed drop。[test_stash_stack.cpp](../tests/unit/test_stash_stack.cpp) 八组涵盖 codec、有界认证帧、全部 roots、原 bytes／paired reader、strong CAS/noop、空栈／pending、Txn 两侧 schema、Prepared／Committed 恢复。实际 [stash_cli.cmake](../tests/integration/stash_cli.cmake) 已落盘，交叉完整审查及两个预设的相关 38 项／保存实验通过，范围见进度页；无 apply／pop／--index／continue／abort。
+
+
+## Operation v2：只增加已经需要的上下文
+
+[operation.hpp](../include/minigit/operation.hpp) 已落盘新增 OperationKind::StashApply=4、StashOperation{pop,position,stack_blob,raw_ref} 与 optional OperationState::stash；原字段和调用 API 保持。旧三种 kind 没 context 仍 encode v1；新 kind mandatory context 才 encode v2，只有 Conflicted／equal Heads，message 是与 pop 一致的内部动作标识。
+
+core 已冻结：validate_state 预验版本-kind-context 映射、固定 action message、position＜100000 与纯 stash_ref_id 的 65-byte 格式；encode 在 common Work 后附 107-byte context，再 checksum。decode 先认证主体，再 Reader 验 version/kind/phase，common Work 后 mandatory presence／pop、position、Stack ID、raw-ref 固定长度，最后拒绝 trailing 并复验。语义链 state_roots 为 typed Stack Blob→decode_stash_stack→position/source、raw-ref/top 校验→全部 stash_roots，无 live metadata 或 Tree／DAG 读取。plan_operation_update 保留 exact raw before CAS、create/delete/noop、reject replacement 与强异常保证。未来业务要把历史 context 验证和最终 live Stack/ref pin 分开，不让 read roots 偷作业务检查；[test_operation_stash.cpp](../tests/unit/test_operation_stash.cpp) 五组已冻结：旧三种 221-byte v1 golden／v2 roundtrip、认证版本字段与资源边界、全部 saved stack／Index roots 且 live 节点损坏不影响、strong expected CAS／noop／replacement 拒绝、Prepared create／Committed delete 的两次幂等恢复。测试允许历史 Trees／祖先缺失以证明 typed-only 根的边界。独立审查与两个预设的相关 45 项回归通过；无新 CLI／实验。

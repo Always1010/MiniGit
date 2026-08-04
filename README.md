@@ -24,6 +24,8 @@ CherryPick／Revert 完整生命周期已通过子项验收，接口接收单一
 
 Stash 保存子项已通过验收，仅覆盖 push（-u／-m message）、list／show／drop／clear。它分别保存 HEAD、Index、实际 tracked Work 与可选未忽略 untracked，push 清理和栈更新通过一次短事务，HEAD／reflog 不移动。持久快照保存字节与可执行模式，失败回滚另用真实完整权限／目录镜像。apply／pop／--index／continue／abort 尚未实现，不能把本批保存能力当作完整 Stash 或 Phase 3 已交付；实际 API 与源码已冻结核对，两预设相关 38 项、保存实验和交叉完整审查通过。
 
+MGOP v2 StashApply context 基础已通过子项验收，保存 pop 意图、选中位置、完整 MGST 备份 Blob 与精确 refs/stash 原字节；旧 Merge／CherryPick／Revert 继续编码 v1，不改已有 bytes／CAS。本项仅支持 Conflicted、original=current，扩展语义根以保护全部栈 entries，不读当前栈或 Work。尚无 apply／pop／--index／continue／abort 业务、无新 CLI 或实验；源码与五组测试已冻结核对，独立审查与两种预设的相关 45 项检查通过。
+
 ## 构建与运行
 
 需要 CMake 3.20 或更高版本、支持 C++20 的编译器、OpenSSL 3、zlib 和 Catch2 v3。CLI 集成检查通过 CMake 脚本注册到 CTest，核心单元测试使用 Catch2。预设负责配置项目，依赖由环境提供，不在构建过程中隐式安装系统软件。

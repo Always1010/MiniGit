@@ -2,6 +2,7 @@
 #include "minigit/error.hpp"
 #include "minigit/index.hpp"
 #include "minigit/object_store.hpp"
+#include "minigit/stash_stack.hpp"
 #include "checkout_support.hpp"
 #include <algorithm>
 #include <map>
@@ -11,7 +12,12 @@ namespace {
 constexpr std::size_t max_work = 100000;
 constexpr std::size_t max_raw_head = 4102;
 bool known_kind(OperationKind kind) {
-    return kind == OperationKind::Merge || kind == OperationKind::CherryPick || kind == OperationKind::Revert;
+    return kind == OperationKind::Merge || kind == OperationKind::CherryPick || kind == OperationKind::Revert ||
+        kind == OperationKind::StashApply;
+}
+ObjectId stash_ref_id(const Bytes& bytes) {
+    if (bytes.size() != 65 || bytes.back() != '\n') throw Error("operation stash 引用格式非法");
+    return ObjectId::from_hex(std::string_view(reinterpret_cast<const char*>(bytes.data()), 64));
 }
 void add_size(std::size_t& size, std::size_t count) {
     if (count > max_file_size - size) throw Error("operation 数据超过 64 MiB 限制");
@@ -43,7 +49,15 @@ void validate_image(const NodeImage& image) {
 }
 std::size_t validate_state(const OperationState& state) {
     if (!known_kind(state.kind) || state.phase != OperationPhase::Conflicted)
-        throw Error("operation v1 仅支持已知 kind 与 Conflicted");
+        throw Error("operation 仅支持已知 kind 与 Conflicted");
+    if ((state.kind == OperationKind::StashApply) != state.stash.has_value())
+        throw Error("operation StashApply 必须具有专属上下文");
+    if (state.stash) {
+        if (state.stash->position >= 100000) throw Error("operation stash 位置超过限制");
+        (void)stash_ref_id(state.stash->raw_ref);
+        if (state.message != (state.stash->pop ? "stash:pop" : "stash:apply"))
+            throw Error("operation stash 消息与操作不一致");
+    }
     validate_head(state.original_head);
     validate_head(state.current_head);
     if (state.original_head != state.current_head) throw Error("operation 原始和当前 HEAD 必须相同");
@@ -69,6 +83,7 @@ std::size_t validate_state(const OperationState& state) {
     add_size(encoded, state.original_head_bytes.size());
     if (state.original_index_blob) add_size(encoded, 32);
     add_size(encoded, message.size());
+    if (state.stash) add_size(encoded, 1 + 1 + 4 + 32 + 4 + 65);
     std::size_t paths = 0;
     std::string_view previous;
     for (const auto& change : state.work) {
@@ -189,7 +204,7 @@ Bytes encode_operation(const OperationState& state) {
     const auto size = validate_state(state);
     auto bytes = to_bytes("MGOP");
     bytes.reserve(size);
-    u32(bytes, 1);
+    u32(bytes, state.kind == OperationKind::StashApply ? 2 : 1);
     bytes.push_back(static_cast<std::uint8_t>(state.kind));
     bytes.push_back(static_cast<std::uint8_t>(state.phase));
     head(bytes, state.original_head);
@@ -201,6 +216,14 @@ Bytes encode_operation(const OperationState& state) {
     text(bytes, state.message);
     u32(bytes, static_cast<std::uint32_t>(state.work.size()));
     for (const auto& change : state.work) { text(bytes, change.path); image(bytes, change.before); image(bytes, change.after); }
+    if (state.stash) {
+        bytes.push_back(1);
+        bytes.push_back(state.stash->pop ? 1 : 0);
+        u32(bytes, state.stash->position);
+        id(bytes, state.stash->stack_blob);
+        u32(bytes, static_cast<std::uint32_t>(state.stash->raw_ref.size()));
+        bytes.insert(bytes.end(), state.stash->raw_ref.begin(), state.stash->raw_ref.end());
+    }
     const auto checksum = sha256(bytes);
     id(bytes, checksum);
     return bytes;
@@ -210,11 +233,16 @@ OperationState decode_operation(std::span<const std::uint8_t> bytes) {
     const auto body = bytes.first(bytes.size() - 32);
     if (sha256(body) != ObjectId::from_bytes(bytes.last(32))) throw Error("operation 校验和不匹配");
     Reader reader(body);
-    if (to_string(reader.take(4)) != "MGOP" || reader.number() != 1) throw Error("未知 operation 格式或版本");
+    if (to_string(reader.take(4)) != "MGOP") throw Error("未知 operation 格式");
+    const auto version = reader.number();
+    if (version != 1 && version != 2) throw Error("未知 operation 版本");
     OperationState state;
     state.kind = static_cast<OperationKind>(reader.byte());
     state.phase = static_cast<OperationPhase>(reader.byte());
-    if (!known_kind(state.kind) || state.phase != OperationPhase::Conflicted) throw Error("operation v1 仅支持已知 kind 与 Conflicted");
+    if (!known_kind(state.kind) || state.phase != OperationPhase::Conflicted ||
+        (version == 1 && state.kind == OperationKind::StashApply) ||
+        (version == 2 && state.kind != OperationKind::StashApply))
+        throw Error("operation 版本、kind 或 phase 不匹配");
     state.original_head = reader.head();
     state.current_head = reader.head();
     const auto head_length = reader.number();
@@ -236,6 +264,17 @@ OperationState decode_operation(std::span<const std::uint8_t> bytes) {
         auto before = reader.image();
         auto after = reader.image();
         state.work.push_back({std::move(path), std::move(before), std::move(after)});
+    }
+    if (version == 2) {
+        if (!reader.presence()) throw Error("operation StashApply 上下文缺失");
+        StashOperation context;
+        context.pop = reader.presence();
+        context.position = reader.number();
+        context.stack_blob = ObjectId::from_bytes(reader.take(32));
+        if (reader.number() != 65) throw Error("operation stash 引用长度非法");
+        const auto raw_ref = reader.take(65);
+        context.raw_ref.assign(raw_ref.begin(), raw_ref.end());
+        state.stash = std::move(context);
     }
     if (reader.remaining()) throw Error("operation 含多余数据");
     (void)validate_state(state);
@@ -274,6 +313,16 @@ std::set<ObjectId> state_roots(const Repository& repo, const OperationState& sta
         checkout_support::validate_index_budget(index);
         for (const auto& entry : index) keep(entry.id, ObjectType::Blob);
     }
+    if (state.stash) {
+        keep(state.stash->stack_blob, ObjectType::Blob);
+        const auto object = store.read(state.stash->stack_blob);
+        const auto entries = decode_stash_stack(object.payload);
+        if (state.stash->position >= entries.size() || entries[state.stash->position] != state.source_commit)
+            throw Error("operation stash 选中位置与来源不一致");
+        if (stash_ref_id(state.stash->raw_ref) != entries.front()) throw Error("operation stash 引用与保存栈顶不一致");
+        const auto stash = stash_roots(repo, entries);
+        roots.insert(stash.begin(), stash.end());
+    }
     return roots;
 }
 std::optional<OperationState> read_operation(const Repository& repo) {
@@ -306,7 +355,7 @@ void plan_operation_update(const Repository& repo, TransactionPlan& plan,
     std::optional<Bytes> after;
     if (desired) { after = encode_operation(*desired); (void)state_roots(repo, *desired); }
     if (before == after) return;
-    if (before && after) throw Error("operation v1 不允许替换已存在状态");
+    if (before && after) throw Error("operation 不允许替换已存在状态");
     auto next = plan;
     next.metadata.push_back({"operation", std::move(before), std::move(after)});
     validate_transaction_budget(next);

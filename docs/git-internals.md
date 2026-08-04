@@ -236,3 +236,10 @@ Merge 生命周期已通过子项验收。fast-forward 只移动现有历史 tip
 [Git 官方 stash 文档](https://git-scm.com/docs/git-stash)用 H、I、W 的父关系解释保存：W 的第一父为当时 HEAD，第二父记录当时 Index，I 自身以 H 为父；同页的 apply／pop --index 会尝试恢复 Index 与 Work 两层修改。MiniGit 已通过保存／查询子项验收，采用明确 H/I/W 和可选 U root 关系，却尚未交付 apply／pop／--index，不能由模型相似推断恢复能力已存在。
 
 MiniGit 的活跃列表使用单独 MGST 校验栈，不依赖 refs/stash 的 reflog；newest-first 的每项都要保留根，refs/stash 只指 top。push 保存 H=A、I=B、W=C，不能因两个层次同一路径就用一个 Snapshot 替代。-u 的 U 仅包含未忽略的未跟踪文件，持久 Trees 保存 bytes 与执行位；实际完整权限与空目录属于短事务回滚镜像，不是 Stash 的完整归档格式。show 完整验证 I，却只展示 H→W+U，不把暂存内容与实际 Work 混成一个版本；list 仅看 typed Commit 消息，drop／clear 仍受旧 top Work Tree 的事务预检。保存子项及下一批恢复生命周期分别验收，当前源码已冻结，两个预设的相关检查、保存实验及交叉完整审查通过。
+
+
+## 栈位置、选中来源和栈顶不是同一个 ID
+
+MGOP v2 StashApply context 基础已通过子项验收。选择 stash@{2} 时，source 是保存栈的第 2 项，refs/stash 却仍是第 0 项；State 必须保存整份 MGST Blob、position 与精确 raw ref，语义校验分别核对这两个关系。只保存 source 或 top 会丢掉恢复期间其他仍活跃 entries 的根。
+
+状态读取验证历史备份而不是现盘 CAS，实际 apply／pop 的最终 publication 才另比较 live stack/ref。内部 stash:apply／stash:pop 消息是动作标识，不生成 Commit；身份不是恢复上下文读取条件。codec 已冻结并核对，Debug 相关回归与独立审查通过，sanitized 对应检查通过。本项不引入恢复命令，pop 完整成功后删除、冲突时保留等业务规则留下一独立目的，不把 v2 codec 的完成当作 Stash 生命周期已交付。
