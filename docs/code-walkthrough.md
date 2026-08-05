@@ -86,7 +86,7 @@ Debug 和 sanitized 的 `cli_basics` 均已通过，验证帮助和别名、版�
 | 25 | StashApply context（已验收） | saved stack 的历史语义与 live CAS 怎样分开？ |
 | 26 | Stash restore（已验收） | 两个 SnapshotMerge 如何组成一份 Index 与实际 Work？ |
 
-表中二十五项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
+表中二十六项已有接口，阅读链接见相关章节；分支管理见新增章节，共享更新规划器见新增章节；switch 已接入，Restore 内容恢复已通过子项验收，Reset 已通过子项验收，Remove 已通过子项验收，Move 已通过子项验收。依赖关系见 [架构](architecture.md)。
 
 ## 从 Index 到提交
 
@@ -398,4 +398,7 @@ core 已冻结：validate_state 预验版本-kind-context 映射、固定 action
 CLI 的 report_stash_restore 有界展示 Work／Index／Both，发布冲突返回 1；完整恢复或中止返回 0，usage 为 2。超出报告预算可省略后续路径并提示 status，真实 Index／State 不省略冲突。apply／pop 支持一个 --index 与一个 stash@{N}，-- 结束选项；stash --continue／--abort 不接受其他参数，无参数 stash 仍是 push。[stash_restore_cli.cmake](../tests/integration/stash_restore_cli.cmake) 与 [stash-restore.sh](../examples/experiments/stash-restore.sh) 已落盘，实验语法检查与两预设实际运行通过，本项已子项验收。
 
 
-[test_stash_restore.cpp](../tests/unit/test_stash_restore.cpp) 八组涵盖独立暂存／实际 Work 与缺失增删、三行并行变化、Work／Index／Both 及 mode／binary 同值中止、D/F 区域／深层目录权限和跨层拒绝、U 占用与已授权 tracked 祖先转换、raw Index no-op／按位置删除重复 entries、pop 与非 pop 的 FIFO Work 继续及 exact context CAS、非法启动与 Prepared apply／Committed pop 恢复。FIFO continue 不读取 Work 的测试，区别于启动必须 clean tracked；保存 I Tree 缺失时默认 apply 也拒绝，证明完整 H/I/W/U 校验。首轮构建的 enum Index 名称与全局 Index 触发 shadow 警告，已仅改为 Staging，ordinal／CLI 标签与业务行为保持；两种预设最终构建无警告，相关 37 项全部通过，无 ASan／UBSan 报告；未执行全 237 注册项。
+[test_stash_restore.cpp](../tests/unit/test_stash_restore.cpp) 八组涵盖独立暂存／实际 Work 与缺失增删、三行并行变化、Work／Index／Both 及 mode／binary 同值中止、D/F 区域／深层目录权限和跨层拒绝、U 占用与已授权 tracked 祖先转换、raw Index no-op／按位置删除重复 entries、pop 与非 pop 的 FIFO Work 继续及 exact context CAS、非法启动与 Prepared apply／Committed pop 恢复。FIFO continue 不读取 Work 的测试，区别于启动必须 clean tracked；保存 I Tree 缺失时默认 apply 也拒绝，证明完整 H/I/W/U 校验。首轮构建的 enum Index 名称与全局 Index 触发 shadow 警告，已仅改为 Staging，ordinal／CLI 标签与业务行为保持；两种预设最终构建无警告，相关 37 项全部通过，无 ASan／UBSan 报告；该 StashRestore 子项轮未执行全 237 注册项，后续阶段全量验收见下段。
+
+
+Phase 3 两预设各 237 项完整回归通过，整体验收已完成。把已交付阅读路线串成 pure text→Snapshot→DAG／来源策略→业务→planner／Operation／Transaction；各层源码链接已在上文给出，统一功能／验证矩阵及下一 Phase 4 依赖见 [阶段总结](progress.md#phase-3-阶段总结已验收)。没有新增源码或通用队列框架可读，不由现有 helper 推断 Rebase／GC 已实现。
