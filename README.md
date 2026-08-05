@@ -12,6 +12,8 @@ Merge 使用唯一最低共同基线；CherryPick／Revert 根据单来源父快
 
 Phase 3 的完整 Merge／CherryPick／Revert／Stash（限定本项目范围）已完成独立整体验收。冻结代码的 Debug 与 sanitized 各 237 项全量检查（216 单元、21 CLI）全部通过，用时 192.25／581.97 秒，无 ASan／UBSan 报告；共享架构、核心学习结果、Git 差异与 Phase 4 依赖集中见 [Phase 3 阶段总结](docs/progress.md#phase-3-阶段总结已验收)。版本仍为 0.1.0，rebase／gc 尚未交付，最终目标未完成。
 
+Phase 4 首个子项 Rebase 状态持久化基础已通过子项验收：明确 Ready／Conflicted、线性 queue／cursor、onto 与原分支镜像，以及受约束的 canonical CAS 更新。状态基础源码与五组测试已冻结核对，两个预设相关 25 项及完整只读审查通过；没有 rebase CLI、实际重放／continue／abort 或 GC。范围见 [状态基础进度](docs/progress.md#rebase-状态基础已验收)，Phase 3 全量验收证据保持历史范围。
+
 ## 构建与运行
 
 需要 CMake 3.20 或更高版本、支持 C++20 的编译器、OpenSSL 3、zlib 和 Catch2 v3。CLI 集成检查通过 CMake 脚本注册到 CTest，核心单元测试使用 Catch2。预设负责配置项目，依赖由环境提供，不在构建过程中隐式安装系统软件。
