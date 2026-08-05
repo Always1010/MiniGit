@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收，MGOP v2 StashApply context 已通过子项验收，完整 Stash 恢复生命周期已通过子项验收，Phase 3 整体验收仍待独立全量检查，历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收，MGOP v2 StashApply context 已通过子项验收，完整 Stash 恢复生命周期已通过子项验收，Phase 3 两预设各 237 项全量检查已通过并完成整体验收，历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
 
 ## 依赖方向
 
@@ -628,3 +628,6 @@ U 不进入三方合并，恢复叶必须实际缺失，已有同内容文件、
 普通 apply、冲突启动以及 abort／continue 的最终计划必须绑定完整原 Stack/ref 两份 exact bytes；栈 planner 的逻辑同值 no-op 本来不生成 metadata，因此业务需显式加入两份同值 pin。pop 只在无冲突或继续完整成功时删除选中位置，不能只删 top 或在冲突发布时提前删。continue 要求 matching StashApply、saved context/live pair 与 HEAD CAS、完整 resolved typed Index，不读取 Work、不创建提交；abort 复用实际区域恢复与未知子项保护，再绑定栈 pair，恢复 whole optional raw Index／raw HEAD。MGOP 仍只有 Conflicted／equal Heads，没有 Ready。
 
 最终 pair pin 仍走 Transaction 的 refs/stash 语义预检，因此即使选择非 top，apply／continue／abort 也要求原 top W 的自 Tree 完整；read_stash_stack／stash_roots 的 typed-only 历史角色检查并不替代这一步。冲突备份沿用共享 conflict_work，包含 Index-only 冲突的同值 Work、D/F 区域与其实际目录祖先，解决后中止不会因“启动时没写这个文件”漏掉真实权限。
+
+
+Phase 3 四组业务及共享依赖已完成整体验收，两预设各 237 项全量检查通过，阶段架构与下一队列／可达标记依赖集中见 [Phase 3 总结](progress.md#phase-3-阶段总结已验收)。当前没有 Rebase 队列或 Ready，也没有已交付 GC。

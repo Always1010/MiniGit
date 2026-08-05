@@ -2,31 +2,15 @@
 
 MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
 
-Phase 0 构建基础、Phase 1 本地快照闭环及 Phase 2 比较、分支与安全更新均已验收，当前版本仍为 `0.1.0`。Phase 1 验收时 Debug 与 sanitized 各 54 项检查全部通过；各阶段真实范围与验证记录见 [进度](docs/progress.md)。
+Phase 0 构建基础、Phase 1 本地快照闭环、Phase 2 比较与安全更新及 Phase 3 合并与应用均已验收，当前版本仍为 `0.1.0`。Phase 1 验收时 Debug 与 sanitized 各 54 项检查全部通过；各阶段真实范围与验证记录见 [进度](docs/progress.md)。
 
-Phase 2 的八个命令 diff／show／branch／switch／restore／reset／rm／mv 已完成整体验收，Debug 与 sanitized 各 147 项全量检查全部通过（130 单元、17 CLI），无 ASan／UBSan 报告。共同的数据模型、事务架构、与原生 Git 的边界及 Phase 3 依赖链集中记录在 [Phase 2 阶段总结](docs/progress.md#phase-2-阶段总结)。版本仍为 0.1.0；Phase 3 合并与重放逐项推进，Phase 4 对象回收仍待实现，最终目标未完成。
+Phase 2 的八个命令 diff／show／branch／switch／restore／reset／rm／mv 已完成整体验收，Debug 与 sanitized 各 147 项全量检查全部通过（130 单元、17 CLI），无 ASan／UBSan 报告。共同的数据模型、事务架构、与原生 Git 的边界及 Phase 3 依赖链集中记录在 [Phase 2 阶段总结](docs/progress.md#phase-2-阶段总结)。版本仍为 0.1.0；Phase 3 合并与应用的后续整体验收见下文，Phase 4 历史编辑与对象回收仍待实现，最终目标未完成。
 
-Phase 3 的纯文本三方合并引擎已通过子项验收，无新 CLI。它以 base／ours／theirs 字节为输入，返回拥有内容的结果和冲突范围；该纯引擎验收轮尚未包含 merge、cherry-pick、revert、stash；Merge 后续接入见下文。语义例子见 [三方文本学习笔记](docs/learning-notes.md#三方文本先比较相对基线的修改)。
+Phase 3 复用纯文本三方合并、Snapshot 的内容／模式／存在与 D/F 合并、完整 DAG 基线选择、显式提交工厂和真实 before 镜像。业务再组合 Index／Work／引用与日志，并以短事务发布；冲突状态支持跨进程继续／中止。各层接口与逐项验证历史集中在进度页，详细调用链见 [代码导读](docs/code-walkthrough.md)。
 
-SnapshotMerge 适配器已通过子项验收，调用者持 RepoLock 后可读取 typed Blob、保存不可变合并／marker Blob，并返回候选 Index 与完整 work 布局；它不发布工作区、Index、HEAD 或日志，也不新增 CLI。文件存在、内容、模式和 D/F 冲突语义见 [快照合并学习笔记](docs/learning-notes.md#快照合并原始版本与呈现内容各有位置)，两种预设各 18 项定向检查及各 1000 组独立性质验证通过；完整范围见进度页。
+Merge 使用唯一最低共同基线；CherryPick／Revert 根据单来源父快照正向／反向重放，成功保留空结果。Stash 独立保存 H/I/W/U，默认恢复 Work，--index 另合并暂存意图；pop 完整成功才删除条目，显式继续／中止不创建提交。首版 clean tracked、跨层 D/F、来源父数、未知节点和真实权限保护等限制见阶段总结，不承诺原生 Git 的全部策略或仓库格式兼容。
 
-single-lowest merge-base helper 已通过子项验收：沿双方完整父图选择唯一最低共同祖先，不展开 Tree、不新增 CLI。零个基线返回缺失，多个基线明确拒绝，避免用提交时间选一个；两种预设各 14 项定向检查及各 500 组独立 DAG 性质验证通过。完整目录目标规划也已验收，CommitSnapshot 工厂也已验收，持久操作基础及 Merge 业务已通过子项验收。
-
-共享 planner 的显式 Directory target 已通过子项验收，用于描述空目录与完整目录权限；接口与调用链已核对，两种预设各 28 项定向检查通过，无新 CLI。HEAD 快照不能替代真实 NodeImage，后续长操作中止需要这些镜像，目录扩展本身不提供 abort；状态基础见下文。
-
-caller-lock CommitSnapshot 存储工厂已通过子项验收，接收明确 Snapshot 和有序 parents，只保存不可变 Tree／Commit；不读取 HEAD／Index 或发布引用。create_commit 保持业务入口与原空提交策略，Merge 生命周期现已实现，CherryPick／Revert 的后续验收见下文，Stash 恢复的后续验收见下文，重放序列仍未交付。本项无新 CLI 或实验，接口和调用链已核对，两种预设各 22 项定向检查通过；Operation codec／roots 与业务 guard 也已验收，Merge 的 start／continue／abort 已通过子项验收。
-
-OperationState v1 基础已通过子项验收：该基础验收轮仅支持 Merge／Conflicted，保存原始 HEAD 字节、整份可选 Index 备份及受影响 Work 的真实镜像，接入事务语义根与业务 guard；该基础验收轮无 merge CLI、continue／abort 或其他操作 kind，现由下文 Merge 生命周期使用。接口和冻结源码已核对，两种预设各 31 项定向检查通过，既有解决工具的安全策略不放宽。
-
-完整 Merge 生命周期已通过子项验收，首版以干净跟踪状态启动，覆盖 up-to-date、fast-forward、unborn 与唯一基线三方合并。冲突以原始 stages、呈现 Work 和 OperationState 同事务发布；继续取当前 Index，中止恢复 raw HEAD／整份原 Index 与受影响 Work 的真实 before。两个预设的相关检查、真实实验及完整只读审查通过，不提供 Ready 或其他操作 kind。
-
-CherryPick／Revert 完整生命周期已通过子项验收，接口接收单一来源并提供 start／continue／abort。它们不要求共同祖先或快进关系，但校验完整历史；当前 HEAD 必须已出生且 tracked Index／Work 干净。每次成功保存以原 HEAD 为唯一父的新 Commit，结果为空也保留；CherryPick 保留来源作者，Revert 用当前作者。CLI 消息覆盖仅用启动专用 --message text，拒绝 -m／--mainline（多父来源基线选择未实现）；Merge 的 -m 保持不变。状态与实际恢复复用 Merge 已验收机制，核心与 CLI 已冻结、调用链已核对，两预设相关 31 项、重放与原 Merge 实验及完整审查通过；该 Replay 验收轮未交付 Stash 恢复，后续验收见下文；Phase 4 尚未实现。
-
-Stash 保存子项已通过验收，仅覆盖 push（-u／-m message）、list／show／drop／clear。它分别保存 HEAD、Index、实际 tracked Work 与可选未忽略 untracked，push 清理和栈更新通过一次短事务，HEAD／reflog 不移动。持久快照保存字节与可执行模式，失败回滚另用真实完整权限／目录镜像。该保存验收轮尚未实现 apply／pop／--index／continue／abort，不能把本批保存能力当作完整 Stash 或 Phase 3 已交付；实际 API 与源码已冻结核对，两预设相关 38 项、保存实验和交叉完整审查通过。
-
-MGOP v2 StashApply context 基础已通过子项验收，保存 pop 意图、选中位置、完整 MGST 备份 Blob 与精确 refs/stash 原字节；旧 Merge／CherryPick／Revert 继续编码 v1，不改已有 bytes／CAS。本项仅支持 Conflicted、original=current，扩展语义根以保护全部栈 entries，不读当前栈或 Work。该基础验收轮没有 apply／pop／--index／continue／abort 业务、没有新 CLI 或实验；源码与五组测试已冻结核对，独立审查与两种预设的相关 45 项检查通过。
-
-完整 Stash 恢复生命周期已通过子项验收，连同此前保存／查询／栈管理，当前 Stash 功能范围已完成。冻结接口提供 apply／pop、独立 --index 合并、stash --continue／--abort；默认 Work 取 merge(H,O,W)，--index 另取 merge(H,O,I) 恢复暂存意图。要求已出生、tracked Index／Work 干净的当前 O，不创建 Commit、不移动 HEAD／日志、不要求身份；pop 冲突保留条目，完整成功才删除所选位置。双层算法与保守 D/F 边界见 [恢复架构](docs/architecture.md#stash-恢复两个合并结果一次发布)，两预设相关 37 项、新恢复实验及原保存实验均通过，最终构建无警告，完整审查通过。Phase 3 整体仍待独立全量验收，Phase 4 尚未交付。
+Phase 3 的完整 Merge／CherryPick／Revert／Stash（限定本项目范围）已完成独立整体验收。冻结代码的 Debug 与 sanitized 各 237 项全量检查（216 单元、21 CLI）全部通过，用时 192.25／581.97 秒，无 ASan／UBSan 报告；共享架构、核心学习结果、Git 差异与 Phase 4 依赖集中见 [Phase 3 阶段总结](docs/progress.md#phase-3-阶段总结已验收)。版本仍为 0.1.0，rebase／gc 尚未交付，最终目标未完成。
 
 ## 构建与运行
 

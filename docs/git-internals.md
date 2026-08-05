@@ -181,7 +181,7 @@ Mv 已通过子项验收。设 Index 的源存 B，工作文件后来被编辑�
 
 ## 三方文本为什么需要基线
 
-[Git 官方 git-merge-file 文档](https://git-scm.com/docs/git-merge-file)用共同 base 与两份修改解释三方合并，并在同一区域存在不兼容修改时呈现冲突。MiniGit 的纯文本算法已通过子项验收，不复刻该命令的全部策略、标签与选项；仓库 merge、基线历史选择和冲突阶段发布仍待后续。
+[Git 官方 git-merge-file 文档](https://git-scm.com/docs/git-merge-file)用共同 base 与两份修改解释三方合并，并在同一区域存在不兼容修改时呈现冲突。MiniGit 的纯文本算法已通过子项验收，不复刻该命令的全部策略、标签与选项；该纯文本验收轮的仓库 merge、基线历史选择和冲突阶段发布仍待后续，实际后续交付见末节与进度页。
 
 base=[a,b,c]，ours=[A,b,c]，theirs=[a,b,C] 可以得到 [A,b,C]；仅比较 ours 与 theirs 却看不出 a 和 c 各自原来的版本。同一区块先分别按完整 base 重放，两侧结果相同可以去重，否则保留固定 ours／theirs markers。LF 状态也是字节事实，不能由“看起来是同一行”推断等价。独立位置与 EOF 例子见学习笔记。
 
@@ -249,4 +249,7 @@ MGOP v2 StashApply context 基础已通过子项验收。选择 stash@{2} 时，
 
 完整 Stash 恢复生命周期已通过子项验收。MiniGit 默认将 H→W 合并到当前 O，Index 保持 O（冲突区域写原 stages）；--index 独立把 H→I 合并到 O，Work 仍由 H→W 决定。于是同一路径可以恢复为 Index=B、Work=C，不能用最后 Work 快照一次 add 替代两层含义。Work／Index／Both 是初次冲突报告的层次，单份 Index 无法表达不同原始 stage groups 或某些跨层 D/F 时明确拒绝，不任意选择一层覆盖另一层。
 
-[Git 官方 stash 文档](https://git-scm.com/docs/git-stash)说明 --index 尝试恢复暂存状态，pop 遇冲突会保留条目，解决后需手动 drop。MiniGit 的 stash --continue／--abort 是显式生命周期扩展：continue 从 resolved typed Index 完成并按原 pop 意图删除条目，保留未暂存 Work；abort 恢复保存的实际 before。原生 Git 没有这两个 stash 子动作。MiniGit 首版要求启动 Index=HEAD 且 tracked Work 干净，选择器仅 stash@{十进制位置}，使用 MGST 活跃栈而非 refs/stash reflog；不把这些接口称为 Git 兼容实现。本项不创建提交、不移动 HEAD／reflog，也不要求身份，两预设相关检查、恢复与原保存实验及独立完整审查通过；Phase 3 整体验收仍待独立全量检查。
+[Git 官方 stash 文档](https://git-scm.com/docs/git-stash)说明 --index 尝试恢复暂存状态，pop 遇冲突会保留条目，解决后需手动 drop。MiniGit 的 stash --continue／--abort 是显式生命周期扩展：continue 从 resolved typed Index 完成并按原 pop 意图删除条目，保留未暂存 Work；abort 恢复保存的实际 before。原生 Git 没有这两个 stash 子动作。MiniGit 首版要求启动 Index=HEAD 且 tracked Work 干净，选择器仅 stash@{十进制位置}，使用 MGST 活跃栈而非 refs/stash reflog；不把这些接口称为 Git 兼容实现。本项不创建提交、不移动 HEAD／reflog，也不要求身份，两预设相关检查、恢复与原保存实验及独立完整审查通过；该 Stash 恢复轮的后续 Phase 3 全量验收见下段。
+
+
+Phase 3 两预设各 237 项全量检查通过，整体验收已完成；命令范围、Git 差异与学习成果集中见 [阶段总结](progress.md#phase-3-阶段总结已验收)。后续 Rebase 不能只重复调用有自锁和 guard 的公开 Replay 入口；GC 也不能把 typed-only roots 当成完整可达闭包，两者仍未交付。

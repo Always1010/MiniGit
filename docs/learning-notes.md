@@ -42,7 +42,7 @@ bash examples/experiments/show.sh ./build/debug/minigit
 
 [实验脚本](../examples/experiments/show.sh) 提交 A、暂存 B、保留工作区 C，再读取 `show HEAD:note` 与 `show :note`。两者分别是 A 与 B，不会把工作区 C 暗中保存。二进制通过输出到文件后 cmp 核对，不能用 Shell 变量承载含 NUL 的字节。
 
-Index 的 stage 是同一路径的多个候选版本，stage 0 表示已决定的待提交内容；冲突时 stage 1/2/3 分别用于 base/ours/theirs。show 能独立读取这些阶段，而普通 commit 必须等待它们被一个 stage 0 取代。当前已有阶段存储与读取，真正产生三方冲突的命令将在 Phase 3 接入。
+Index 的 stage 是同一路径的多个候选版本，stage 0 表示已决定的待提交内容；冲突时 stage 1/2/3 分别用于 base/ours/theirs。show 能独立读取这些阶段，而普通 commit 必须等待它们被一个 stage 0 取代。该 show 验收轮仅有阶段存储与读取；Phase 3 后续已接入产生三方冲突的业务，见本页后文。
 
 ## 实验一：内容与名称是两件事
 
@@ -402,4 +402,7 @@ C++ 练习比较 v1 和 v2 字节：旧 kind 不能因为新增 optional 字段�
 
 在 C++ 中先给每层建立完整结果，再组合原始 stage groups。Index-only 冲突可以让 Work 没有 marker；stage1/2/3 仍须解决。两层不同 groups 无法塞进同一组三个 stage，或 --index 遇到 RW D/F 时，拒绝比丢掉暂存意图更明确。U 是另一种输入：它要求真实叶位置缺失，不因为已有文件内容相同就获得覆盖授权。
 
-[恢复实验](../examples/experiments/stash-restore.sh) 先对比上述默认／--index，随后 pop 冲突核对条目保留，abort 恢复真实 before，再解决并 add 后继续编辑 Work。stash --continue 只检查 resolved Index、清 State 并完成原 pop，不会像 merge --continue 创建 Commit，也不会把后一次 Work 编辑写进 Index；HEAD 与日志保持。两个预设的恢复实验、原保存实验及相关 37 项检查通过，完整只读审查通过；Phase 3 整体验收仍待独立全量检查。最后练习画出 exact raw Stack/ref 的双份 pin：历史 context 校验通过，不等于此刻活跃栈没被外部编辑。
+[恢复实验](../examples/experiments/stash-restore.sh) 先对比上述默认／--index，随后 pop 冲突核对条目保留，abort 恢复真实 before，再解决并 add 后继续编辑 Work。stash --continue 只检查 resolved Index、清 State 并完成原 pop，不会像 merge --continue 创建 Commit，也不会把后一次 Work 编辑写进 Index；HEAD 与日志保持。两个预设的恢复实验、原保存实验及相关 37 项检查通过，完整只读审查通过；该恢复子项之后的 Phase 3 全量验收见下段。最后练习画出 exact raw Stack/ref 的双份 pin：历史 context 校验通过，不等于此刻活跃栈没被外部编辑。
+
+
+Phase 3 的阶段练习可以复用上述 Merge、Replay 与 Stash 实验，两个预设各 237 项完整回归已通过，不新增重复脚本。用三方输入、stages／marker、Index／Work、before／after、semantic roots／live CAS 五组区别解释一次暂停与恢复；统一学习结果和实验执行范围见 [阶段总结](progress.md#phase-3-阶段总结已验收)，后续 Rebase 的真实队列与 GC 可达闭包仍待实施。
