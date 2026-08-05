@@ -14,17 +14,19 @@ single-lowest merge-base helper 已通过子项验收：沿双方完整父图选
 
 共享 planner 的显式 Directory target 已通过子项验收，用于描述空目录与完整目录权限；接口与调用链已核对，两种预设各 28 项定向检查通过，无新 CLI。HEAD 快照不能替代真实 NodeImage，后续长操作中止需要这些镜像，目录扩展本身不提供 abort；状态基础见下文。
 
-caller-lock CommitSnapshot 存储工厂已通过子项验收，接收明确 Snapshot 和有序 parents，只保存不可变 Tree／Commit；不读取 HEAD／Index 或发布引用。create_commit 保持业务入口与原空提交策略，Merge 生命周期现已实现，CherryPick／Revert 的后续验收见下文，Stash 恢复与重放序列仍未交付。本项无新 CLI 或实验，接口和调用链已核对，两种预设各 22 项定向检查通过；Operation codec／roots 与业务 guard 也已验收，Merge 的 start／continue／abort 已通过子项验收。
+caller-lock CommitSnapshot 存储工厂已通过子项验收，接收明确 Snapshot 和有序 parents，只保存不可变 Tree／Commit；不读取 HEAD／Index 或发布引用。create_commit 保持业务入口与原空提交策略，Merge 生命周期现已实现，CherryPick／Revert 的后续验收见下文，Stash 恢复的后续验收见下文，重放序列仍未交付。本项无新 CLI 或实验，接口和调用链已核对，两种预设各 22 项定向检查通过；Operation codec／roots 与业务 guard 也已验收，Merge 的 start／continue／abort 已通过子项验收。
 
 OperationState v1 基础已通过子项验收：该基础验收轮仅支持 Merge／Conflicted，保存原始 HEAD 字节、整份可选 Index 备份及受影响 Work 的真实镜像，接入事务语义根与业务 guard；该基础验收轮无 merge CLI、continue／abort 或其他操作 kind，现由下文 Merge 生命周期使用。接口和冻结源码已核对，两种预设各 31 项定向检查通过，既有解决工具的安全策略不放宽。
 
 完整 Merge 生命周期已通过子项验收，首版以干净跟踪状态启动，覆盖 up-to-date、fast-forward、unborn 与唯一基线三方合并。冲突以原始 stages、呈现 Work 和 OperationState 同事务发布；继续取当前 Index，中止恢复 raw HEAD／整份原 Index 与受影响 Work 的真实 before。两个预设的相关检查、真实实验及完整只读审查通过，不提供 Ready 或其他操作 kind。
 
-CherryPick／Revert 完整生命周期已通过子项验收，接口接收单一来源并提供 start／continue／abort。它们不要求共同祖先或快进关系，但校验完整历史；当前 HEAD 必须已出生且 tracked Index／Work 干净。每次成功保存以原 HEAD 为唯一父的新 Commit，结果为空也保留；CherryPick 保留来源作者，Revert 用当前作者。CLI 消息覆盖仅用启动专用 --message text，拒绝 -m／--mainline（多父来源基线选择未实现）；Merge 的 -m 保持不变。状态与实际恢复复用 Merge 已验收机制，核心与 CLI 已冻结、调用链已核对，两预设相关 31 项、重放与原 Merge 实验及完整审查通过；Stash 恢复与 Phase 4 尚未实现。
+CherryPick／Revert 完整生命周期已通过子项验收，接口接收单一来源并提供 start／continue／abort。它们不要求共同祖先或快进关系，但校验完整历史；当前 HEAD 必须已出生且 tracked Index／Work 干净。每次成功保存以原 HEAD 为唯一父的新 Commit，结果为空也保留；CherryPick 保留来源作者，Revert 用当前作者。CLI 消息覆盖仅用启动专用 --message text，拒绝 -m／--mainline（多父来源基线选择未实现）；Merge 的 -m 保持不变。状态与实际恢复复用 Merge 已验收机制，核心与 CLI 已冻结、调用链已核对，两预设相关 31 项、重放与原 Merge 实验及完整审查通过；该 Replay 验收轮未交付 Stash 恢复，后续验收见下文；Phase 4 尚未实现。
 
-Stash 保存子项已通过验收，仅覆盖 push（-u／-m message）、list／show／drop／clear。它分别保存 HEAD、Index、实际 tracked Work 与可选未忽略 untracked，push 清理和栈更新通过一次短事务，HEAD／reflog 不移动。持久快照保存字节与可执行模式，失败回滚另用真实完整权限／目录镜像。apply／pop／--index／continue／abort 尚未实现，不能把本批保存能力当作完整 Stash 或 Phase 3 已交付；实际 API 与源码已冻结核对，两预设相关 38 项、保存实验和交叉完整审查通过。
+Stash 保存子项已通过验收，仅覆盖 push（-u／-m message）、list／show／drop／clear。它分别保存 HEAD、Index、实际 tracked Work 与可选未忽略 untracked，push 清理和栈更新通过一次短事务，HEAD／reflog 不移动。持久快照保存字节与可执行模式，失败回滚另用真实完整权限／目录镜像。该保存验收轮尚未实现 apply／pop／--index／continue／abort，不能把本批保存能力当作完整 Stash 或 Phase 3 已交付；实际 API 与源码已冻结核对，两预设相关 38 项、保存实验和交叉完整审查通过。
 
-MGOP v2 StashApply context 基础已通过子项验收，保存 pop 意图、选中位置、完整 MGST 备份 Blob 与精确 refs/stash 原字节；旧 Merge／CherryPick／Revert 继续编码 v1，不改已有 bytes／CAS。本项仅支持 Conflicted、original=current，扩展语义根以保护全部栈 entries，不读当前栈或 Work。尚无 apply／pop／--index／continue／abort 业务、无新 CLI 或实验；源码与五组测试已冻结核对，独立审查与两种预设的相关 45 项检查通过。
+MGOP v2 StashApply context 基础已通过子项验收，保存 pop 意图、选中位置、完整 MGST 备份 Blob 与精确 refs/stash 原字节；旧 Merge／CherryPick／Revert 继续编码 v1，不改已有 bytes／CAS。本项仅支持 Conflicted、original=current，扩展语义根以保护全部栈 entries，不读当前栈或 Work。该基础验收轮没有 apply／pop／--index／continue／abort 业务、没有新 CLI 或实验；源码与五组测试已冻结核对，独立审查与两种预设的相关 45 项检查通过。
+
+完整 Stash 恢复生命周期已通过子项验收，连同此前保存／查询／栈管理，当前 Stash 功能范围已完成。冻结接口提供 apply／pop、独立 --index 合并、stash --continue／--abort；默认 Work 取 merge(H,O,W)，--index 另取 merge(H,O,I) 恢复暂存意图。要求已出生、tracked Index／Work 干净的当前 O，不创建 Commit、不移动 HEAD／日志、不要求身份；pop 冲突保留条目，完整成功才删除所选位置。双层算法与保守 D/F 边界见 [恢复架构](docs/architecture.md#stash-恢复两个合并结果一次发布)，两预设相关 37 项、新恢复实验及原保存实验均通过，最终构建无警告，完整审查通过。Phase 3 整体仍待独立全量验收，Phase 4 尚未交付。
 
 ## 构建与运行
 
@@ -77,6 +79,8 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `stash`、`stash push [-u] [-m message]` | 保存独立 Index／Work 与可选 untracked 后清理；已验收 |
 | `stash list`、`stash show [--] [stash@{N}]` | 列表与已保存 H→W+U 差异，不读取当前 Index／Work |
 | `stash drop [--] [stash@{N}]`、`stash clear` | 删除位置或清空活跃栈，不移动 HEAD／日志；已验收 |
+| `stash apply [--index] [--] [stash@{N}]`、`stash pop [--index] [--] [stash@{N}]` | 恢复 Work 与可选独立暂存意图；已验收 |
+| `stash --continue`、`stash --abort` | 从 resolved Index 完成，或恢复实际 before；无其他参数，已验收 |
 
 对象 ID 必须为完整 64 位十六进制文本，尚不支持缩写。不带 `-w` 的摘要计算可以在仓库外执行；写入和读取需要当前目录或祖先存在有效 `.minigit` 仓库。当前文件读取上限为 64 MiB，软链接和非普通文件被拒绝。
 

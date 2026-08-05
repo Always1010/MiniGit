@@ -93,6 +93,30 @@ int report_conflicts(std::string_view label, std::string_view command,
     std::cout << output;
     return 1;
 }
+int report_stash_restore(const minigit::StashRestoreResult& result) {
+    if (result.outcome == minigit::StashRestoreOutcome::Aborted) {
+        std::cout << "Stash restore aborted.\n";
+        return 0;
+    }
+    if (result.outcome == minigit::StashRestoreOutcome::Applied) {
+        std::cout << "Stash applied." << (result.dropped ? " Entry dropped.\n" : "\n");
+        return 0;
+    }
+    std::string output = "Stash paused; resolve conflicts, add paths, then use stash --continue or stash --abort.\n";
+    constexpr std::string_view omitted = "Additional conflict paths omitted; use status to inspect them.\n";
+    for (const auto& item : result.conflicts) {
+        const auto layer = item.layer == minigit::StashConflictLayer::Work ? "work" :
+            item.layer == minigit::StashConflictLayer::Staging ? "index" : "both";
+        const auto line = std::string("CONFLICT (") + layer + ") " + minigit::quote_path(item.conflict.path) + "\n";
+        if (line.size() > minigit::max_file_size - output.size() - omitted.size()) {
+            output += omitted;
+            break;
+        }
+        output += line;
+    }
+    std::cout << output;
+    return 1;
+}
 
 std::size_t parse_stash_position(std::string_view value) {
     if (value.size() > 4096 || !value.starts_with("stash@{") || !value.ends_with('}'))
@@ -150,6 +174,8 @@ int run(const std::vector<std::string_view>& args) {
                      "  revert [--message text] <revision> | revert --continue|--abort\n"
                      "  stash [push [-u] [-m message]] | stash list|show|drop|clear\n"
                      "  stash show|drop [stash@{number}]  Inspect or remove an entry\n"
+                     "  stash apply|pop [--index] [stash@{number}]  Restore saved changes\n"
+                     "  stash --continue|--abort        Finish or undo a conflicted restore\n"
                      "  --help | --version\n";
         return 0;
     }
@@ -560,6 +586,29 @@ int run(const std::vector<std::string_view>& args) {
     }
     if (command == "stash") {
         const auto action = args.size() == 1 ? std::string_view("push") : args[1];
+        if (action == "--continue" || action == "--abort") {
+            if (args.size() != 2) throw UsageError("stash --continue/--abort accepts no other arguments");
+            const auto repo = minigit::Repository::discover();
+            return report_stash_restore(action == "--continue" ? minigit::stash_continue(repo) : minigit::stash_abort(repo));
+        }
+        if (action == "apply" || action == "pop") {
+            minigit::StashRestoreOptions options;
+            options.pop = action == "pop";
+            bool parse_options = true, selected = false;
+            for (std::size_t i = 2; i < args.size(); ++i) {
+                if (parse_options && args[i] == "--") { parse_options = false; continue; }
+                if (parse_options && args[i] == "--index") {
+                    if (options.restore_index) throw UsageError("stash --index may be specified once");
+                    options.restore_index = true;
+                    continue;
+                }
+                if ((parse_options && args[i].starts_with('-')) || selected)
+                    throw UsageError("stash apply/pop accepts --index and one stash@{number}");
+                options.position = parse_stash_position(args[i]);
+                selected = true;
+            }
+            return report_stash_restore(minigit::stash_restore(minigit::Repository::discover(), options));
+        }
         if (action == "push") {
             minigit::StashPushOptions options;
             bool untracked_set = false;
