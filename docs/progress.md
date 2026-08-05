@@ -4,12 +4,12 @@
 
 ## 当前状态
 
-Phase 0、Phase 1、Phase 2 与 Phase 3 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/mv/reflog/merge/cherry-pick/revert`，另已完成 stash 保存／查询／栈管理与完整恢复生命周期，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收；Phase 2 整体验收的两个预设各 147 项全量检查全部通过；Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收，MGOP v2 StashApply context 已通过子项验收，完整 Stash 恢复生命周期已通过子项验收，Phase 3 两预设各 237 项完整回归通过、整体验收已完成，Phase 4 尚未交付，继续推进至 Phase 4。
+Phase 0、Phase 1、Phase 2 与 Phase 3 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/mv/reflog/merge/cherry-pick/revert`，另已完成 stash 保存／查询／栈管理与完整恢复生命周期，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收；Phase 2 整体验收的两个预设各 147 项全量检查全部通过；Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收，MGOP v2 StashApply context 已通过子项验收，完整 Stash 恢复生命周期已通过子项验收，Phase 3 两预设各 237 项完整回归通过、整体验收已完成，Phase 4 的 Rebase 状态基础已通过子项验收，rebase／gc 业务尚未交付。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前实际注册 216 个单元及 21 个 CLI，共 237 项，两预设已全量执行通过；Stash 恢复新增 8 单元及 1 CLI，两预设相关 37 项均通过；Stash 保存该轮 38 项两预设通过，v2 基础两预设相关 45 项均通过，完整只读审查通过，Phase 2 全量 147 项是此前独立验收证据 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前实际注册 221 个单元及 21 个 CLI，共 242 项；此前 Phase 3 两预设全量通过的基线是 237 项，Rebase 状态基础本轮相关 25 项两预设通过；Stash 恢复新增 8 单元及 1 CLI，两预设相关 37 项均通过；Stash 保存该轮 38 项两预设通过，v2 基础两预设相关 45 项均通过，完整只读审查通过，Phase 2 全量 147 项是此前独立验收证据 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
 | 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
 | Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
@@ -45,7 +45,8 @@ Phase 0、Phase 1、Phase 2 与 Phase 3 已验收，版本为 `0.1.0`。当前 C
 | Phase 3 共享依赖：MGOP v2 StashApply context | 已验收 | mandatory saved Stack/ref／position/pop、全部栈 entries 语义根；旧 v1 bytes/CAS 保持，两预设各 45 项通过 |
 | Phase 3 子项：Stash 恢复生命周期 | 已验收 | 源码／8 组测试／CLI／实验已冻结，两预设各 37 项、新旧 Stash 实验与完整审查通过 |
 | Phase 3 整体 | 已验收 | Debug／sanitized 各 237 项全量全部通过（216 单元、21 CLI），用时 192.25／581.97 秒，无 ASan／UBSan 报告；本轮 Merge／Replay 实验两预设通过 |
-| Phase 4 | 计划 | rebase 与 gc 尚未交付 |
+| Phase 4 共享依赖：Rebase 状态基础 | 已验收 | Ready／Conflicted、队列与受约束 replacement；两预设各 25 项、无警告构建与完整审查通过，无新 CLI |
+| Phase 4 业务 | 计划 | rebase 与 gc 尚未交付 |
 
 已执行的 Debug 验证：
 
@@ -474,7 +475,7 @@ flowchart TD
 
 纯文本层按 base 坐标合并 edits，区分点插入、严格区间相交、EOF／无 LF 与 coarse 回退；不是把展示 hunks 当合并算法。Snapshot 层再处理模式、存在、二进制与最短 D/F 区域，保留原 stages 与可呈现 Work。DAG 层完整验证祖先后选择唯一 lowest，不按时间猜基线；Replay 的基线则来自来源唯一父，不调用 merge-base。Commit 工厂只存显式快照与 parents，Operation 保存跨进程上下文，短事务负责单次 publication。这些层各有预算与 typed 校验，单层 codec 合法不等于最终事务可发布。
 
-继续与中止的内容来源也不同：Merge／Replay continue 取完整 stage0 Index，保留未暂存 Work；Stash continue 只完成状态与原 pop 意图，不创建 Commit。abort 恢复 whole optional raw Index、exact raw HEAD 及 affected actual Work，包括 mode／binary／D/F 同值节点和区域内完整目录权限，不以 HEAD Tree 替代用户实际 before。unknown 后代与外部 metadata 变化可阻挡恢复；planning 拒绝不发布 mutable 状态，但可能留不可达 immutable Blob，执行中断先 recover。MGOP 目前仅 Conflicted／equal Heads，没有 Ready 队列状态。
+继续与中止的内容来源也不同：Merge／Replay continue 取完整 stage0 Index，保留未暂存 Work；Stash continue 只完成状态与原 pop 意图，不创建 Commit。abort 恢复 whole optional raw Index、exact raw HEAD 及 affected actual Work，包括 mode／binary／D/F 同值节点和区域内完整目录权限，不以 HEAD Tree 替代用户实际 before。unknown 后代与外部 metadata 变化可阻挡恢复；planning 拒绝不发布 mutable 状态，但可能留不可达 immutable Blob，执行中断先 recover。该 Phase 3 验收轮的 MGOP 仅 Conflicted／equal Heads，没有 Ready 队列状态；当前基础扩展见下节。
 
 与原生 Git 的差异仍是契约的一部分：固定 SHA-256 和自有 `.minigit`／MGIX／MGRL／MGOP／MGST，不承诺仓库互读；只解析已支持的完整 ID／引用，没有缩写、~／^ 或 reflog selectors。无 rename detection、symlink／submodule、remote／pack 或完整复杂 flags。Merge 拒绝 unrelated 与多个最低共同基线，不生成虚拟多基线；CherryPick／Revert 拒绝多父来源，不提供 mainline。Stash 恢复要求当前 Index=HEAD 且 tracked Work 干净，--index 的跨层 groups／D/F 有保守拒绝；活跃列表是 MGST 而非 reflog，仅接受 stash@{十进制位置}，stash --continue／--abort 是 MiniGit 扩展。Linux/POSIX、设备／权限、owner/group／时间不还原与 syscall 中断边界继续遵循架构约束。
 
@@ -484,7 +485,7 @@ flowchart TD
 
 `bash examples/experiments/merge.sh ./build/debug/minigit`、`bash examples/experiments/replay.sh ./build/debug/minigit` 及各自 sanitized 对应命令在本轮均 exit 0。stash.sh 与 stash-restore.sh 已在紧邻、已提交的恢复子项两个预设实际通过，沿用该真实证据；不声称本节点重跑其他历史实验。本轮仅六份文档改动，未改变源码、测试或构建参数，不是新版本发布。
 
-下一阶段是尚未实施的 rebase 与 gc。Rebase 需明确线性来源队列、cursor、来源 author 与 preserve-empty、真正 Ready／Conflicted 的不同 continue 语义：Ready 执行待重放步骤，Conflicted 才以解决后的 Index 完成当前步骤；原 branch 保持并作 CAS，最后 attach 与引用／状态收尾同事务。当前 MGOP 的 existing→不同 State 拒绝规则不能直接支撑队列推进，需要版本／闭集 kind、expected canonical old→new 的明确更新规则。累计 Work 镜像要保留首次 original before，更新最新 after，正确处理旧 File／Absent 祖先遮挡和 D/F full permissions／noops，不能简单拼接每步变化。
+下一阶段是尚未实施的 rebase 与 gc。Rebase 需明确线性来源队列、cursor、来源 author 与 preserve-empty、真正 Ready／Conflicted 的不同 continue 语义：Ready 执行待重放步骤，Conflicted 才以解决后的 Index 完成当前步骤；原 branch 保持并作 CAS，最后 attach 与引用／状态收尾同事务。Phase 3 验收时 MGOP 的 existing→不同 State 拒绝规则不能直接支撑队列推进，需要版本／闭集 kind、expected canonical old→new 的明确更新规则。累计 Work 镜像要保留首次 original before，更新最新 after，正确处理旧 File／Absent 祖先遮挡和 D/F full permissions／noops，不能简单拼接每步变化。
 
 GC 需先枚举 refs／HEAD、当前 Index 的全部 stages、reflog、全部活跃 stash entries、Operation 和未清理 Transaction 的根，再沿 Commit parents／Tree／Blob 做完整可达标记。raw Index 与 Stack 备份 Blob 内的对象 ID 必须语义展开，单保留容器 Blob 不等于保留其内容所指对象；当前 roots helper 并不提供完整 Tree／DAG 闭包或回收策略。定义安全保留、损坏拒绝与可复查的删除边界后才能回收。Phase 3 本节点已完成整体验收，Phase 4 与最终目标仍未完成。
 
@@ -494,6 +495,22 @@ GC 需先枚举 refs／HEAD、当前 Index 的全部 stages、reflog、全部活
 
 验收条件：rebase 的提交重放顺序、冲突处理、继续与中止经端到端验证；gc 有明确根集合和保留策略，能证明可达对象不会被误删，并覆盖无引用、reflog 及进行中操作的保护要求。packfile 与网络能力不自动纳入该阶段。
 
+### Rebase 状态基础：已验收
+
+冻结的 operation.hpp 接口新增 OperationKind::Rebase=5 与 OperationPhase::Ready=2，RebaseOperation{onto,queue,cursor,original_branch_ref} 与 State 尾 optional rebase。queue 为唯一、oldest-first 来源 IDs，1..100000 个，最后一个等于 original HEAD；cursor 必须小于 size，source_commit 对应 queue[cursor]。当前 HEAD 已出生且 detached，允许不同于 original；原 symbolic 分支必须保存精确 65-byte ref 镜像，原 detached 则没有该字段。内部 message 固定 rebase，不是将来提交消息。
+
+Ready 的 cursor 是尚未执行的来源；Conflicted 的同一 cursor 表示冲突已发布、等待 resolved Index。这批只让状态能够表达两种含义，不执行重放，不提供 rebase CLI／continue／abort。末步成功可在同一业务事务完成原分支 attach 与 State 删除，codec 不接受 cursor=queue.size 的持久终点；这些步骤仍待后续业务实现。
+
+最小 MGOP v2 kind5 在 common Work 后附 required presence、onto、BE u32 queue count／raw IDs、BE u32 cursor 与 optional rawbranch presence／length／bytes，最后 checksum。旧 kind1..3 v1 与 kind4 StashApply v2 原 bytes 保持；不能给旧 kind 添一个空 rebase 标志改掉 expected CAS。State 仍受 64 MiB／100000 Work／4096 path／128 components 与事务拓扑、权限限制；codec 合法不保证 combined Txn 能发布。
+
+plan_operation_update 继续比较 expected canonical State 与实际 exact raw bytes，仅 Rebase 开放受约束 replacement：Ready→Conflicted 保持 cursor／current；Ready 或 Conflicted→Ready 只推进一项，新 current Commit 的唯一父必须为旧 current。original logical／raw HEAD、raw Index backup、onto／queue／raw branch 保持；已有 Work keys 不可删除，首次 before 不可变，latest after 可更新，额外 keys 的真实首次 before 仍需未来业务捕获。纯 schema 验证不能自动生成正确累计镜像，File／Absent 祖先遮挡、D/F noops／完整权限与 live branch CAS 仍是业务责任。规划使用 next 保留强异常保证，combined 预算不放宽。
+
+state_roots 保存 original／current／source、onto 与全部 queue 的 typed/schema-valid Commit，去重读取 Commit payload 合计最多 64 MiB；无 Tree／父 DAG／live HEAD 或分支读取。Work File 与 raw Index 的所有 stages 根仍保留。新上下文只是历史结构，不能替代将来每步 live CAS 或 GC 完整可达闭包。
+
+公共 API、operation.cpp 与新 test_operation_rebase.cpp 五组已最终冻结核对。实际 private 链 validate_state→known_phase／uses_v2／reference_id→kind-specific codec；decode 的认证 count／remaining 前检先于 reserve；state_roots typed dedup cache 仅 Rebase 累计 Commit payload；plan canonical expected／raw CAS→desired roots→validated same no-op 或 validate_replacement→next combined budget／强赋回。新五组覆盖旧 v1／Stash v2 golden、认证队列与拓扑边界、全部 typed roots 与大 Commit 累计预算、strong CAS／first before／transition、Prepared／Committed replacement 幂等恢复。业务、CLI 与 shared abort helper 均未修改。
+
+Phase 3 已验收的 237 项保持历史范围；本项新增 5 个 OperationRebase 单元、无新 CLI，CTest 实际注册 221 单元、21 CLI，共 242 项。两个预设最终构建均 exit 0、无 GCC 警告；完整只读审查通过。`ctest --preset debug -R '^unit\.Operation|^(merge_cli|replay_cli|stash_cli|stash_restore_cli|recovery_cli|commits_cli|switch_cli|cli_basics)$' --output-on-failure -j2` 与 sanitized 对应命令各选中 25 项，全部通过，用时 21.59／28.77 秒，两进程均 exit 0，无 ASan／UBSan 报告。本轮未执行全 242 项，没有新 CLI／实验。本状态基础已子项验收，实际 Rebase start／continue／abort 与 GC 仍未交付，不把状态基础完成当作 Phase 4 已验收。
+
 ## 下一步
 
-Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，Mv 文件与目录迁移已完成子项验收，Phase 2 两个预设各 147 项全量检查已通过、整体验收完成；纯文本三方合并引擎已通过子项验收，Snapshot 合并的模式／存在／D/F 适配器已通过子项验收，完整 DAG 上的 single-lowest merge-base helper 已通过子项验收，显式 Directory 目标规划已通过子项验收，CommitSnapshot 工厂已通过子项验收，OperationState v1 codec／roots 与业务 guard 已通过子项验收，Merge 完整 start／continue／abort 已通过子项验收，CherryPick／Revert 完整生命周期已通过子项验收，Stash 保存／查询／栈管理已通过子项验收，MGOP v2 的 StashApply context 基础已通过子项验收，完整 Stash apply／pop／--index／continue／abort 恢复生命周期已通过子项验收，Phase 3 独立全量验收已完成，两预设各 237 项全部通过，下一阶段为尚未交付的 Phase 4，按上述依赖推进 Phase 3 和 Phase 4，最终目标尚未完成。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，Mv 文件与目录迁移已完成子项验收，Phase 2 两个预设各 147 项全量检查已通过、整体验收完成；纯文本三方合并引擎已通过子项验收，Snapshot 合并的模式／存在／D/F 适配器已通过子项验收，完整 DAG 上的 single-lowest merge-base helper 已通过子项验收，显式 Directory 目标规划已通过子项验收，CommitSnapshot 工厂已通过子项验收，OperationState v1 codec／roots 与业务 guard 已通过子项验收，Merge 完整 start／continue／abort 已通过子项验收，CherryPick／Revert 完整生命周期已通过子项验收，Stash 保存／查询／栈管理已通过子项验收，MGOP v2 的 StashApply context 基础已通过子项验收，完整 Stash apply／pop／--index／continue／abort 恢复生命周期已通过子项验收，Phase 3 独立全量验收已完成，两预设各 237 项全部通过，Phase 4 Rebase 状态基础已通过子项验收，实际 rebase／gc 仍待交付，按上述依赖推进 Phase 4，最终目标尚未完成。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。

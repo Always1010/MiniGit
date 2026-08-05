@@ -406,3 +406,10 @@ C++ 练习比较 v1 和 v2 字节：旧 kind 不能因为新增 optional 字段�
 
 
 Phase 3 的阶段练习可以复用上述 Merge、Replay 与 Stash 实验，两个预设各 237 项完整回归已通过，不新增重复脚本。用三方输入、stages／marker、Index／Work、before／after、semantic roots／live CAS 五组区别解释一次暂停与恢复；统一学习结果和实验执行范围见 [阶段总结](progress.md#phase-3-阶段总结已验收)，后续 Rebase 的真实队列与 GC 可达闭包仍待实施。
+
+
+## 同一个 cursor 的两种继续含义
+
+Rebase 状态基础已通过子项验收。设 queue=[S0,S1]、cursor=0：Ready 表示 S0 还没执行；如果 unknown 文件阻挡规划，未来重试仍应执行 S0，不能直接保存当前 Index 并把 cursor 改成 1。若 S0 冲突已发布，phase=Conflicted，解决并 add 后才用 Index 完成它。cursor<size，因此末步的最终 attach／State 删除应由未来业务同事务处理，不保存“Ready 但没有下一来源”。
+
+C++ 练习复制一份 State 为 next：只改 phase 到 Conflicted 时 cursor／current 不变；推进到 Ready 时 cursor 仅加一，新 current Commit 的 parent 恰为旧 current。已有 Work path 的 before 若被后一次修改替换，会失去最初中止镜像，所以 validator 要拒绝；保留 before 本身仍不等于正确累计，新 key 被原 File／Absent 祖先遮挡时如何取原镜像需要业务另定义。本项只 codec／roots／受约束规划更新，没有新 CLI 或可执行实验，两个预设相关 25 项与完整只读审查通过，实际重放业务仍待实现。

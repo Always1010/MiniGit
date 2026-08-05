@@ -75,6 +75,7 @@ if(BUILD_TESTING)
         tests/unit/test_transaction.cpp
         tests/unit/test_operation.cpp
         tests/unit/test_operation_stash.cpp
+        tests/unit/test_operation_rebase.cpp
         tests/unit/test_operation_guards.cpp
         tests/unit/test_merge.cpp
         tests/unit/test_replay.cpp

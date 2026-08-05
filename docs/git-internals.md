@@ -253,3 +253,10 @@ MGOP v2 StashApply context 基础已通过子项验收。选择 stash@{2} 时，
 
 
 Phase 3 两预设各 237 项全量检查通过，整体验收已完成；命令范围、Git 差异与学习成果集中见 [阶段总结](progress.md#phase-3-阶段总结已验收)。后续 Rebase 不能只重复调用有自锁和 guard 的公开 Replay 入口；GC 也不能把 typed-only roots 当成完整可达闭包，两者仍未交付。
+
+
+## Ready 不是已经解决的冲突
+
+Rebase 状态基础已通过子项验收，实际重放业务尚未交付。Ready 保存未执行的 queue[cursor]；预算、身份或 unknown 保护拒绝导致步骤没发布时，未来 continue 应重试该来源，不能把当前 Index 当成它的解决结果生成空提交并跳过去。只有 Conflicted 表示来源冲突已发布，才允许以后从 resolved Index 完成当前来源。
+
+原分支镜像与 original HEAD 提供恢复锚点，current detached 是新的重放位置。将来每次新 Commit 的单父应是旧 current，来源作者与 preserve-empty 是待实现业务策略；本子项只持久化队列与验证状态推进，不改 refs／Work 或自动生成提交。旧 kind 的 bytes 保持与 expected canonical CAS 更新约束，使共享状态格式扩展不改变已有 Merge／Replay／Stash 解释。

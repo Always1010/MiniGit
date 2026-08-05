@@ -401,4 +401,13 @@ CLI 的 report_stash_restore 有界展示 Work／Index／Both，发布冲突返�
 [test_stash_restore.cpp](../tests/unit/test_stash_restore.cpp) 八组涵盖独立暂存／实际 Work 与缺失增删、三行并行变化、Work／Index／Both 及 mode／binary 同值中止、D/F 区域／深层目录权限和跨层拒绝、U 占用与已授权 tracked 祖先转换、raw Index no-op／按位置删除重复 entries、pop 与非 pop 的 FIFO Work 继续及 exact context CAS、非法启动与 Prepared apply／Committed pop 恢复。FIFO continue 不读取 Work 的测试，区别于启动必须 clean tracked；保存 I Tree 缺失时默认 apply 也拒绝，证明完整 H/I/W/U 校验。首轮构建的 enum Index 名称与全局 Index 触发 shadow 警告，已仅改为 Staging，ordinal／CLI 标签与业务行为保持；两种预设最终构建无警告，相关 37 项全部通过，无 ASan／UBSan 报告；该 StashRestore 子项轮未执行全 237 注册项，后续阶段全量验收见下段。
 
 
-Phase 3 两预设各 237 项完整回归通过，整体验收已完成。把已交付阅读路线串成 pure text→Snapshot→DAG／来源策略→业务→planner／Operation／Transaction；各层源码链接已在上文给出，统一功能／验证矩阵及下一 Phase 4 依赖见 [阶段总结](progress.md#phase-3-阶段总结已验收)。没有新增源码或通用队列框架可读，不由现有 helper 推断 Rebase／GC 已实现。
+Phase 3 两预设各 237 项完整回归通过，整体验收已完成。把已交付阅读路线串成 pure text→Snapshot→DAG／来源策略→业务→planner／Operation／Transaction；各层源码链接已在上文给出，统一功能／验证矩阵及下一 Phase 4 依赖见 [阶段总结](progress.md#phase-3-阶段总结已验收)。该总结节点没有新增源码或通用队列框架可读，不由现有 helper 推断 Rebase／GC 已实现。
+
+
+## Rebase foundation：先读状态契约
+
+冻结的 [operation.hpp](../include/minigit/operation.hpp) 新增 RebaseOperation：onto、vector<ObjectId> queue、u32 cursor、optional<Bytes> original_branch_ref；State 增 optional rebase，公有 codec／roots／read／plan 签名保持。Rebase=5／Ready=2 只扩真实需要的 closed enums，旧 Merge／CherryPick／Revert 与 StashApply 保持自己的版本与阶段约束。
+
+阅读 plan 契约时分别找 original/context 不变量、old Work before 保留、Ready→Conflicted 的同位置，以及推进一项时的新 Commit 单父验证。roots 对 distinct common／onto／queue Commit payload 合计 64 MiB，但不读取 live branch 或 Tree／DAG；expected State 是 canonical 值比较，actual raw bytes 才构成事务 before。[operation.cpp](../src/core/operation.cpp) 已冻结：validate_state 配合 known_phase／uses_v2／reference_id 验证 kind-specific 字段；Rebase 尾为 42+32×queue.size 字节，有 rawbranch 另加 69 字节。decode 在认证主体后先验证 queue count、上限与 remaining 足够保留 cursor／branch presence，再 reserve；末尾拒绝多余 bytes 并复验。state_roots 的 typed cache 仅对 Rebase 累加 distinct Commit payload，包含 common Heads／source 与 onto／全部 queue，不重复计多角色相同 ID。plan 先验证 actual before roots／expected canonical CAS，再 desired codec／roots；validated same no-op 之后才 validate_replacement，成功 next combined budget 后赋回。replacement 不读取 live branch，只约束旧 Work keys／before、固定上下文及推进单父关系。
+
+[test_operation_rebase.cpp](../tests/unit/test_operation_rebase.cpp) 五组已冻结：旧 v1 的三个 221-byte golden 与 Stash v2 的独立 338-byte golden、两种阶段 roundtrip；认证队列 count bombs／截断与拓扑权限；全部 typed roots／Index stages、无 live Tree／DAG 读取、两个大 Commit 累计预算且同 ID 多角色只计一次；strong CAS／受约束 transition／first before 保留与错误不改原计划；Prepared／Committed replacement 与两次恢复。两预设最终构建无 GCC 警告，相关 25 项全部通过，无 ASan／UBSan 报告，完整只读审查通过；本项已子项验收，没有 Rebase CLI、累计捕获或业务 abort helper 改动。

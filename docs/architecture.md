@@ -625,9 +625,26 @@ flowchart TD
 
 U 不进入三方合并，恢复叶必须实际缺失，已有同内容文件、空目录、ignored 文件或 FIFO 也不能被当成可占用位置。持久 Stash 恢复 bytes／executable mode；短事务 before 另用实际 full permissions／Directory／Absent。规划拒绝不发布 mutable 状态，可能留下不可达 immutable Blob；执行中断仍须先 recover。
 
-普通 apply、冲突启动以及 abort／continue 的最终计划必须绑定完整原 Stack/ref 两份 exact bytes；栈 planner 的逻辑同值 no-op 本来不生成 metadata，因此业务需显式加入两份同值 pin。pop 只在无冲突或继续完整成功时删除选中位置，不能只删 top 或在冲突发布时提前删。continue 要求 matching StashApply、saved context/live pair 与 HEAD CAS、完整 resolved typed Index，不读取 Work、不创建提交；abort 复用实际区域恢复与未知子项保护，再绑定栈 pair，恢复 whole optional raw Index／raw HEAD。MGOP 仍只有 Conflicted／equal Heads，没有 Ready。
+普通 apply、冲突启动以及 abort／continue 的最终计划必须绑定完整原 Stack/ref 两份 exact bytes；栈 planner 的逻辑同值 no-op 本来不生成 metadata，因此业务需显式加入两份同值 pin。pop 只在无冲突或继续完整成功时删除选中位置，不能只删 top 或在冲突发布时提前删。continue 要求 matching StashApply、saved context/live pair 与 HEAD CAS、完整 resolved typed Index，不读取 Work、不创建提交；abort 复用实际区域恢复与未知子项保护，再绑定栈 pair，恢复 whole optional raw Index／raw HEAD。StashApply 仍只有 Conflicted／equal Heads，不接受 Ready；Rebase 基础的扩展见下节。
 
 最终 pair pin 仍走 Transaction 的 refs/stash 语义预检，因此即使选择非 top，apply／continue／abort 也要求原 top W 的自 Tree 完整；read_stash_stack／stash_roots 的 typed-only 历史角色检查并不替代这一步。冲突备份沿用共享 conflict_work，包含 Index-only 冲突的同值 Work、D/F 区域与其实际目录祖先，解决后中止不会因“启动时没写这个文件”漏掉真实权限。
 
 
-Phase 3 四组业务及共享依赖已完成整体验收，两预设各 237 项全量检查通过，阶段架构与下一队列／可达标记依赖集中见 [Phase 3 总结](progress.md#phase-3-阶段总结已验收)。当前没有 Rebase 队列或 Ready，也没有已交付 GC。
+Phase 3 四组业务及共享依赖已完成整体验收，两预设各 237 项全量检查通过，阶段架构与下一队列／可达标记依赖集中见 [Phase 3 总结](progress.md#phase-3-阶段总结已验收)。该 Phase 3 验收轮没有 Rebase 队列或 Ready；当前状态基础扩展见下节，Rebase 业务与 GC 仍未交付。
+
+
+## Rebase 状态基础：区分待执行与已冲突
+
+本子项源码与五组测试已冻结核对并通过子项验收；两个预设相关 25 项与完整只读审查通过。新 closed kind5 使用 MGOP v2，context 保存 onto、ordered unique queue、cursor 与 exact original_branch_ref；旧 v1 与 Stash v2 bytes 不变。Ready 意味着 queue[cursor] 尚未执行，Conflicted 意味着该来源冲突已经发布；原 HEAD 是恢复锚点，current 必须 detached，可以随新单父提交推进。codec 不推断来源 DAG、真实 Work 或 live 分支状态。
+
+```mermaid
+stateDiagram-v2
+    [*] --> Ready: 保存上下文 / 业务尚待实现
+    Ready --> Conflicted: 同 cursor / 同 current
+    Ready --> Ready: cursor+1 / 新 current 单父旧 current
+    Conflicted --> Ready: cursor+1 / 新 current 单父旧 current
+    Ready --> [*]: 删除 State / 业务最终收尾或中止
+    Conflicted --> [*]: 删除 State / 业务中止
+```
+
+图仅描述状态更新约束，不代表 rebase 命令已实现。推进必须保留 original logical/raw HEAD、raw Index、onto、queue、rawbranch 与全部旧 Work 的 first before；after 可更新。纯 validator 只拒绝不合法 replacement，未来业务负责实际捕获新 keys、处理原 File／Absent 祖先遮挡、D/F full permissions／必要 noops，最后 live CAS／attach。typed roots 包含全部 queue 与 onto，去重 Commit payload 总量 64 MiB，不展开 Tree／DAG；完整 GC 仍待后续。
