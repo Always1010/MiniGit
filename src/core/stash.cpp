@@ -1,6 +1,7 @@
 #include "minigit/stash.hpp"
 #include "minigit/stash_stack.hpp"
 #include "operation_support.hpp"
+#include "stash_support.hpp"
 #include "minigit/error.hpp"
 #include "minigit/history.hpp"
 #include "minigit/inspection.hpp"
@@ -13,45 +14,6 @@ namespace {
 std::optional<FileState> state_at(const Snapshot& snapshot, const std::string& path) {
     const auto found = snapshot.find(path);
     return found == snapshot.end() ? std::nullopt : std::optional(found->second);
-}
-// Match write_snapshot's complete file/directory entry and path-data bounds
-// without writing Trees. This also validates combined tracked/untracked layout.
-void validate_saved_tree(const Snapshot& snapshot) {
-    checkout_support::BoundedPaths nodes;
-    std::size_t bytes = 0;
-    const auto add = [&](const std::string& path, std::size_t name_size, std::size_t overhead) {
-        if (nodes.paths.contains(path)) return;
-        nodes.add(path);
-        if (nodes.paths.size() > 100000) throw Error("stash 保存树超过 100000 条目限制");
-        const auto size = path.size() + name_size + overhead;
-        if (size > max_file_size - bytes) throw Error("stash 保存树超过 64 MiB 限制");
-        bytes += size;
-    };
-    for (const auto& [path, file] : snapshot) {
-        checkout_support::validate_path(path);
-        if (file.mode != "100644" && file.mode != "100755") throw Error("stash 文件模式非法");
-        const auto child = snapshot.lower_bound(path + "/");
-        if (child != snapshot.end() && child->first.starts_with(path + "/")) throw Error("stash 保存树存在文件目录冲突");
-        const auto last = path.rfind('/');
-        add(path, last == std::string::npos ? path.size() : path.size() - last - 1, 40);
-        std::size_t begin = 0;
-        for (auto slash = path.find('/'); slash != std::string::npos; slash = path.find('/', slash + 1)) {
-            add(path.substr(0, slash), slash - begin, 39);
-            begin = slash + 1;
-        }
-    }
-}
-Snapshot combined_work(const Snapshot& work, const Snapshot& untracked) {
-    Snapshot combined;
-    checkout_support::BoundedPaths paths;
-    for (const auto* snapshot : {&work, &untracked})
-        for (const auto& [path, file] : *snapshot) {
-            paths.add(path);
-            if (paths.paths.size() > 100000) throw Error("stash Work 与 U 超过 100000 文件限制");
-            if (!combined.emplace(path, file).second) throw Error("stash Work 与 U 路径重复");
-        }
-    validate_saved_tree(combined);
-    return combined;
 }
 NodeImage capture_saved_file(const Repository& repo, const std::string& path, Snapshot& snapshot,
                             const std::optional<FileState>& expected = std::nullopt) {
@@ -99,7 +61,7 @@ std::optional<ObjectId> stash_push(const Repository& repo, const StashPushOption
     const auto indexed = operation_support::resolved_snapshot(index);
     const auto h = read_snapshot(repo, read_commit(repo, *head.id).tree);
     const auto after_index = snapshot_index(h);
-    validate_saved_tree(indexed);
+    stash_support::validate_saved_tree(indexed);
     checkout_support::BoundedPaths tracked, owned;
     for (const auto* snapshot : {&h, &indexed})
         for (const auto& [path, file] : *snapshot) { (void)file; tracked.add(path); owned.add(path); }
@@ -116,7 +78,7 @@ std::optional<ObjectId> stash_push(const Repository& repo, const StashPushOption
             observed.emplace(path, capture_saved_file(repo, path, untracked, file));
         }
     }
-    const auto all_work = combined_work(work, untracked);
+    const auto all_work = stash_support::combined_work(work, untracked);
     if (indexed == h && work == h && untracked.empty()) {
         operation_support::check_original_metadata(repo, head, raw_head, raw_index);
         // Validate stack CAS even when a no-change push publishes nothing.
@@ -172,12 +134,8 @@ std::string stash_show(const Repository& repo, std::size_t position, std::size_t
     RepoLock lock(repo.metadata());
     require_no_transaction(repo);
     const auto stack = read_stash_stack(repo);
-    const auto entry = read_stash_entry(repo, select_entry(stack, position));
-    const auto head = read_snapshot(repo, read_commit(repo, entry.head).tree);
-    (void)read_snapshot(repo, read_commit(repo, entry.index).tree);
-    const auto work = read_snapshot(repo, read_commit(repo, entry.work).tree);
-    const auto untracked = entry.untracked ? read_snapshot(repo, read_commit(repo, *entry.untracked).tree) : Snapshot{};
-    return diff_snapshots(repo, head, combined_work(work, untracked), context);
+    const auto saved = stash_support::load_saved_entry(repo, select_entry(stack, position));
+    return diff_snapshots(repo, saved.head, stash_support::combined_work(saved.work, saved.untracked), context);
 }
 void stash_drop(const Repository& repo, std::size_t position, const TransactionHook& hook) {
     RepoLock lock(repo.metadata());

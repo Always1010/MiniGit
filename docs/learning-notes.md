@@ -368,7 +368,7 @@ C++ 练习给 original_index_blob 画两条边：它自己是 Blob root，payloa
 
 解决冲突后 add 保存 solved，再把 Work 改为 later：continue 应提交 Index 的 solved，保留未暂存 later，不用 marker 字符串推断 stage0 合法性。abort 则恢复操作开始时的实际 before，而不是 Index 的 solved 或 HEAD 的历史文件；整份 raw Index 回到原值，Work 只处理受影响区域。Binary／Mode 冲突保持 ours 时虽然未写文件，也须记录同值镜像；否则用户后来编辑它，中止便无法恢复。D/F 区域的真实目录祖先也须备份 full permissions。
 
-C++ 练习为 abort 画三个范围：原 raw HEAD、whole optional Index、affected Work NodeImages。原空 Directory／full permissions 和 dirty bytes 只能来自真实 before；若解决过程把原 File／Absent 变成目录，中止可删该恢复 root 下当前 Index 新跟踪子项；新 unknown child 仍阻挡整笔恢复，父目录 exact owned 不能递归授权。区域外新增 tracked Work 保留，只撤回它在整份 Index 中的暂存。业务 current Head CAS 与 State 的历史结构校验分别执行，短 journal 先 recover。该 Merge 验收轮只覆盖单步 Merge／Conflicted，后续 CherryPick／Revert 见下节，Ready 和其他操作仍未交付，展示也与存储分开：CONFLICT 路径列表达 64 MiB 时省略并提示 status，完整 Index／State 仍保留。另试 incoming 未跟踪文件恰等于目标字节与权限：它可原样保留并进入 Index；改变字节使它需要覆盖，则 unknown 保护拒绝。相关单元、CLI 与实验已通过，范围见进度页；Stash 恢复与 Phase 4 尚未实现。
+C++ 练习为 abort 画三个范围：原 raw HEAD、whole optional Index、affected Work NodeImages。原空 Directory／full permissions 和 dirty bytes 只能来自真实 before；若解决过程把原 File／Absent 变成目录，中止可删该恢复 root 下当前 Index 新跟踪子项；新 unknown child 仍阻挡整笔恢复，父目录 exact owned 不能递归授权。区域外新增 tracked Work 保留，只撤回它在整份 Index 中的暂存。业务 current Head CAS 与 State 的历史结构校验分别执行，短 journal 先 recover。该 Merge 验收轮只覆盖单步 Merge／Conflicted，后续 CherryPick／Revert 见下节，Ready 和其他操作仍未交付，展示也与存储分开：CONFLICT 路径列表达 64 MiB 时省略并提示 status，完整 Index／State 仍保留。另试 incoming 未跟踪文件恰等于目标字节与权限：它可原样保留并进入 Index；改变字节使它需要覆盖，则 unknown 保护拒绝。相关单元、CLI 与实验已通过，范围见进度页；该 Merge 验收轮尚未实现 Stash 恢复，后续验收见末节，Phase 4 仍未交付。
 
 
 ## 用三个快照理解正向与反向重放
@@ -386,7 +386,7 @@ Stash 保存子项已通过验收。先提交 A，将 note 改成 B 并 add，�
 
 C++ 练习给 NoChanges 分支排错误顺序：没有可保存的变化时，不应先要求身份，也不能为合法 missing Index 写一个 empty Index。然后给 stack 中每个 W 画 roots，不能仅看 refs/stash top；同一 ID 出现两次仍是两个列表位置，操作前绑定整份 raw stack／ref CAS。
 
-再比较两种“保存”：stash Trees 只有 bytes 与 executable mode，事务 before NodeImage 还有 full permissions、Directory／Absent，后者用于恢复失败前的现场。不能承诺未来 apply 会恢复所有权限或空目录。当前已验收 push／list／show／drop／clear，apply／pop／--index 与冲突继续／中止是下一批，[保存实验](../examples/experiments/stash.sh) 已落盘，实际检查 A/B/C/U 的 parent 关系、cleanup、NoChanges 原 bytes、中间 drop 保持 top 和 clear／HEAD／日志不动；源码已冻结，两种预设的保存实验、相关 38 项和交叉完整审查通过。
+再比较两种“保存”：stash Trees 只有 bytes 与 executable mode，事务 before NodeImage 还有 full permissions、Directory／Absent，后者用于恢复失败前的现场。apply 恢复保存的字节与执行位，不归档所有权限或空目录。该保存验收轮完成 push／list／show／drop／clear，apply／pop／--index 与冲突继续／中止由末节后续子项交付，[保存实验](../examples/experiments/stash.sh) 已落盘，实际检查 A/B/C/U 的 parent 关系、cleanup、NoChanges 原 bytes、中间 drop 保持 top 和 clear／HEAD／日志不动；源码已冻结，两种预设的保存实验、相关 38 项和交叉完整审查通过。
 
 
 ## 一份 context Blob 还要展开全部语义根
@@ -394,3 +394,12 @@ C++ 练习给 NoChanges 分支排错误顺序：没有可保存的变化时，�
 MGOP v2 StashApply context 已通过子项验收。假设栈为 [W0,W1,W2]，选 position=2：source 必须为 W2，raw_ref 必须解析为 W0。把整份 MGST 保存成普通 Blob 后，不能以为 GC 会自动认识它的 ID 列表；state_roots 必须 decode，再取全部 entries 的 W/H/I/U，包括没有选中的 W0/W1。Tree 与父图闭包仍由业务或未来 GC 展开。
 
 C++ 练习比较 v1 和 v2 字节：旧 kind 不能因为新增 optional 字段就多写一个空标志，否则旧 expected CAS 会改变。只有 StashApply 使用新版固定 context，presence／pop／position 的读取先验证长度和取值；raw ref 的大小写保存为 bytes，解析 ID 仅供语义核对。当前消息是 stash:apply/pop，不是提交来源，因此 context 恢复不应要求 identity。结构 codec、typed roots、live CAS 与最终 pop 删除是四个不同步骤；五组 tests 与 codec 已冻结并核对，两个预设的相关 45 项和独立审查通过；本批尚未新增 apply／pop／continue／abort。
+
+
+## 恢复 Stash 不等于把保存的 Work 全部 add
+
+本项完整恢复生命周期已通过子项验收，以下例子已由两个预设的真实实验验证。设 H=[one,two,three]，保存 I=[ONE,two,three]、W=[ONE,TWO,three]；当前 O=[one,two,THREE]。默认 RW 得到 [ONE,TWO,THREE]，Index 仍是 O，所以两处保存变化都在未暂存层。--index 的 RI 另得 [ONE,two,THREE]，于是第一行仍暂存、第二行未暂存；第三行来自当前历史。可以用两次 show :f 和实际 cat f 核对，不能只看 Work 正确就说 --index 正确。
+
+在 C++ 中先给每层建立完整结果，再组合原始 stage groups。Index-only 冲突可以让 Work 没有 marker；stage1/2/3 仍须解决。两层不同 groups 无法塞进同一组三个 stage，或 --index 遇到 RW D/F 时，拒绝比丢掉暂存意图更明确。U 是另一种输入：它要求真实叶位置缺失，不因为已有文件内容相同就获得覆盖授权。
+
+[恢复实验](../examples/experiments/stash-restore.sh) 先对比上述默认／--index，随后 pop 冲突核对条目保留，abort 恢复真实 before，再解决并 add 后继续编辑 Work。stash --continue 只检查 resolved Index、清 State 并完成原 pop，不会像 merge --continue 创建 Commit，也不会把后一次 Work 编辑写进 Index；HEAD 与日志保持。两个预设的恢复实验、原保存实验及相关 37 项检查通过，完整只读审查通过；Phase 3 整体验收仍待独立全量检查。最后练习画出 exact raw Stack/ref 的双份 pin：历史 context 校验通过，不等于此刻活跃栈没被外部编辑。
