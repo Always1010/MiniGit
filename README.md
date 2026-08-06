@@ -4,15 +4,15 @@ MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可�
 
 Phase 0 构建基础、Phase 1 本地快照闭环、Phase 2 比较与安全更新及 Phase 3 合并与应用均已验收，当前版本仍为 `0.1.0`。Phase 1 验收时 Debug 与 sanitized 各 54 项检查全部通过；各阶段真实范围与验证记录见 [进度](docs/progress.md)。
 
-Phase 2 的八个命令 diff／show／branch／switch／restore／reset／rm／mv 已完成整体验收，Debug 与 sanitized 各 147 项全量检查全部通过（130 单元、17 CLI），无 ASan／UBSan 报告。共同的数据模型、事务架构、与原生 Git 的边界及 Phase 3 依赖链集中记录在 [Phase 2 阶段总结](docs/progress.md#phase-2-阶段总结)。版本仍为 0.1.0；Phase 3 合并与应用的后续整体验收见下文，Phase 4 历史编辑与对象回收仍待实现，最终目标未完成。
+Phase 2 的八个命令 diff／show／branch／switch／restore／reset／rm／mv 已完成整体验收，Debug 与 sanitized 各 147 项全量检查全部通过（130 单元、17 CLI），无 ASan／UBSan 报告。共同的数据模型、事务架构、与原生 Git 的边界及 Phase 3 依赖链集中记录在 [Phase 2 阶段总结](docs/progress.md#phase-2-阶段总结)。版本仍为 0.1.0；Phase 3 合并与应用的后续整体验收见下文，该 Phase 2 验收时 Phase 4 仍待实现；当前 Rebase 子项与 GC 边界见下文，最终目标未完成。
 
 Phase 3 复用纯文本三方合并、Snapshot 的内容／模式／存在与 D/F 合并、完整 DAG 基线选择、显式提交工厂和真实 before 镜像。业务再组合 Index／Work／引用与日志，并以短事务发布；冲突状态支持跨进程继续／中止。各层接口与逐项验证历史集中在进度页，详细调用链见 [代码导读](docs/code-walkthrough.md)。
 
 Merge 使用唯一最低共同基线；CherryPick／Revert 根据单来源父快照正向／反向重放，成功保留空结果。Stash 独立保存 H/I/W/U，默认恢复 Work，--index 另合并暂存意图；pop 完整成功才删除条目，显式继续／中止不创建提交。首版 clean tracked、跨层 D/F、来源父数、未知节点和真实权限保护等限制见阶段总结，不承诺原生 Git 的全部策略或仓库格式兼容。
 
-Phase 3 的完整 Merge／CherryPick／Revert／Stash（限定本项目范围）已完成独立整体验收。冻结代码的 Debug 与 sanitized 各 237 项全量检查（216 单元、21 CLI）全部通过，用时 192.25／581.97 秒，无 ASan／UBSan 报告；共享架构、核心学习结果、Git 差异与 Phase 4 依赖集中见 [Phase 3 阶段总结](docs/progress.md#phase-3-阶段总结已验收)。版本仍为 0.1.0，rebase／gc 尚未交付，最终目标未完成。
+Phase 3 的完整 Merge／CherryPick／Revert／Stash（限定本项目范围）已完成独立整体验收。冻结代码的 Debug 与 sanitized 各 237 项全量检查（216 单元、21 CLI）全部通过，用时 192.25／581.97 秒，无 ASan／UBSan 报告；共享架构、核心学习结果、Git 差异与 Phase 4 依赖集中见 [Phase 3 阶段总结](docs/progress.md#phase-3-阶段总结已验收)。版本仍为 0.1.0；Rebase 业务现已通过子项验收，GC 尚未交付，Phase 4 与最终目标未完成。
 
-Phase 4 首个子项 Rebase 状态持久化基础已通过子项验收：明确 Ready／Conflicted、线性 queue／cursor、onto 与原分支镜像，以及受约束的 canonical CAS 更新。状态基础源码与五组测试已冻结核对，两个预设相关 25 项及完整只读审查通过；没有 rebase CLI、实际重放／continue／abort 或 GC。范围见 [状态基础进度](docs/progress.md#rebase-状态基础已验收)，Phase 3 全量验收证据保持历史范围。
+Phase 4 首个子项 Rebase 状态持久化基础已通过子项验收：明确 Ready／Conflicted、线性 queue／cursor、onto 与原分支镜像，以及受约束的 canonical CAS 更新。状态基础源码与五组测试已冻结核对，两个预设相关 25 项及完整只读审查通过；该基础验收轮没有 rebase CLI 或实际重放；当前 Rebase 业务生命周期也已通过子项验收：两预设各 38 项相关检查及 rebase 实验通过；GC 仍未交付，未宣称全 251 项重跑或 Phase 4 整体验收。范围见 [状态基础进度](docs/progress.md#rebase-状态基础已验收) 与 [Rebase 业务验收](docs/progress.md#rebase-业务生命周期已验收)，Phase 3 全量验收证据保持历史范围。
 
 ## 构建与运行
 
@@ -62,6 +62,7 @@ Debug 与 `sanitized` 预设的 CLI 基础检查均已在 Linux 通过；后者�
 | `merge [-m message] [--] revision`、`merge --continue`、`merge --abort` | 单源合并、从 Index 继续或恢复真实备份；已验收 |
 | `cherry-pick [--message text] [--] revision`、`cherry-pick --continue`、`cherry-pick --abort` | 应用单来源变化并保留来源作者；已验收 |
 | `revert [--message text] [--] revision`、`revert --continue`、`revert --abort` | 反向应用单来源变化，保存新的单父提交；已验收 |
+| `rebase [--] revision`、`rebase --continue`、`rebase --abort` | 重放线性来源、继续或中止；已通过子项验收 |
 | `stash`、`stash push [-u] [-m message]` | 保存独立 Index／Work 与可选 untracked 后清理；已验收 |
 | `stash list`、`stash show [--] [stash@{N}]` | 列表与已保存 H→W+U 差异，不读取当前 Index／Work |
 | `stash drop [--] [stash@{N}]`、`stash clear` | 删除位置或清空活跃栈，不移动 HEAD／日志；已验收 |

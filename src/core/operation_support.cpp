@@ -183,8 +183,12 @@ TransactionPlan plan_abort_operation(const Repository& repo, const OperationStat
     plan_move_head(repo, plan, state.current_head, state.original_head, "operation:abort");
     if (raw_index != original_index) plan.metadata.push_back({"index", raw_index, original_index});
     const auto raw_head = raw_metadata(repo, "HEAD");
-    if (raw_head != std::optional(state.original_head_bytes))
-        plan.metadata.push_back({"HEAD", raw_head, state.original_head_bytes});
+    if (raw_head != std::optional(state.original_head_bytes)) {
+        const auto head_change = std::find_if(plan.metadata.begin(), plan.metadata.end(),
+            [](const auto& change) { return change.path == "HEAD"; });
+        if (head_change != plan.metadata.end()) head_change->after = state.original_head_bytes;
+        else plan.metadata.push_back({"HEAD", raw_head, state.original_head_bytes});
+    }
     plan_worktree_update(repo, plan, targets, owned.paths);
     plan_operation_update(repo, plan, state, std::nullopt);
     check_original_metadata(repo, state.current_head, raw_head, raw_index);

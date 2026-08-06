@@ -22,6 +22,7 @@
 #include "minigit/move.hpp"
 #include "minigit/merge.hpp"
 #include "minigit/replay.hpp"
+#include "minigit/rebase.hpp"
 #include "minigit/stash.hpp"
 
 #include <charconv>
@@ -51,7 +52,8 @@ struct HistoryArguments {
     std::string revision;
     std::optional<std::string> message;
 };
-HistoryArguments parse_history_arguments(const std::vector<std::string_view>& args, std::string_view message_option) {
+HistoryArguments parse_history_arguments(const std::vector<std::string_view>& args,
+                                        std::optional<std::string_view> message_option) {
     HistoryArguments parsed;
     bool options = true, action_set = false, revision_set = false;
     for (std::size_t i = 1; i < args.size(); ++i) {
@@ -62,7 +64,7 @@ HistoryArguments parse_history_arguments(const std::vector<std::string_view>& ar
             parsed.action = args[i] == "--continue" ? HistoryAction::Continue : HistoryAction::Abort;
             continue;
         }
-        if (options && args[i] == message_option) {
+        if (options && message_option && args[i] == *message_option) {
             if (parsed.message || i + 1 == args.size()) throw UsageError("message option requires one message");
             parsed.message = args[++i];
             continue;
@@ -172,6 +174,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  merge [-m message] <revision> | merge --continue|--abort\n"
                      "  cherry-pick [--message text] <revision> | cherry-pick --continue|--abort\n"
                      "  revert [--message text] <revision> | revert --continue|--abort\n"
+                     "  rebase <revision> | rebase --continue|--abort  Replay linear history\n"
                      "  stash [push [-u] [-m message]] | stash list|show|drop|clear\n"
                      "  stash show|drop [stash@{number}]  Inspect or remove an entry\n"
                      "  stash apply|pop [--index] [stash@{number}]  Restore saved changes\n"
@@ -581,6 +584,24 @@ int run(const std::vector<std::string_view>& args) {
         case minigit::MergeOutcome::Merged: std::cout << "Merged " << result.head.id->hex() << '\n'; break;
         case minigit::MergeOutcome::Aborted: std::cout << "Merge aborted.\n"; break;
         case minigit::MergeOutcome::Conflicted: return report_conflicts("Merge", command, result.conflicts);
+        }
+        return 0;
+    }
+    if (command == "rebase") {
+        const auto parsed = parse_history_arguments(args, std::nullopt);
+        minigit::RebaseOptions rebase;
+        switch (parsed.action) {
+        case HistoryAction::Start: rebase.action = minigit::RebaseAction::Start; break;
+        case HistoryAction::Continue: rebase.action = minigit::RebaseAction::Continue; break;
+        case HistoryAction::Abort: rebase.action = minigit::RebaseAction::Abort; break;
+        }
+        rebase.revision = parsed.revision;
+        const auto result = minigit::rebase_repository(minigit::Repository::discover(), rebase);
+        switch (result.outcome) {
+        case minigit::RebaseOutcome::UpToDate: std::cout << "Already up to date.\n"; break;
+        case minigit::RebaseOutcome::Applied: std::cout << "Rebased " << result.head.id->hex() << '\n'; break;
+        case minigit::RebaseOutcome::Aborted: std::cout << "Rebase aborted.\n"; break;
+        case minigit::RebaseOutcome::Conflicted: return report_conflicts("Rebase", command, result.conflicts);
         }
         return 0;
     }
