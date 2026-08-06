@@ -74,7 +74,7 @@ MiniGit 的 log 已遍历完整 parent 图，不能只沿第一父链。一份�
 
 规划中的 merge 为两个分支找到共同祖先，比较 base、ours、theirs，得到结果 tree；产生新合并提交时记录两个 parent。cherry-pick 把一个提交相对其父提交的改变应用到当前历史，revert 则应用逆向改变。冲突状态需要持久化，才能在解决后继续或中止，不能只留下冲突标记而丢失操作上下文。
 
-引用移动不等于删除对象。reflog 记录移动的线索，gc 根据根集合分析可达性，再遵守保留规则回收不可达对象。真实 Git 还有 packfile 和增量对象，见 [gitformat-pack](https://git-scm.com/docs/gitformat-pack)。MiniGit 首先使用松散对象，gc 的具体策略在 Phase 4 实现时定义。
+引用移动不等于删除对象。reflog 记录移动的线索，gc 根据根集合分析可达性，再遵守保留规则回收不可达对象。真实 Git 还有 packfile 和增量对象，见 [gitformat-pack](https://git-scm.com/docs/gitformat-pack)。MiniGit 首先使用松散对象，gc 的具体策略见末节已验收首版。
 
 ## 创建分支不等于切换分支
 
@@ -82,7 +82,7 @@ MiniGit 的 `branch topic` 把当前提交 ID 写入 refs/heads/topic，同时�
 
 `branch -d topic` 用当前 HEAD 的完整祖先集合判断是否可安全删除。若 B 的 parent 是 A，topic 指向 A，则从 B 沿 parent 可达 A，可以删除 topic；如果另一个分支指向独立提交 C，文件即使与 B 相同，也不能由快照相等推导出已合入。多父历史必须包含所有 parent，拓扑校验保证判断来自有效的图。
 
-`-D` 明确放弃这项祖先保护，但仍要求原分支快照和删除事务中的日志对象有效。它同时删除分支 ref 与分支日志，不改变 Commit 本身，也不删除 HEAD 日志。删除分支后对象暂时仍在；将来 GC 才根据当前引用、保留日志和进行中操作等根决定可达性。本实现不提供删除后永久保存分支日志的保证。
+`-D` 明确放弃这项祖先保护，但仍要求原分支快照和删除事务中的日志对象有效。它同时删除分支 ref 与分支日志，不改变 Commit 本身，也不删除 HEAD 日志。删除分支后对象暂时仍在；GC 根据当前引用、保留日志和进行中操作等根决定可达性。本实现不提供删除后永久保存分支日志的保证。
 
 ## Reflog 记录位置变化，log 读取父关系
 
@@ -101,7 +101,7 @@ flowchart LR
     end
 ```
 
-MiniGit 将当前分支引用、HEAD 日志和分支日志放入同一短事务；分离 HEAD 使用 HEAD 文件和它的日志。恢复重放已规划的完整 before/after 日志字节，不重新生成业务事件。Reflog 不保存文件内容，未来 GC 仍须沿它保留的 Commit ID 检查对象可达性；只保留装着日志字节的备份 Blob 不够。
+MiniGit 将当前分支引用、HEAD 日志和分支日志放入同一短事务；分离 HEAD 使用 HEAD 文件和它的日志。恢复重放已规划的完整 before/after 日志字节，不重新生成业务事件。Reflog 不保存文件内容，GC 须沿它保留的 Commit ID 检查对象可达性；只保留装着日志字节的备份 Blob 不够。
 
 当前 CLI `reflog` 逆序显示事件，缺失端点用 `-`，只接受 HEAD 或分支，文件缺失为空。显示的 `HEAD@{0}` 是序号标签，尚未支持选择器解析、身份、时间、过期或撤销动作。MGRL 是 MiniGit 的简化格式，不声称兼容 Git 的 reflog 文件。
 
@@ -171,7 +171,7 @@ Rm 已通过子项验收。普通模式将 Directory 当成本地类型变化，
 
 MiniGit 在 Phase 2 增加自己的短事务日志：实际工作文件先备份为 Blob，节点的 before/after 与精确元数据形成恢复计划，Prepared 状态选择恢复旧值，Committed 状态选择确认新值。这是 MiniGit 的工程方案，不代表它复刻了 Git 的锁文件、工作区更新或全部失败行为。内容模型与操作恢复协议是不同层次，可以参考同一对象原理，同时采用明确的简化协议。
 
-日志可以让下一次进程识别上一次未完成的工作，但它也会成为未来 gc 的保留根：如果备份 Blob 被回收，日志本身存在也无法恢复。日志中的 Index、HEAD、引用和 reflog 还包含语义引用，gc 必须解析这些数据，不能仅保留装着元数据字节的 Blob。
+日志可以让下一次进程识别上一次未完成的工作，它的备份也不能被 gc 回收：如果备份 Blob 被回收，日志本身存在也无法恢复。日志中的 Index、HEAD、引用和 reflog 还包含语义引用，不能仅保留装着元数据字节的 Blob；本版 gc 拒绝 pending 短事务，须先 recover，不在未清理 journal 上执行回收。
 
 ## Mv 为什么不能等同于移动后再 add
 
@@ -252,7 +252,7 @@ MGOP v2 StashApply context 基础已通过子项验收。选择 stash@{2} 时，
 [Git 官方 stash 文档](https://git-scm.com/docs/git-stash)说明 --index 尝试恢复暂存状态，pop 遇冲突会保留条目，解决后需手动 drop。MiniGit 的 stash --continue／--abort 是显式生命周期扩展：continue 从 resolved typed Index 完成并按原 pop 意图删除条目，保留未暂存 Work；abort 恢复保存的实际 before。原生 Git 没有这两个 stash 子动作。MiniGit 首版要求启动 Index=HEAD 且 tracked Work 干净，选择器仅 stash@{十进制位置}，使用 MGST 活跃栈而非 refs/stash reflog；不把这些接口称为 Git 兼容实现。本项不创建提交、不移动 HEAD／reflog，也不要求身份，两预设相关检查、恢复与原保存实验及独立完整审查通过；该 Stash 恢复轮的后续 Phase 3 全量验收见下段。
 
 
-Phase 3 两预设各 237 项全量检查通过，整体验收已完成；命令范围、Git 差异与学习成果集中见 [阶段总结](progress.md#phase-3-阶段总结已验收)。后续 Rebase 不能只重复调用有自锁和 guard 的公开 Replay 入口；GC 也不能把 typed-only roots 当成完整可达闭包，Rebase 业务后续验收见下节，GC 仍未交付。
+Phase 3 两预设各 237 项全量检查通过，整体验收已完成；命令范围、Git 差异与学习成果集中见 [阶段总结](progress.md#phase-3-阶段总结已验收)。后续 Rebase 不能只重复调用有自锁和 guard 的公开 Replay 入口；GC 也不能把 typed-only roots 当成完整可达闭包，Rebase 业务后续验收见下节，GC 首版子项验收见末节。
 
 
 ## Ready 不是已经解决的冲突
@@ -267,3 +267,10 @@ Rebase 状态基础已通过子项验收，实际重放业务也已在下节通�
 本业务已通过子项验收。从唯一共同 base 到 original 的 first-parent 线性来源依次重放到 onto，ours 是当前已重放的新历史，theirs 是下一原来源，base 是该来源自己的父；每次成功的新 Commit 只有父 current。原作者与消息保留，当前身份生成 committer，空结果也统一保留；原 symbolic branch 在中间步骤不移动，最后 attach 与 State 删除一起发布。
 
 [Git 官方 rebase 文档](https://git-scm.com/docs/git-rebase)描述重放时 ours 是已重放序列，并区分原本为空、变为空和已应用提交的策略，提供 --empty 与 interactive／rebase-merges 等选项。MiniGit 本版选择统一 preserve-empty、唯一 base 后的纯线性单父队列，不提供这些复杂选项、--onto、mainline 或 skip；多父来源拒绝，不重建 merge topology。无状态 UpToDate／FF 不要求身份，真正来源重放需要当前提交身份。公共接口与实际业务源码已最终冻结，两个预设相关 38 项及实验已通过；该业务验收来自真实行为验证，不只是 codec 能表示 Ready。
+
+
+## 回收依据是根与闭包，不是“当前分支看不到”
+
+[Git 官方 gc 文档](https://git-scm.com/docs/git-gc)说明保留范围包括引用、Index 与 reflog，也将较新对象连同其可达后代保留；原生维护还涉及打包与日志过期。MiniGit 本次已通过子项验收的首版只回收规范松散对象，默认 mtime grace 为 86400 秒，--prune-now 关闭该普通窗口，但 future-mtime 始终保守保留。没有 pack／reflog expiration，不等同于原生 git gc 的全部维护任务。
+
+rebase 移动原 branch 后，旧 Commit 仍可能由 HEAD／分支日志保留；Index 冲突 stage 和活跃操作队列也可能指向当前 Tree 看不到的内容。raw Index／MGST backup 是普通 Blob，只有 semantic decode 才能得到其内部 ID；GC 再沿 Commit 全父与 Tree／Blob 完整闭包标记。本版要求全部 orphan 一并认证、任何 typed edge 缺失或错误都在 unlink 前拒绝；该更保守前检策略与自有仓库格式的当前实现边界须一起理解，两个预设相关 24 项及实际 GC 实验通过；完整 Phase 4 全量验证仍待独立节点。完整 typed graph 前检后还要求 Kahn 无 cycle，删除采用引用者先于 child 的拓扑顺序；这让正常部分删除后的剩余 orphan 不因先删 child 形成悬空边，仍不承诺原子回收或任意外部写入安全。

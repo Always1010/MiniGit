@@ -23,6 +23,7 @@
 #include "minigit/merge.hpp"
 #include "minigit/replay.hpp"
 #include "minigit/rebase.hpp"
+#include "minigit/gc.hpp"
 #include "minigit/stash.hpp"
 
 #include <charconv>
@@ -175,6 +176,7 @@ int run(const std::vector<std::string_view>& args) {
                      "  cherry-pick [--message text] <revision> | cherry-pick --continue|--abort\n"
                      "  revert [--message text] <revision> | revert --continue|--abort\n"
                      "  rebase <revision> | rebase --continue|--abort  Replay linear history\n"
+                     "  gc [--prune-now]          Collect unreachable loose objects\n"
                      "  stash [push [-u] [-m message]] | stash list|show|drop|clear\n"
                      "  stash show|drop [stash@{number}]  Inspect or remove an entry\n"
                      "  stash apply|pop [--index] [stash@{number}]  Restore saved changes\n"
@@ -585,6 +587,14 @@ int run(const std::vector<std::string_view>& args) {
         case minigit::MergeOutcome::Aborted: std::cout << "Merge aborted.\n"; break;
         case minigit::MergeOutcome::Conflicted: return report_conflicts("Merge", command, result.conflicts);
         }
+        return 0;
+    }
+    if (command == "gc") {
+        if (args.size() > 2 || (args.size() == 2 && args[1] != "--prune-now"))
+            throw UsageError("gc accepts only --prune-now");
+        const auto result = minigit::collect_garbage(minigit::Repository::discover(),
+                                                   {args.size() == 2});
+        std::cout << "GC retained " << result.retained << " objects; removed " << result.removed << " objects.\n";
         return 0;
     }
     if (command == "rebase") {
