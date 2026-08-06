@@ -424,3 +424,20 @@ run_steps 每轮先 check_branch 与 current HEAD CAS。Ready 从 source parent�
 accumulate_work 不是拼接变化列表：已有 key 保留 first before、更新 after；新 key 若原先被 File／Absent 祖先遮挡，before 记 Absent。它还刷新已记录目录祖先的实际 latest after，并把最新 File／Absent 祖先下的旧 descendants 归为 Absent。abort 复用 [operation_support.cpp](../src/core/operation_support.cpp) 的 fresh-plan：已有 HEAD MetadataChange 时调整其 after 为 exact original raw bytes，避免追加重复 HEAD 记录；原 branch pin 仍要通过。
 
 已落盘 [test_rebase.cpp](../tests/unit/test_rebase.cpp) 的八组围绕完整历史与快捷路径、顺序／作者／空提交、Ready 重试与 raw branch CAS、Conflicted Index-only 与非末 dirty 阻挡、累计 File／Absent、D/F full modes、非法启动及两种 durable 恢复。[rebase_cli.cmake](../tests/integration/rebase_cli.cmake) 还覆盖末步 FIFO 保留、未执行 transient source 被未知占用阻挡后重试。第五组的新增 section 尤其检查原 p 为 File(0751)，用户解决成 Directory(0750) 后，下个来源仅 child 发生文本冲突：旧 p.after 必须刷新为真实 Directory，child.before 仍为原 Absent，abort 才能恢复 File(0751) 与 exact raw HEAD／Index。两个预设各 38 项相关检查、实际 rebase 实验与完整只读审查均通过；本轮没有执行全 251 项，精确命令与用时见 [验收记录](progress.md#rebase-业务生命周期已验收)。
+
+
+## GC 阅读路线：inventory、semantic roots 与 mark 是三层
+
+GC header／core 与八组测试已最终冻结并通过子项验收。[gc.hpp](../include/minigit/gc.hpp) 定义 collect_garbage(repo,options={}) 与 GcOptions／GcResult；入口自锁并拒绝 pending Transaction，不要求身份或读取 Work，允许 active Operation 并保留完整语义根。
+
+阅读 [gc.cpp](../src/core/gc.cpp) 的实际链：inventory 用 lower_hex／inspect_status 收集规范对象 ID、类型占位和 mtime；describe_graph 逐个 ObjectStore.read，再 decode Commit／Tree 构建 typed edges，最后核全部目标存在且类型正确。deletion_order 对引用者→被引用者做 Kahn 排序并拒绝 cycle，发生在任何根读取与删除前。
+
+Roots::path／raw 共用独立的 metadata 预算，raw 先按 file_size 检查剩余额度，实际 read bytes 再计入复核；reference_roots 遍历全部 refs，head_root 区分 symbolic unborn 与 detached，已有 Directory／被 File 祖先遮挡的目标不能冒充 unborn。log_roots 解码所有 HEAD／heads 日志端点；other_roots 解码全 Index stages、完整 Stash pair 和 Operation semantic roots，refs/stash 空目录或目录命名空间也不能冒充缺失的 top ref。随后将 grace／future objects 加根，mark 的 enqueue 插入 visited 时才进 pending，避免多次共享子图压栈；sweep 按 deletion_order 跳过 reachable，逐一 remove_regular。
+
+逻辑 graph 64 MiB 计 node IDs／types／paths、edge IDs／types、Commit actor／message 和 Tree name／mode；这是表示预算，不是精确 heap 上限。root metadata paths＋raw bytes 另共用 64 MiB，refs／logs 各限 100000 遍历项（包含目录）；对象 payload 每个读取后释放。全部对象、根、类型与拓扑验证完成前不删除。
+
+
+已落盘 [gc_cli.cmake](../tests/integration/gc_cli.cmake) 覆盖 unborn 空库与严格参数、current Index 根／Work 不变、fresh grace／prune-now、reset 后日志历史、非 top Stash、损坏 orphan 与 unsafe inventory 在删除前拒绝、重复回收。CLI 资产已冻结并通过两个预设的实际验证，完整审查通过。
+
+
+[test_gc.cpp](../tests/unit/test_gc.cpp) 八组覆盖全部 refs／parents／nested Tree、Index 所有 stages 且不读 Work／不需身份、保留的已删分支与 HEAD 日志、fresh Commit→old Tree／Blob 与 future mtime、非 top Stash H/I/U、active Merge／Rebase Ready／Conflicted／saved Stack 和 raw Index／Work、真实 Prepared guard 与部分 sweep 重试、损坏 orphan／schema／typed edge／unsafe inventory／root 的零删除拒绝。部分 sweep fixture 让 Blob fanout 为 0500，正常先删 Commit／Tree 后 Blob unlink 拒绝，恢复权限后再次完整前检并清掉余项；需要非 root 身份，root 会跳过该权限 fixture。本轮真实 uid1000 执行该权限 fixture 通过，无 SKIP；两预设相关 24 项与实验均通过，完整命令和范围见 [GC 验收](progress.md#gc已验收)，未执行全 260 项。

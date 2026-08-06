@@ -188,7 +188,7 @@ C++ 学习练习是比较这两个类型：`CommitGraph` 用 map 去重并服务
 
 再追踪一次失败：规划器复制 TransactionPlan，追加事件并编码，全部成功才赋回；执行器随后发布 Prepared，将分支引用和两份日志一起更新。如果恢复再次追加“commit”，事件数量会随着恢复次数增长。实际恢复直接选择 journal 里的 before 或 after 字节，因此重复 recover 保持同一结果。可在 [reflog 测试](../tests/unit/test_reflog.cpp) 找到中断及重试的断言。
 
-日志中的 old/new 是 Commit 根，不是文件备份。为了保留旧历史线索，事务只验证这些 Commit 的类型和结构，不为每个旧事件展开 Tree；新发布目标仍由 Snapshot 完整校验。思考未来 GC：删除当前分支后，哪些日志端点仍需保留？日志过期策略如何影响这些根？当前没有过期和回收命令，不能把这些问题当作已有行为。
+日志中的 old/new 是 Commit 根，不是文件备份。为了保留旧历史线索，事务只验证这些 Commit 的类型和结构，不为每个旧事件展开 Tree；新发布目标仍由 Snapshot 完整校验。思考未来 GC：删除当前分支后，哪些日志端点仍需保留？日志过期策略如何影响这些根？该 reflog 学习轮尚无回收命令；本版仍没有过期策略，GC 后续验收见末节。
 
 ## MiniGit 实验：创建一个名字，保留一个历史位置
 
@@ -405,7 +405,7 @@ C++ 练习比较 v1 和 v2 字节：旧 kind 不能因为新增 optional 字段�
 [恢复实验](../examples/experiments/stash-restore.sh) 先对比上述默认／--index，随后 pop 冲突核对条目保留，abort 恢复真实 before，再解决并 add 后继续编辑 Work。stash --continue 只检查 resolved Index、清 State 并完成原 pop，不会像 merge --continue 创建 Commit，也不会把后一次 Work 编辑写进 Index；HEAD 与日志保持。两个预设的恢复实验、原保存实验及相关 37 项检查通过，完整只读审查通过；该恢复子项之后的 Phase 3 全量验收见下段。最后练习画出 exact raw Stack/ref 的双份 pin：历史 context 校验通过，不等于此刻活跃栈没被外部编辑。
 
 
-Phase 3 的阶段练习可以复用上述 Merge、Replay 与 Stash 实验，两个预设各 237 项完整回归已通过，不新增重复脚本。用三方输入、stages／marker、Index／Work、before／after、semantic roots／live CAS 五组区别解释一次暂停与恢复；统一学习结果和实验执行范围见 [阶段总结](progress.md#phase-3-阶段总结已验收)，后续 Rebase 的真实队列已在下节通过子项验收，GC 可达闭包仍待实施。
+Phase 3 的阶段练习可以复用上述 Merge、Replay 与 Stash 实验，两个预设各 237 项完整回归已通过，不新增重复脚本。用三方输入、stages／marker、Index／Work、before／after、semantic roots／live CAS 五组区别解释一次暂停与恢复；统一学习结果和实验执行范围见 [阶段总结](progress.md#phase-3-阶段总结已验收)，后续 Rebase 的真实队列已在下节通过子项验收，GC 可达闭包的后续验收见末节。
 
 
 ## 同一个 cursor 的两种继续含义
@@ -423,3 +423,13 @@ Rebase 业务已通过子项验收。设 base=A，原历史 A→B→C，目标 A
 
 
 已落盘的 [rebase 实验](../examples/experiments/rebase.sh) 用三行文件把 topic 首行修改与 main 尾行修改组合，再重放第二个来源。阅读脚本时对照新链 onto→first′→tip′、旧 Commit bytes 不变、source author／当前 committer；随后观察冲突 abort 恢复 0640 与 exact raw Index／HEAD，以及 add 后再次编辑 Work，continue 仍以 Index 提交。脚本两个预设实际执行均 exit 0，bash -n 通过；可执行入口为 `bash examples/experiments/rebase.sh ./build/debug/minigit`，sanitized 使用对应二进制。
+
+
+## 新 Commit 引用旧 Tree，为什么不能只留新文件
+
+GC 已通过子项验收。设一个尚无 ref 的新 Commit K 指向旧 Tree T，T 又指向旧 Blob B；默认 freshness 若只保留 K，再删除 T／B，就留下无法读取的历史。正确模型是把 K 加入额外 roots，然后沿 K→T→B 完整标记。--prune-now 关闭普通新对象窗口，仍要保留真正引用、日志、Index stages、Stash 与操作备份根；future-mtime 本版仍保守保留。
+
+再画两张图：当前 Index 的 stage1／2／3 直接引用 Blob；原 raw Index backup 的 Blob 载荷经 decode 才暴露相同形式的引用。saved Stack 的全部 entry 与 Rebase 尚未执行 queue 也如此。C++ 练习区分“读取一个对象后释放 payload”与“保留有界 graph”，以及“全部认证成功”与“删除时失败可能已有部分无根对象被清理”。再想 K→T→B 的删除顺序：若先删 B，中途停止后 K／T 悬空，下一轮全对象校验拒绝；先 K 后 T 后 B，正常部分删除后剩余对象仍保留它们引用的 children。因此 Kahn 的引用者先序同时服务 cycle 前检和 sweep，不是排序展示而已。不要把改写分支后的旧 Commit 误当无根 fixture，因为 reflog 尚无 expiration。
+
+
+已落盘 [GC 实验](../examples/experiments/gc.sh) 先用 hash-object -w 生成未 add 的 orphan Blob，默认 grace 保留、prune-now 再清理对象，工作文件仍保留。再检查 reset 后 old tip 由 reflog 保留、栈下方 entry 仍能 pop、活跃 Merge 的 stages1／2／3 与 raw Index 保持且 abort 可用。脚本 bash-n 已通过，两个预设实际执行均通过、exit 0；入口为 `bash examples/experiments/gc.sh ./build/debug/minigit`，sanitized 使用对应二进制。

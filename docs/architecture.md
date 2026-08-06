@@ -208,7 +208,7 @@ flowchart TD
 
 `plan_append_reflog` 与 `plan_move_head` 只准备内存中的 MetadataChange，不写文件；已有日志尾项的 new 必须与追加事件的 old 连续。实现先复制计划，在副本中完成检查与编码，再移动赋回，因此异常不会留下半个日志规划。执行器将日志 before/after 存为备份 Blob，与引用一起恢复；recover 不再次调用 append，避免一次中断增加两次事件。
 
-事务预检与 `transaction_roots` 解析日志双方所有存在的 ID，验证对象哈希、Commit 类型及结构，并将它们加入语义根；历史事件不逐项展开 Tree。旧 Commit 的树缺损不应阻止单纯保存这条历史线索，新发布的提交目标仍须通过完整 Snapshot 校验。GC 尚未实现；actor、时间、过期策略、选择器及 reflog 撤销命令也不在当前格式中。
+事务预检与 `transaction_roots` 解析日志双方所有存在的 ID，验证对象哈希、Commit 类型及结构，并将它们加入语义根；历史事件不逐项展开 Tree。旧 Commit 的树缺损不应阻止单纯保存这条历史线索，新发布的提交目标仍须通过完整 Snapshot 校验。GC 的后续子项实现见末节；actor、时间、过期策略、选择器及 reflog 撤销命令不在当前格式中。
 
 ## Branches：管理引用，保持三棵树原值
 
@@ -516,7 +516,7 @@ flowchart LR
     P --> T[短事务 operation before-after 发布与恢复]
 ```
 
-state_roots 校验 Commit 类型与结构，Work File 为 Blob；raw Index backup 为 Blob，还需 decode_index 并校验内部各 stage 的 Blob。历史 Commit roots 不展开 Tree／parents，业务随后预验参与合并的完整快照，未来 GC 自 roots 遍历闭包。事务 operation metadata 的 before／after 共用同一语义校验和根并集；删除 after=null 时 before roots 仍保留到短事务清理，journal 的 metadata backup Blob 与状态内部 Index backup 是两层不同对象。
+state_roots 校验 Commit 类型与结构，Work File 为 Blob；raw Index backup 为 Blob，还需 decode_index 并校验内部各 stage 的 Blob。历史 Commit roots 不展开 Tree／parents，业务随后预验参与合并的完整快照，后续 GC 自 roots 遍历闭包。事务 operation metadata 的 before／after 共用同一语义校验和根并集；删除 after=null 时 before roots 仍保留到短事务清理，journal 的 metadata backup Blob 与状态内部 Index backup 是两层不同对象。
 
 caller-lock read／guard／roots／plan 不写对象或 Work；plan 使用实际原字节、expected State 的 canonical 编码比较，首版允许创建、删除、同值无操作，拒绝 existing→不同 State，并以 next 副本保证异常时 caller plan 不变。历史结构有效不表示当前 HEAD 仍匹配，未来业务须另作 current Head CAS；事务继续保护规划后的原 metadata 字节。
 
@@ -630,7 +630,7 @@ U 不进入三方合并，恢复叶必须实际缺失，已有同内容文件、
 最终 pair pin 仍走 Transaction 的 refs/stash 语义预检，因此即使选择非 top，apply／continue／abort 也要求原 top W 的自 Tree 完整；read_stash_stack／stash_roots 的 typed-only 历史角色检查并不替代这一步。冲突备份沿用共享 conflict_work，包含 Index-only 冲突的同值 Work、D/F 区域与其实际目录祖先，解决后中止不会因“启动时没写这个文件”漏掉真实权限。
 
 
-Phase 3 四组业务及共享依赖已完成整体验收，两预设各 237 项全量检查通过，阶段架构与下一队列／可达标记依赖集中见 [Phase 3 总结](progress.md#phase-3-阶段总结已验收)。该 Phase 3 验收轮没有 Rebase 队列或 Ready；当前状态基础与已验收 Rebase 业务见下节，GC 仍未交付。
+Phase 3 四组业务及共享依赖已完成整体验收，两预设各 237 项全量检查通过，阶段架构与下一队列／可达标记依赖集中见 [Phase 3 总结](progress.md#phase-3-阶段总结已验收)。该 Phase 3 验收轮没有 Rebase 队列或 Ready；当前状态基础与已验收 Rebase 业务见下节，GC 的后续子项验收见末节。
 
 
 ## Rebase 状态基础：区分待执行与已冲突
@@ -647,7 +647,7 @@ stateDiagram-v2
     Conflicted --> [*]: 删除 State / 业务中止
 ```
 
-图只描述该基础轮的状态更新约束；Rebase 业务的后续验收见下节。推进必须保留 original logical/raw HEAD、raw Index、onto、queue、rawbranch 与全部旧 Work 的 first before；after 可更新。纯 validator 只拒绝不合法 replacement，业务负责实际捕获新 keys、处理原 File／Absent 祖先遮挡、D/F full permissions／必要 noops，最后 live CAS／attach。typed roots 包含全部 queue 与 onto，去重 Commit payload 总量 64 MiB，不展开 Tree／DAG；完整 GC 仍待后续。
+图只描述该基础轮的状态更新约束；Rebase 业务的后续验收见下节。推进必须保留 original logical/raw HEAD、raw Index、onto、queue、rawbranch 与全部旧 Work 的 first before；after 可更新。纯 validator 只拒绝不合法 replacement，业务负责实际捕获新 keys、处理原 File／Absent 祖先遮挡、D/F full permissions／必要 noops，最后 live CAS／attach。typed roots 包含全部 queue 与 onto，去重 Commit payload 总量 64 MiB，不展开 Tree／DAG；完整 GC 的后续子项验收见末节。
 
 
 ## Rebase 业务：原分支固定，临时位置逐来源前进
@@ -671,4 +671,23 @@ flowchart TD
     C --> A
 ```
 
-Ready 与 Conflicted 的持久含义决定 continue 来源：不能把尚未执行来源的 Ready Index 当作解决结果。Conflicted 完成当前来源后若仍有步骤，dirty Work 会阻挡下一 Ready；末步不读取 Work。累计 first before 必须尊重旧 original File／Absent 祖先遮挡，latest after 也随真实布局更新，D/F full permissions 与 noops、unknown 后代保护不放宽。实际调用链见 [Rebase 导读](code-walkthrough.md#rebase-business从单步到有持久边界的循环)。两预设各 38 项与实验通过、完整审查通过，验证范围见 [进度](progress.md#rebase-业务生命周期已验收)；GC 与 Phase 4 整体验收仍待后续。
+Ready 与 Conflicted 的持久含义决定 continue 来源：不能把尚未执行来源的 Ready Index 当作解决结果。Conflicted 完成当前来源后若仍有步骤，dirty Work 会阻挡下一 Ready；末步不读取 Work。累计 first before 必须尊重旧 original File／Absent 祖先遮挡，latest after 也随真实布局更新，D/F full permissions 与 noops、unknown 后代保护不放宽。实际调用链见 [Rebase 导读](code-walkthrough.md#rebase-business从单步到有持久边界的循环)。两预设各 38 项与实验通过、完整审查通过，验证范围见 [进度](progress.md#rebase-业务生命周期已验收)；GC 子项验收见下节；Phase 4 整体验收仍待独立全量验证。
+
+
+## GC：先认证全部对象，再标记根的完整闭包
+
+本项源码与八组测试已最终冻结并通过子项验收，两个预设各 24 项、实验与完整审查通过。GC 持有 RepoLock，pending Transaction 必须先 recover；active Operation 允许保留，其 original／current、raw Index 与 Stash 备份、全部 Rebase queue／onto、Work before／after 都要通过 typed semantic roots 展开。GC 不用 Commit 快照代替操作现场备份，也不读 Work 来猜哪些对象应保留。
+
+```mermaid
+flowchart TD
+    L[RepoLock / 拒绝 pending Transaction] --> V[规范 loose inventory / 全部对象认证与 typed edges]
+    V --> K[Kahn 拓扑 / 引用者到被引用者 / cycle拒绝]
+    K --> R[HEAD / refs / Index all stages / reflog / Stash / Operation semantic roots]
+    K --> F[mtime grace 内与 future objects / 附加根]
+    R --> M[Commit all parents + Tree / Tree children / 完整闭包]
+    F --> M
+    M --> P[全部根与图前检完成 / 选取标记外候选]
+    P --> D[按拓扑筛未标记项 / 引用者先删 / unlink与parent sync]
+```
+
+freshness 是可达性输入：新孤立 Commit 指向的旧 Tree／Blob 也必须保留。全部 orphan 先验证，损坏无根对象同样应阻止任何删除；闭包不能只走第一父。root metadata 与对象 graph 都有预算，payload 一对象读取后释放。Kahn 排序在任何删除之前验证无 cycle，sweep 引用者先于其 child；任意 ID 顺序可能先删 child，失败时剩余 orphan 图就出现悬空边。该顺序保留正常中断后剩图的引用闭合性，不变成原子删除协议。GC 首版不引入 journal、pack 或 reflog expiration；删除失败可能已经删掉部分无根对象，不提供短事务式回滚，任意外部写入者仍不受 RepoLock 约束。实际算法、预算与验证范围见 [GC 进度](progress.md#gc已验收)；本轮未全量执行 260 项，Phase 4 整体验收仍待下一独立节点。
