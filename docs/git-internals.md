@@ -252,11 +252,18 @@ MGOP v2 StashApply context 基础已通过子项验收。选择 stash@{2} 时，
 [Git 官方 stash 文档](https://git-scm.com/docs/git-stash)说明 --index 尝试恢复暂存状态，pop 遇冲突会保留条目，解决后需手动 drop。MiniGit 的 stash --continue／--abort 是显式生命周期扩展：continue 从 resolved typed Index 完成并按原 pop 意图删除条目，保留未暂存 Work；abort 恢复保存的实际 before。原生 Git 没有这两个 stash 子动作。MiniGit 首版要求启动 Index=HEAD 且 tracked Work 干净，选择器仅 stash@{十进制位置}，使用 MGST 活跃栈而非 refs/stash reflog；不把这些接口称为 Git 兼容实现。本项不创建提交、不移动 HEAD／reflog，也不要求身份，两预设相关检查、恢复与原保存实验及独立完整审查通过；该 Stash 恢复轮的后续 Phase 3 全量验收见下段。
 
 
-Phase 3 两预设各 237 项全量检查通过，整体验收已完成；命令范围、Git 差异与学习成果集中见 [阶段总结](progress.md#phase-3-阶段总结已验收)。后续 Rebase 不能只重复调用有自锁和 guard 的公开 Replay 入口；GC 也不能把 typed-only roots 当成完整可达闭包，两者仍未交付。
+Phase 3 两预设各 237 项全量检查通过，整体验收已完成；命令范围、Git 差异与学习成果集中见 [阶段总结](progress.md#phase-3-阶段总结已验收)。后续 Rebase 不能只重复调用有自锁和 guard 的公开 Replay 入口；GC 也不能把 typed-only roots 当成完整可达闭包，Rebase 业务后续验收见下节，GC 仍未交付。
 
 
 ## Ready 不是已经解决的冲突
 
-Rebase 状态基础已通过子项验收，实际重放业务尚未交付。Ready 保存未执行的 queue[cursor]；预算、身份或 unknown 保护拒绝导致步骤没发布时，未来 continue 应重试该来源，不能把当前 Index 当成它的解决结果生成空提交并跳过去。只有 Conflicted 表示来源冲突已发布，才允许以后从 resolved Index 完成当前来源。
+Rebase 状态基础已通过子项验收，实际重放业务也已在下节通过子项验收。Ready 保存未执行的 queue[cursor]；预算、身份或 unknown 保护拒绝导致步骤没发布时，continue 应重试该来源，不能把当前 Index 当成它的解决结果生成空提交并跳过去。只有 Conflicted 表示来源冲突已发布，才允许以后从 resolved Index 完成当前来源。
 
-原分支镜像与 original HEAD 提供恢复锚点，current detached 是新的重放位置。将来每次新 Commit 的单父应是旧 current，来源作者与 preserve-empty 是待实现业务策略；本子项只持久化队列与验证状态推进，不改 refs／Work 或自动生成提交。旧 kind 的 bytes 保持与 expected canonical CAS 更新约束，使共享状态格式扩展不改变已有 Merge／Replay／Stash 解释。
+原分支镜像与 original HEAD 提供恢复锚点，current detached 是新的重放位置。每次新 Commit 的单父应是旧 current；来源作者与 preserve-empty 在该基础轮还是待实现业务策略。基础子项只持久化队列与验证状态推进，不改 refs／Work 或自动生成提交；后续业务已经实现下述策略。旧 kind 的 bytes 保持与 expected canonical CAS 更新约束，使共享状态格式扩展不改变已有 Merge／Replay／Stash 解释。
+
+
+## Rebase 是有顺序的重放，不是合并父关系
+
+本业务已通过子项验收。从唯一共同 base 到 original 的 first-parent 线性来源依次重放到 onto，ours 是当前已重放的新历史，theirs 是下一原来源，base 是该来源自己的父；每次成功的新 Commit 只有父 current。原作者与消息保留，当前身份生成 committer，空结果也统一保留；原 symbolic branch 在中间步骤不移动，最后 attach 与 State 删除一起发布。
+
+[Git 官方 rebase 文档](https://git-scm.com/docs/git-rebase)描述重放时 ours 是已重放序列，并区分原本为空、变为空和已应用提交的策略，提供 --empty 与 interactive／rebase-merges 等选项。MiniGit 本版选择统一 preserve-empty、唯一 base 后的纯线性单父队列，不提供这些复杂选项、--onto、mainline 或 skip；多父来源拒绝，不重建 merge topology。无状态 UpToDate／FF 不要求身份，真正来源重放需要当前提交身份。公共接口与实际业务源码已最终冻结，两个预设相关 38 项及实验已通过；该业务验收来自真实行为验证，不只是 codec 能表示 Ready。

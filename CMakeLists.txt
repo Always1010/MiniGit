@@ -28,6 +28,7 @@ add_library(minigit_core
     src/core/merge.cpp
     src/core/operation_support.cpp
     src/core/replay.cpp
+    src/core/rebase.cpp
     src/core/stash_stack.cpp
     src/core/stash.cpp
     src/core/stash_restore.cpp
@@ -79,6 +80,7 @@ if(BUILD_TESTING)
         tests/unit/test_operation_guards.cpp
         tests/unit/test_merge.cpp
         tests/unit/test_replay.cpp
+        tests/unit/test_rebase.cpp
         tests/unit/test_stash_stack.cpp
         tests/unit/test_stash.cpp
         tests/unit/test_stash_restore.cpp
@@ -149,4 +151,6 @@ if(BUILD_TESTING)
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/stash_cli.cmake)
     add_test(NAME stash_restore_cli COMMAND ${CMAKE_COMMAND}
         -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/stash_restore_cli.cmake)
+    add_test(NAME rebase_cli COMMAND ${CMAKE_COMMAND}
+        -DMINIGIT=$<TARGET_FILE:minigit> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/rebase_cli.cmake)
 endif()

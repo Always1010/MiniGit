@@ -630,7 +630,7 @@ U 不进入三方合并，恢复叶必须实际缺失，已有同内容文件、
 最终 pair pin 仍走 Transaction 的 refs/stash 语义预检，因此即使选择非 top，apply／continue／abort 也要求原 top W 的自 Tree 完整；read_stash_stack／stash_roots 的 typed-only 历史角色检查并不替代这一步。冲突备份沿用共享 conflict_work，包含 Index-only 冲突的同值 Work、D/F 区域与其实际目录祖先，解决后中止不会因“启动时没写这个文件”漏掉真实权限。
 
 
-Phase 3 四组业务及共享依赖已完成整体验收，两预设各 237 项全量检查通过，阶段架构与下一队列／可达标记依赖集中见 [Phase 3 总结](progress.md#phase-3-阶段总结已验收)。该 Phase 3 验收轮没有 Rebase 队列或 Ready；当前状态基础扩展见下节，Rebase 业务与 GC 仍未交付。
+Phase 3 四组业务及共享依赖已完成整体验收，两预设各 237 项全量检查通过，阶段架构与下一队列／可达标记依赖集中见 [Phase 3 总结](progress.md#phase-3-阶段总结已验收)。该 Phase 3 验收轮没有 Rebase 队列或 Ready；当前状态基础与已验收 Rebase 业务见下节，GC 仍未交付。
 
 
 ## Rebase 状态基础：区分待执行与已冲突
@@ -639,7 +639,7 @@ Phase 3 四组业务及共享依赖已完成整体验收，两预设各 237 项�
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Ready: 保存上下文 / 业务尚待实现
+    [*] --> Ready: 保存上下文 / 未执行来源
     Ready --> Conflicted: 同 cursor / 同 current
     Ready --> Ready: cursor+1 / 新 current 单父旧 current
     Conflicted --> Ready: cursor+1 / 新 current 单父旧 current
@@ -647,4 +647,28 @@ stateDiagram-v2
     Conflicted --> [*]: 删除 State / 业务中止
 ```
 
-图仅描述状态更新约束，不代表 rebase 命令已实现。推进必须保留 original logical/raw HEAD、raw Index、onto、queue、rawbranch 与全部旧 Work 的 first before；after 可更新。纯 validator 只拒绝不合法 replacement，未来业务负责实际捕获新 keys、处理原 File／Absent 祖先遮挡、D/F full permissions／必要 noops，最后 live CAS／attach。typed roots 包含全部 queue 与 onto，去重 Commit payload 总量 64 MiB，不展开 Tree／DAG；完整 GC 仍待后续。
+图只描述该基础轮的状态更新约束；Rebase 业务的后续验收见下节。推进必须保留 original logical/raw HEAD、raw Index、onto、queue、rawbranch 与全部旧 Work 的 first before；after 可更新。纯 validator 只拒绝不合法 replacement，业务负责实际捕获新 keys、处理原 File／Absent 祖先遮挡、D/F full permissions／必要 noops，最后 live CAS／attach。typed roots 包含全部 queue 与 onto，去重 Commit payload 总量 64 MiB，不展开 Tree／DAG；完整 GC 仍待后续。
+
+
+## Rebase 业务：原分支固定，临时位置逐来源前进
+
+本项已通过子项验收。完整 DAG 选择 unique base 后先处理 UpToDate／FF；分歧才创建 first-parent 线性队列，来源单父与完整自 Snapshot 前检后，将临时 HEAD detached 到 onto。原分支保持 exact original ref，只有最后成功才更新与 attach；每一步通过现有 planner／factory／Operation／Transaction 发布，不创建另一套文件恢复器。
+
+```mermaid
+flowchart TD
+    S[clean 当前状态 / 完整 DAG / unique base] --> Q[up-to-date 或 FF / 无 State 或身份需求]
+    S --> D[分歧线性 queue / 全来源快照前检]
+    D --> R[detach onto + checkout + Ready / 原 branch pin]
+    R --> M[当前 source parent,current,source 三方合并]
+    M --> N[clean / 原 author + 新 committer / 单父 preserve-empty]
+    M --> C[conflict / stages + Work + Conflicted / 同 cursor]
+    C --> I[continue / resolved Index / 不读 Work]
+    I --> N
+    N --> R2[尚有来源: next Ready / next step 须 clean]
+    R2 --> M
+    N --> F[最后成功 / branch更新与attach + State删除]
+    R --> A[abort / original raw metadata + cumulative actual before]
+    C --> A
+```
+
+Ready 与 Conflicted 的持久含义决定 continue 来源：不能把尚未执行来源的 Ready Index 当作解决结果。Conflicted 完成当前来源后若仍有步骤，dirty Work 会阻挡下一 Ready；末步不读取 Work。累计 first before 必须尊重旧 original File／Absent 祖先遮挡，latest after 也随真实布局更新，D/F full permissions 与 noops、unknown 后代保护不放宽。实际调用链见 [Rebase 导读](code-walkthrough.md#rebase-business从单步到有持久边界的循环)。两预设各 38 项与实验通过、完整审查通过，验证范围见 [进度](progress.md#rebase-业务生命周期已验收)；GC 与 Phase 4 整体验收仍待后续。

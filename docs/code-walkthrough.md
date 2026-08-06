@@ -410,4 +410,17 @@ Phase 3 两预设各 237 项完整回归通过，整体验收已完成。把已�
 
 阅读 plan 契约时分别找 original/context 不变量、old Work before 保留、Ready→Conflicted 的同位置，以及推进一项时的新 Commit 单父验证。roots 对 distinct common／onto／queue Commit payload 合计 64 MiB，但不读取 live branch 或 Tree／DAG；expected State 是 canonical 值比较，actual raw bytes 才构成事务 before。[operation.cpp](../src/core/operation.cpp) 已冻结：validate_state 配合 known_phase／uses_v2／reference_id 验证 kind-specific 字段；Rebase 尾为 42+32×queue.size 字节，有 rawbranch 另加 69 字节。decode 在认证主体后先验证 queue count、上限与 remaining 足够保留 cursor／branch presence，再 reserve；末尾拒绝多余 bytes 并复验。state_roots 的 typed cache 仅对 Rebase 累加 distinct Commit payload，包含 common Heads／source 与 onto／全部 queue，不重复计多角色相同 ID。plan 先验证 actual before roots／expected canonical CAS，再 desired codec／roots；validated same no-op 之后才 validate_replacement，成功 next combined budget 后赋回。replacement 不读取 live branch，只约束旧 Work keys／before、固定上下文及推进单父关系。
 
-[test_operation_rebase.cpp](../tests/unit/test_operation_rebase.cpp) 五组已冻结：旧 v1 的三个 221-byte golden 与 Stash v2 的独立 338-byte golden、两种阶段 roundtrip；认证队列 count bombs／截断与拓扑权限；全部 typed roots／Index stages、无 live Tree／DAG 读取、两个大 Commit 累计预算且同 ID 多角色只计一次；strong CAS／受约束 transition／first before 保留与错误不改原计划；Prepared／Committed replacement 与两次恢复。两预设最终构建无 GCC 警告，相关 25 项全部通过，无 ASan／UBSan 报告，完整只读审查通过；本项已子项验收，没有 Rebase CLI、累计捕获或业务 abort helper 改动。
+[test_operation_rebase.cpp](../tests/unit/test_operation_rebase.cpp) 五组已冻结：旧 v1 的三个 221-byte golden 与 Stash v2 的独立 338-byte golden、两种阶段 roundtrip；认证队列 count bombs／截断与拓扑权限；全部 typed roots／Index stages、无 live Tree／DAG 读取、两个大 Commit 累计预算且同 ID 多角色只计一次；strong CAS／受约束 transition／first before 保留与错误不改原计划；Prepared／Committed replacement 与两次恢复。两预设最终构建无 GCC 警告，相关 25 项全部通过，无 ASan／UBSan 报告，完整只读审查通过；状态基础已子项验收，该基础轮没有 Rebase CLI、累计捕获或业务 abort helper 改动；业务验收见下节。
+
+
+## Rebase business：从单步到有持久边界的循环
+
+已落盘 [rebase.hpp](../include/minigit/rebase.hpp) 提供 RebaseAction／RebaseOptions 与 rebase_repository(repo,options,hook)，结果含 outcome／head／conflicts；Applied 也覆盖 FF，UpToDate 单独表示无须重放。自锁入口先 pending guard，start 另无 active operation；continue／abort 依已有 Rebase State 工作。公共接口、core 与八组测试已最终冻结并通过子项验收。
+
+阅读已落盘的 [rebase.cpp](../src/core/rebase.cpp)：rebase_repository 先 validate_options／RepoLock／pending guard，再分派 start、run_steps 或共享中止计划。start 校验 typed Index 与当前 Snapshot、完整 DAG／unique base、clean Work，随后处理无状态 UpToDate／FF；真正分歧才构造 first-parent queue，前检各 source message／自 Tree 与 base Snapshot，plan_checkout 到 onto，保存原 raw Index／HEAD／branch，再发布 detached Ready。
+
+run_steps 每轮先 check_branch 与 current HEAD CAS。Ready 从 source parent、当前 Snapshot、source Snapshot 调 merge_snapshots，经 plan_checkout／conflict_work 发布 Conflicted 或生成新单父 Commit；Conflicted 直接用 resolved Index，绕过 Work 读取。非末步将新 Commit 与下一 Ready 同事务发布，末步 finish 才改原 branch、写 branch reflog、attach 并删除 State。pin_branch 的 exact raw 同值 metadata 让实际发布也检查原引用；detached 原位置没有 branch pin。
+
+accumulate_work 不是拼接变化列表：已有 key 保留 first before、更新 after；新 key 若原先被 File／Absent 祖先遮挡，before 记 Absent。它还刷新已记录目录祖先的实际 latest after，并把最新 File／Absent 祖先下的旧 descendants 归为 Absent。abort 复用 [operation_support.cpp](../src/core/operation_support.cpp) 的 fresh-plan：已有 HEAD MetadataChange 时调整其 after 为 exact original raw bytes，避免追加重复 HEAD 记录；原 branch pin 仍要通过。
+
+已落盘 [test_rebase.cpp](../tests/unit/test_rebase.cpp) 的八组围绕完整历史与快捷路径、顺序／作者／空提交、Ready 重试与 raw branch CAS、Conflicted Index-only 与非末 dirty 阻挡、累计 File／Absent、D/F full modes、非法启动及两种 durable 恢复。[rebase_cli.cmake](../tests/integration/rebase_cli.cmake) 还覆盖末步 FIFO 保留、未执行 transient source 被未知占用阻挡后重试。第五组的新增 section 尤其检查原 p 为 File(0751)，用户解决成 Directory(0750) 后，下个来源仅 child 发生文本冲突：旧 p.after 必须刷新为真实 Directory，child.before 仍为原 Absent，abort 才能恢复 File(0751) 与 exact raw HEAD／Index。两个预设各 38 项相关检查、实际 rebase 实验与完整只读审查均通过；本轮没有执行全 251 项，精确命令与用时见 [验收记录](progress.md#rebase-业务生命周期已验收)。
