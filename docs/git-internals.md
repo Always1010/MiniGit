@@ -189,7 +189,7 @@ base=[a,b,c]，ours=[A,b,c]，theirs=[a,b,C] 可以得到 [A,b,C]；仅比较 ou
 
 纯文本只比较字节，SnapshotMerge 已实现的语义还包括文件存在、执行位与路径结构。base 缺失并不等于 base 是一个空文件；ours 新建 empty、theirs 新建 note 仍是两份新建版本冲突，不能因为空字节相等快捷选择 note。相反，ours 仅改 executable mode、theirs 改内容时，可以把两份独立修改组合。
 
-冲突 stages 保存原始版本，work 的 marker 只是用户将来解决冲突时的呈现内容。D/F 区域还须保持一个实际可发布的布局：选择 ours 的 parent File 就不能同时创建 theirs 的 child File，不自动生成别名。此处是候选结果，真正的工作区保护、Index 发布和 continue／abort 仍待后续业务接入。
+冲突 stages 保存原始版本，work 的 marker 只是用户将来解决冲突时的呈现内容。D/F 区域还须保持一个实际可发布的布局：选择 ours 的 parent File 就不能同时创建 theirs 的 child File，不自动生成别名。此处描述 Snapshot 适配器的候选结果；该适配器验收轮，实际工作区保护、Index 发布和 continue／abort 仍待业务接入，后续完整实现见下文。
 
 ## 基线来自父图，不来自文件相等或提交时间
 
@@ -273,4 +273,9 @@ Rebase 状态基础已通过子项验收，实际重放业务也已在下节通�
 
 [Git 官方 gc 文档](https://git-scm.com/docs/git-gc)说明保留范围包括引用、Index 与 reflog，也将较新对象连同其可达后代保留；原生维护还涉及打包与日志过期。MiniGit 本次已通过子项验收的首版只回收规范松散对象，默认 mtime grace 为 86400 秒，--prune-now 关闭该普通窗口，但 future-mtime 始终保守保留。没有 pack／reflog expiration，不等同于原生 git gc 的全部维护任务。
 
-rebase 移动原 branch 后，旧 Commit 仍可能由 HEAD／分支日志保留；Index 冲突 stage 和活跃操作队列也可能指向当前 Tree 看不到的内容。raw Index／MGST backup 是普通 Blob，只有 semantic decode 才能得到其内部 ID；GC 再沿 Commit 全父与 Tree／Blob 完整闭包标记。本版要求全部 orphan 一并认证、任何 typed edge 缺失或错误都在 unlink 前拒绝；该更保守前检策略与自有仓库格式的当前实现边界须一起理解，两个预设相关 24 项及实际 GC 实验通过；完整 Phase 4 全量验证仍待独立节点。完整 typed graph 前检后还要求 Kahn 无 cycle，删除采用引用者先于 child 的拓扑顺序；这让正常部分删除后的剩余 orphan 不因先删 child 形成悬空边，仍不承诺原子回收或任意外部写入安全。
+rebase 移动原 branch 后，旧 Commit 仍可能由 HEAD／分支日志保留；Index 冲突 stage 和活跃操作队列也可能指向当前 Tree 看不到的内容。raw Index／MGST backup 是普通 Blob，只有 semantic decode 才能得到其内部 ID；GC 再沿 Commit 全父与 Tree／Blob 完整闭包标记。本版要求全部 orphan 一并认证、任何 typed edge 缺失或错误都在 unlink 前拒绝；该更保守前检策略与自有仓库格式的当前实现边界须一起理解，两个预设相关 24 项及实际 GC 实验通过；该 GC 子项轮尚未全量运行；后续 Phase 4 全量验收见末节。完整 typed graph 前检后还要求 Kahn 无 cycle，删除采用引用者先于 child 的拓扑顺序；这让正常部分删除后的剩余 orphan 不因先删 child 形成悬空边，仍不承诺原子回收或任意外部写入安全。
+
+
+## 把已实现模型连接起来
+
+Rebase 改变新历史的父链，GC 决定哪些旧对象仍有保留依据；二者都依赖正确区分引用事件、完整 DAG 与真实恢复镜像。MiniGit 的约定命令范围与 Phase 0—4 已整体验收，最终两个预设各 260 项全部通过；自有格式、单基线／线性重放、Stash 扩展和非原子回收等差异集中见 [最终阶段总结](progress.md#phase-4-阶段总结已验收)，不能仅凭命令名称相同宣称 Git 兼容。

@@ -1,6 +1,6 @@
 # 架构与数据约束
 
-本页描述目标架构及已交付子项的接口。仓库初始化、文件工具、摘要、对象编解码、对象库、Index、引用、快照构建与 add/commit/status/log 和轻量 tag 已实现；纯差异引擎、diff 与 show CLI 已完成 Phase 2 子项验收；工作区短事务与 recover 已完成子项验收；reflog 与提交事务发布已通过子项验收，branch 管理已通过子项验收；共享工作区与 Index 更新规划器已验收，switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收，MGOP v2 StashApply context 已通过子项验收，完整 Stash 恢复生命周期已通过子项验收，Phase 3 两预设各 237 项全量检查已通过并完成整体验收，历史重写仍为计划。验收状态统一见 [进度](progress.md)。架构中的模块名称表示职责，不表示同名源码文件已存在。
+本页描述已交付体系：不可变 Objects、Index 与 Refs／DAG 提供内容、暂存和历史；纯 Diff／TextMerge／SnapshotMerge 计算差异与候选结果；业务持锁调用 planner，组合短 Transaction 和跨进程 Operation，完成安全更新、冲突继续／中止及线性 Rebase。GC 从完整语义根标记对象闭包，再有序回收。Phase 0—4 已整体验收，历史过程、最终全量证据与能力边界集中见 [阶段总结](progress.md#phase-4-阶段总结已验收)，下文按职责解释实际接口。
 
 ## 依赖方向
 
@@ -92,7 +92,7 @@ Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/
   logs/refs/heads/<分支>  MGRL v1，该分支移动事件
 ```
 
-identity、index 和具体引用在首次使用时创建。Index、引用、快照与提交已实现；操作状态仍为计划。各项职责与阶段如下：
+identity、index 和具体引用在首次使用时创建。Index、引用、快照、提交及版本化 Operation 状态均已实现，后者支持已交付业务的冲突继续／中止，以及 Rebase Ready 队列推进。各项职责与阶段如下：
 
 | 数据 | 责任 | 更新特征 |
 | --- | --- | --- |
@@ -644,7 +644,7 @@ stateDiagram-v2
     Ready --> Ready: cursor+1 / 新 current 单父旧 current
     Conflicted --> Ready: cursor+1 / 新 current 单父旧 current
     Ready --> [*]: 删除 State / 业务最终收尾或中止
-    Conflicted --> [*]: 删除 State / 业务中止
+    Conflicted --> [*]: 删除 State / 末步完成或中止
 ```
 
 图只描述该基础轮的状态更新约束；Rebase 业务的后续验收见下节。推进必须保留 original logical/raw HEAD、raw Index、onto、queue、rawbranch 与全部旧 Work 的 first before；after 可更新。纯 validator 只拒绝不合法 replacement，业务负责实际捕获新 keys、处理原 File／Absent 祖先遮挡、D/F full permissions／必要 noops，最后 live CAS／attach。typed roots 包含全部 queue 与 onto，去重 Commit payload 总量 64 MiB，不展开 Tree／DAG；完整 GC 的后续子项验收见末节。
@@ -671,7 +671,7 @@ flowchart TD
     C --> A
 ```
 
-Ready 与 Conflicted 的持久含义决定 continue 来源：不能把尚未执行来源的 Ready Index 当作解决结果。Conflicted 完成当前来源后若仍有步骤，dirty Work 会阻挡下一 Ready；末步不读取 Work。累计 first before 必须尊重旧 original File／Absent 祖先遮挡，latest after 也随真实布局更新，D/F full permissions 与 noops、unknown 后代保护不放宽。实际调用链见 [Rebase 导读](code-walkthrough.md#rebase-business从单步到有持久边界的循环)。两预设各 38 项与实验通过、完整审查通过，验证范围见 [进度](progress.md#rebase-业务生命周期已验收)；GC 子项验收见下节；Phase 4 整体验收仍待独立全量验证。
+Ready 与 Conflicted 的持久含义决定 continue 来源：不能把尚未执行来源的 Ready Index 当作解决结果。Conflicted 完成当前来源后若仍有步骤，dirty Work 会阻挡下一 Ready；末步不读取 Work。累计 first before 必须尊重旧 original File／Absent 祖先遮挡，latest after 也随真实布局更新，D/F full permissions 与 noops、unknown 后代保护不放宽。实际调用链见 [Rebase 导读](code-walkthrough.md#rebase-business从单步到有持久边界的循环)。两预设各 38 项与实验通过、完整审查通过，验证范围见 [进度](progress.md#rebase-业务生命周期已验收)；GC 子项验收见下节；Phase 4 后续完整验收见末节总结。
 
 
 ## GC：先认证全部对象，再标记根的完整闭包
@@ -690,4 +690,25 @@ flowchart TD
     P --> D[按拓扑筛未标记项 / 引用者先删 / unlink与parent sync]
 ```
 
-freshness 是可达性输入：新孤立 Commit 指向的旧 Tree／Blob 也必须保留。全部 orphan 先验证，损坏无根对象同样应阻止任何删除；闭包不能只走第一父。root metadata 与对象 graph 都有预算，payload 一对象读取后释放。Kahn 排序在任何删除之前验证无 cycle，sweep 引用者先于其 child；任意 ID 顺序可能先删 child，失败时剩余 orphan 图就出现悬空边。该顺序保留正常中断后剩图的引用闭合性，不变成原子删除协议。GC 首版不引入 journal、pack 或 reflog expiration；删除失败可能已经删掉部分无根对象，不提供短事务式回滚，任意外部写入者仍不受 RepoLock 约束。实际算法、预算与验证范围见 [GC 进度](progress.md#gc已验收)；本轮未全量执行 260 项，Phase 4 整体验收仍待下一独立节点。
+freshness 是可达性输入：新孤立 Commit 指向的旧 Tree／Blob 也必须保留。全部 orphan 先验证，损坏无根对象同样应阻止任何删除；闭包不能只走第一父。root metadata 与对象 graph 都有预算，payload 一对象读取后释放。Kahn 排序在任何删除之前验证无 cycle，sweep 引用者先于其 child；任意 ID 顺序可能先删 child，失败时剩余 orphan 图就出现悬空边。该顺序保留正常中断后剩图的引用闭合性，不变成原子删除协议。GC 首版不引入 journal、pack 或 reflog expiration；删除失败可能已经删掉部分无根对象，不提供短事务式回滚，任意外部写入者仍不受 RepoLock 约束。实际算法、预算与验证范围见 [GC 进度](progress.md#gc已验收)；该 GC 子项轮未全量执行 260 项；后续 Phase 4 最终全量验收见末节。
+
+
+## 最终依赖链：不可变内容、可恢复发布与可达闭包
+
+全部目标命令及 Phase 0—4 已整体验收，最终两个预设各 260 项完整检查通过。不可变对象承担内容与历史，Index／Work／HEAD 是独立可变状态；planner 与短 Transaction 将它们的发布组成可检查的计划，Operation 只保存跨步骤所需上下文与真实原镜像。GC 的 semantic roots／完整 mark 正是这套模型的另一面，不能把 Blob 容器可达误当内部 IDs 也可达。
+
+```mermaid
+flowchart LR
+    O[Blob / Tree / Commit] --> S[Snapshot / Index / 完整 DAG]
+    S --> P[纯 Diff / 三方引擎 / 来源策略]
+    P --> B[业务 / RepoLock]
+    B --> U[caller-lock planner / actual before]
+    U --> T[Transaction / Work与metadata发布]
+    B --> L[Operation / Ready或Conflicted / 原镜像与queue]
+    L --> T
+    S --> G[GC semantic roots / 全图前检与mark]
+    L --> G
+    G --> D[有序非原子unlink]
+```
+
+平台／预算、系统调用内部中断、外部竞态和原生 Git 差异维持本文各节契约；最终汇总与完整测试证据见 [Phase 4 总结](progress.md#phase-4-阶段总结已验收)。本节点没有新源码或恢复协议，不由图推断 pack／交互式 rebase 已交付。

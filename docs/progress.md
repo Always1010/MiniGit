@@ -4,14 +4,16 @@
 
 ## 当前状态
 
-Phase 0、Phase 1、Phase 2 与 Phase 3 已验收，版本为 `0.1.0`。当前 CLI 完成 `init/add/commit/status/log/tag/diff/show/branch/switch/restore/reset/rm/mv/reflog/merge/cherry-pick/revert/rebase`，另已完成 stash 保存／查询／栈管理与完整恢复生命周期，并提供对象观察、本地身份配置及中断事务 recover。Phase 1 整体验收时 Debug 与 sanitized 各 54 个 CTest 用例全部通过（47 个单元、7 个 CLI）；两个学习实验通过。Phase 2 的差异引擎、文件接口、diff、show 和短事务已逐项验收；reflog 与 commit 事务发布也已通过子项验证；branch 管理已通过子项验收；共享工作区与 Index 更新规划器已通过子项验收；switch 工作区切换已通过子项验收；restore 内容恢复已通过子项验收；reset 三模式重置已通过子项验收；rm 删除与取消暂存已通过子项验收；mv 文件与目录迁移已通过子项验收；Phase 2 整体验收的两个预设各 147 项全量检查全部通过；Phase 3 纯文本引擎已通过子项验收，SnapshotMerge 适配器已通过子项验收，single-lowest merge-base helper 已通过子项验收，显式 Directory target 已通过子项验收，CommitSnapshot 存储工厂已通过子项验收，OperationState v1 基础已通过子项验收，完整 Merge 生命周期已通过子项验收，CherryPick／Revert 已通过子项验收，Stash 保存子项已通过验收，MGOP v2 StashApply context 已通过子项验收，完整 Stash 恢复生命周期已通过子项验收，Phase 3 两预设各 237 项完整回归通过、整体验收已完成，Phase 4 的 Rebase 状态基础已通过子项验收，Rebase 业务生命周期已通过子项验收，GC 已通过子项验收，Phase 4 整体验收仍待全量验证。
+Phase 0—4 已完成约定目标范围并通过整体验收，当前版本 `0.1.0`。最终 Debug／sanitized 各 260 项完整回归全部通过，耗时 238.71／812.92 秒，两个进程均 exit 0，无 ASan／UBSan 诊断；保持本文已确认的格式、平台、资源与命令简化边界，不等同于原生 Git 全部功能。
+
+当前实际注册 260 项（237 单元、23 CLI）。Phase 1 的 54、Phase 2 的 147、Phase 3 的 237 全量检查均保留各自阶段历史范围；各子项定向复验与实验见下文。最终架构、学习结果、Git 差异与本轮证据集中见 [Phase 4 总结](#phase-4-阶段总结已验收)。
 
 | 项目 | 当前状态 | 验证证据 |
 | --- | --- | --- |
 | CMake 3.20+、C++20 核心库与 CLI 分层 | 已验收 | Debug 和 sanitized 配置、构建成功，GCC 无警告 |
-| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际对象业务使用 EVP 和 zlib；当前实际注册 237 个单元及 23 个 CLI，共 260 项；GC 本轮相关 24 项两预设通过，未执行全 260 项；此前 Rebase 业务基线为 251 项，其相关 38 项两预设通过，当轮未全量执行；此前状态基础已验收基线为 242 项；此前 Phase 3 两预设全量通过的基线是 237 项，Rebase 状态基础本轮相关 25 项两预设通过；Stash 恢复新增 8 单元及 1 CLI，两预设相关 37 项均通过；Stash 保存该轮 38 项两预设通过，v2 基础两预设相关 45 项均通过，完整只读审查通过，Phase 2 全量 147 项是此前独立验收证据 |
+| OpenSSL 3、zlib、Catch2 v3、CTest 依赖连接 | 已验收 | 实际业务使用 EVP／zlib／Catch2；当前 260 项（237 单元、23 CLI）两预设全量通过，238.71／812.92 秒、exit 0、无 ASan／UBSan 诊断；历史与各子项定向证据见对应段落 |
 | CLI 帮助、版本与错误处理 | 已验收 | 两种预设的 `cli_basics` 均通过，错误输入退出码为 `2` |
-| 中文架构、原理、导读、学习笔记 | 初版 | 六份文档相对链接均可解析，未包含具体开发日期 |
+| 中文架构、原理、导读、学习笔记 | 持续维护 | 当前六份项目文档解释实际源码／能力边界；本节点统一阶段总结与真实验收证据 |
 | Phase 1 子项：init、摘要、对象编解码与存储 | 已验收 | Debug 与 sanitized 构建通过，模块／CLI 回归及对象实验通过，详细范围见下文 |
 | Phase 1 子项：Index 与 add | 已验收 | Debug 与 sanitized 的 9 个模块用例及 2 个相关 CLI 用例全部通过 |
 | Phase 1 子项：引用、快照、commit 与本地身份 | 已验收 | Debug 与 sanitized 首轮 16 个相关用例通过，引用审查修正后各复验 10 项，提交实验通过 |
@@ -48,6 +50,7 @@ Phase 0、Phase 1、Phase 2 与 Phase 3 已验收，版本为 `0.1.0`。当前 C
 | Phase 4 共享依赖：Rebase 状态基础 | 已验收 | Ready／Conflicted、队列与受约束 replacement；两预设各 25 项、无警告构建与完整审查通过，无新 CLI |
 | Phase 4 子项：Rebase 业务 | 已验收 | 无状态快捷分支、线性来源队列及完整继续／中止；两预设各 38 项、实验、无警告构建与完整审查通过 |
 | Phase 4 子项：GC | 已验收 | 规范松散对象前检、语义根与 freshness 闭包；两预设各 24 项、实验、无警告构建及完整审查通过 |
+| Phase 4 整体／最终目标范围 | 已验收 | 两预设各 260 项完整检查全部通过（237 单元、23 CLI），238.71／812.92 秒、exit 0、无 ASan／UBSan 诊断；无源码变更 |
 
 已执行的 Debug 验证：
 
@@ -488,7 +491,7 @@ flowchart TD
 
 Phase 3 验收时，下一阶段的 rebase 与 gc 尚未实施；Rebase 与 GC 的后续子项验收见下节。该阶段规划要求 Rebase 明确线性来源队列、cursor、来源 author 与 preserve-empty、真正 Ready／Conflicted 的不同 continue 语义：Ready 执行待重放步骤，Conflicted 才以解决后的 Index 完成当前步骤；原 branch 保持并作 CAS，最后 attach 与引用／状态收尾同事务。Phase 3 验收时 MGOP 的 existing→不同 State 拒绝规则不能直接支撑队列推进，需要版本／闭集 kind、expected canonical old→new 的明确更新规则。累计 Work 镜像要保留首次 original before，更新最新 after，正确处理旧 File／Absent 祖先遮挡和 D/F full permissions／noops，不能简单拼接每步变化。
 
-GC 需先枚举 refs／HEAD、当前 Index 的全部 stages、reflog、全部活跃 stash entries、Operation 和未清理 Transaction 的根，再沿 Commit parents／Tree／Blob 做完整可达标记。raw Index 与 Stack 备份 Blob 内的对象 ID 必须语义展开，单保留容器 Blob 不等于保留其内容所指对象；该 Phase 3 轮的 roots helper 不提供完整 Tree／DAG 闭包或回收策略，后续 GC 已补完整闭包；本版回收前拒绝 pending Transaction，要求先 recover。定义安全保留、损坏拒绝与可复查的删除边界后才能回收。Phase 3 本节点已完成整体验收，Phase 4 与最终目标仍未完成。
+GC 需先枚举 refs／HEAD、当前 Index 的全部 stages、reflog、全部活跃 stash entries、Operation 和未清理 Transaction 的根，再沿 Commit parents／Tree／Blob 做完整可达标记。raw Index 与 Stack 备份 Blob 内的对象 ID 必须语义展开，单保留容器 Blob 不等于保留其内容所指对象；该 Phase 3 轮的 roots helper 不提供完整 Tree／DAG 闭包或回收策略，后续 GC 已补完整闭包；本版回收前拒绝 pending Transaction，要求先 recover。定义安全保留、损坏拒绝与可复查的删除边界后才能回收。该 Phase 3 节点已完成整体验收；当时 Phase 4 与最终目标仍未完成，后续最终验收见末节。
 
 ## Phase 4：历史编辑与对象回收
 
@@ -530,7 +533,7 @@ abort 恢复 exact original raw HEAD、whole optional raw Index 与累计 affect
 
 本项新增 8 个 Rebase 单元及 1 个 CLI，CTest 实际注册 229 单元、22 CLI，共 251 项；状态基础的 242 项与相关 25 项保持此前验收范围。两个预设最终构建均 exit 0、无警告。`ctest --preset debug -R '^unit\.(Rebase|Merge |Replay |StashRestore)|^(rebase_cli|merge_cli|replay_cli|stash_restore_cli|recovery_cli|cli_basics)$' --output-on-failure -j2` 与 sanitized 对应命令各选中 38 项（32 单元、6 CLI），全部通过，用时 78.41／98.82 秒，无 ASan／UBSan 诊断；本轮未执行全 251 项。
 
-`bash examples/experiments/rebase.sh ./build/debug/minigit` 与 sanitized 对应命令均 exit 0，脚本 bash -n 通过。实验验证 oldest-first 两次重放、新单父链、旧 Commit bytes 不变、source authors／当前 committer、0640 与 exact raw Index／HEAD 的 abort，以及继续提交 Index 而保留未暂存 Work。本项已子项验收，该轮下一依赖 GC 的后续子项验收见下节；Phase 4 整体验收与最终目标仍待全量核对。
+`bash examples/experiments/rebase.sh ./build/debug/minigit` 与 sanitized 对应命令均 exit 0，脚本 bash -n 通过。实验验证 oldest-first 两次重放、新单父链、旧 Commit bytes 不变、source authors／当前 committer、0640 与 exact raw Index／HEAD 的 abort，以及继续提交 Index 而保留未暂存 Work。本项已子项验收，该轮下一依赖 GC 的后续子项验收见下节；该 Rebase 子项轮仍待 Phase 4 全量核对，后续最终验收见末节。
 
 ### GC：已验收
 
@@ -550,6 +553,31 @@ abort 恢复 exact original raw HEAD、whole optional raw Index 与累计 affect
 
 `bash examples/experiments/gc.sh ./build/debug/minigit` 与 sanitized 对应命令均实际通过、exit 0，脚本 bash-n 通过；覆盖 freshness／真正 orphan 回收、日志旧历史、完整 Stash 栈与 active Merge stage／备份保留及可中止。GC 已子项验收，本轮没有执行全 260 项；下一独立节点在 GC 提交后进行 Phase 4 全量验收与最终文档总结，不把子项通过写成整阶段或最终目标已完成。
 
+### Phase 4 阶段总结：已验收
+
+Rebase 与 GC 各子项已经验收，本节点只整理最终六份文档并对冻结源码做完整回归，不新增代码、命令、构建参数或版本发布。Rebase 子项提交 ff85740、GC 子项提交 ebc48d6 的独立定向与实验结果保持上文实际范围。完整 `ctest --preset debug --output-on-failure -j2` 与 `ctest --preset sanitized --output-on-failure -j2` 各实际执行全部 260 项（237 单元、23 CLI），全部通过，用时分别为 238.71／812.92 秒，两个进程均 exit 0。完整日志没有 AddressSanitizer、runtime error、Sanitizer ERROR 或失败诊断；本轮没有新增失败、修复或复跑。范围涵盖全部对象／文件／Index／refs／DAG、纯引擎、planner／Transaction／Operation／日志／Stash、Phase 0—4 业务与全部 23 CLI；不是只运行新增 Rebase／GC 用例。最终构建沿用 GC 子项两个预设无警告构建的同一冻结代码，本节点不重复构建。
+
+最终实现把几个模型接成同一条依赖链：Blob／Tree／Commit 内容寻址构成不可变快照与完整 parent DAG；Index 独立表达暂存或 stages1／2／3，Work 表达实际文件；纯 Diff／TextMerge／SnapshotMerge 与 DAG helper 作有界计算。业务持 RepoLock，caller-lock planner 捕获实际 before 并组合 Work、Index、HEAD／refs／reflog，最后短 Transaction 发布。跨进程操作另由版本化 Operation 保存 original raw metadata、affected actual Work 与当前位置；Ready 重试未执行来源，Conflicted 从解决后的 Index 完成来源，二者不能混为一谈。GC 先展开全部语义根，再标记完整对象闭包。
+
+| 已交付范围 | 学习与实现约束 |
+| --- | --- |
+| 本地快照与比较 | init／add／commit、status／log、轻量 tag，diff／show 直接观察 HEAD／Index／Work 各自内容 |
+| 引用与安全更新 | branch／switch／restore／reset／rm／mv 与 reflog，精确授权、未知覆盖保护、短事务 recover |
+| 合并与单来源重放 | Merge 的唯一最低共同 base／两父关系；CherryPick／Revert 的来源父快照与单父新提交，conflict／continue／abort |
+| Stash 全生命周期 | H/I/W/U、全栈 roots；Work 与可选 --index 两次独立合并，pop 完整成功删除，显式继续／中止 |
+| Rebase | 全 DAG 先检、唯一 base 后 oldest-first 单父线性队列；原 author／message、新 committer、preserve-empty；临时 detached、原 branch raw CAS、末步 attach |
+| GC | 规范 loose inventory 与全部 orphan 前检，typed graph／Kahn、HEAD／refs／Index all stages／logs／Stash／Operation semantic roots；freshness 闭包、引用者优先的非原子 sweep |
+
+关键 Git 差异保持明确：固定 SHA-256 与自有 MGIX／MGRL／MGOP／MGST／MGTR，不承诺仓库互读；只解析完整对象 ID／已交付引用，不支持缩写、~／^ 运算或任意 reflog selectors。轻量 tags、无 symlink／submodule、无 rename detection／multiple-base synthesis；Replay 来源多父拒绝，Rebase 无 interactive／rebase-merges／--onto／mainline／skip。Stash apply／pop 要求干净 tracked 起点（push 保存 dirty Index／Work），跨层 D/F 保守拒绝，其显式 continue／abort 是 MiniGit 扩展。GC 无 pack、日志过期或后台维护；future mtime 总保留，pending Transaction 要先 recover，active Operation 保留所有 queue／backup 语义根。
+
+资源与故障边界也属于结果。普通文件／对象载荷不超过 64 MiB；Snapshot 文件规划与 Tree 含目录 entries、Index distinct／stages、Work changes、DAG／GC nodes 与 edges 各有实际上限，不能视作同一预算。GC 的逻辑 graph 64 MiB 并非精确 heap 上限。Linux/POSIX／procfs 是已验证环境，其他平台未验证；owner／group／mtime 不恢复，同设备与权限检查不会锁住任意外部写入者。短事务测试覆盖公开持久步骤中断，内部随机 temp 或既非 before／after 的 mkdir／chmod 中断可能严格拒绝自动恢复；GC 删除失败可部分完成，只在支持边界内按引用者先序保持剩图闭合，不提供原子回滚。
+
+可以从项目获得四组可复述的结论：快照与变化／历史事件与 DAG／Index 与 Work 是不同数据；引用移动不会改旧对象；恢复必须依真实 before，不能只拿 HEAD Tree；可达性还包含容器载荷的语义根及新对象保留闭包。Rebase 的队列更新使这些原则跨多次短事务成立，GC 则验证哪些不可变对象仍被它们需要。代码与学习页已有对应实验和例子，本节点不另加重复脚本。
+
+本轮实验范围沿用 Rebase 与 GC 独立子项两个预设已经实际通过的证据，不声称本节点重跑全部历史实验。全量 sanitized 中 SnapshotMerge 大预算用例耗时 371.43 秒，期间 CPU 活跃；实际限值与 fixture 未削减，不把该耗时作为性能承诺。尚无远程 push、系统安装或发布动作，版本保持 0.1.0。
+
+后续扩展不是当前验收范围：多个 merge-base 需定义虚拟基线与递归冲突策略；rename detection 需明确路径映射与 D/F 保护；interactive rebase 需新队列编辑／状态转换契约与 crash recovery；pack 需对象定位／索引及完整校验，reflog expiration 需独立事件保留 schema／策略并与 GC roots 联动。每一扩展都应先定义格式、预算、失败边界及独立验证，再新增用户命令或复杂 flags。
+
 ## 下一步
 
-Phase 1 已验收，纯差异引擎、共享文件接口、diff 及 show 子项已通过验证；短事务与恢复机制已验收；reflog 与 commit 事务发布已完成子项验收；branch 管理已完成子项验收；共享工作区与 Index 更新规划器核心实现已完成，switch 工作区切换已通过子项验收，Restore 内容恢复已完成子项验收，Reset 三模式已完成子项验收，Rm 删除与取消暂存已完成子项验收，Mv 文件与目录迁移已完成子项验收，Phase 2 两个预设各 147 项全量检查已通过、整体验收完成；纯文本三方合并引擎已通过子项验收，Snapshot 合并的模式／存在／D/F 适配器已通过子项验收，完整 DAG 上的 single-lowest merge-base helper 已通过子项验收，显式 Directory 目标规划已通过子项验收，CommitSnapshot 工厂已通过子项验收，OperationState v1 codec／roots 与业务 guard 已通过子项验收，Merge 完整 start／continue／abort 已通过子项验收，CherryPick／Revert 完整生命周期已通过子项验收，Stash 保存／查询／栈管理已通过子项验收，MGOP v2 的 StashApply context 基础已通过子项验收，完整 Stash apply／pop／--index／continue／abort 恢复生命周期已通过子项验收，Phase 3 独立全量验收已完成，两预设各 237 项全部通过，Phase 4 Rebase 状态基础已通过子项验收，当前 Rebase 业务已通过子项验收，GC 已通过子项验收；下一步独立执行 Phase 4 全量整体验收，最终目标收尾尚未完成。每次更新本页同时补充实际验证命令、结果、能力边界和未完成验收条件。详细设计见 [架构](architecture.md)，学习路线见 [README](../README.md)。
+冻结源码的全部目标命令与 Phase 0—4 整体验收已完成，最终两预设各 260 项全部通过。当前约定目标范围已经完成；后续扩展是新的独立目的，需另定义契约与验证，不是本次遗漏事项。保留已确认的格式、平台与命令简化边界，不把教学范围等同于原生 Git 全部功能。详细设计见 [架构](architecture.md)，阅读与实验入口见 [README](../README.md)。

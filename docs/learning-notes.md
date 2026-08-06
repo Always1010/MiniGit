@@ -412,7 +412,7 @@ Phase 3 的阶段练习可以复用上述 Merge、Replay 与 Stash 实验，两�
 
 Rebase 状态基础已通过子项验收。设 queue=[S0,S1]、cursor=0：Ready 表示 S0 还没执行；如果 unknown 文件阻挡规划，重试仍应执行 S0，不能直接保存当前 Index 并把 cursor 改成 1。若 S0 冲突已发布，phase=Conflicted，解决并 add 后才用 Index 完成它。cursor<size，因此末步的最终 attach／State 删除由后续业务同事务处理，不保存“Ready 但没有下一来源”。
 
-C++ 练习复制一份 State 为 next：只改 phase 到 Conflicted 时 cursor／current 不变；推进到 Ready 时 cursor 仅加一，新 current Commit 的 parent 恰为旧 current。已有 Work path 的 before 若被后一次修改替换，会失去最初中止镜像，所以 validator 要拒绝；保留 before 本身仍不等于正确累计，新 key 被原 File／Absent 祖先遮挡时如何取原镜像需要业务另定义。本项只 codec／roots／受约束规划更新，没有新 CLI 或可执行实验，两个预设相关 25 项与完整只读审查通过，实际重放业务仍待实现。
+C++ 练习复制一份 State 为 next：只改 phase 到 Conflicted 时 cursor／current 不变；推进到 Ready 时 cursor 仅加一，新 current Commit 的 parent 恰为旧 current。已有 Work path 的 before 若被后一次修改替换，会失去最初中止镜像，所以 validator 要拒绝；保留 before 本身仍不等于正确累计，新 key 被原 File／Absent 祖先遮挡时如何取原镜像需要业务另定义。该状态基础轮只改 codec／roots／受约束规划更新，没有新 CLI 或可执行实验，两个预设相关 25 项与完整只读审查通过；当时重放业务仍待实现，后续验收见下节。
 
 
 ## 重放两次，原分支为什么最后才移动
@@ -433,3 +433,10 @@ GC 已通过子项验收。设一个尚无 ref 的新 Commit K 指向旧 Tree T�
 
 
 已落盘 [GC 实验](../examples/experiments/gc.sh) 先用 hash-object -w 生成未 add 的 orphan Blob，默认 grace 保留、prune-now 再清理对象，工作文件仍保留。再检查 reset 后 old tip 由 reflog 保留、栈下方 entry 仍能 pop、活跃 Merge 的 stages1／2／3 与 raw Index 保持且 abort 可用。脚本 bash-n 已通过，两个预设实际执行均通过、exit 0；入口为 `bash examples/experiments/gc.sh ./build/debug/minigit`，sanitized 使用对应二进制。
+
+
+## 完成项目后怎样解释一次状态变化
+
+拿同一个文件回答五个问题：哪个 Blob 保存字节，哪个 Tree 把名字映到对象，Index 是否与 HEAD 相同，Work 是否已暂存，哪个 ref／日志或操作备份让旧内容仍可达。再把一次冲突继续画成来源策略→resolved Index→新 Commit→短事务，把中止画成 actual original before→未知保护→短事务。这样可以解释原 author 与当前 committer、空提交、stages 与 marker、Ready 与 Conflicted，以及 GC 为什么保留看似没有分支的对象。
+
+当前约定范围与 Phase 0—4 已整体验收；最终 Debug／sanitized 各 260 项全部通过，完整范围及结果见 [进度](progress.md#phase-4-阶段总结已验收)。本节点沿用 Rebase／GC 两预设的已有实验结果，不宣称重新执行所有历史实验，也不扩展命令目标。
