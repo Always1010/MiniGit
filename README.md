@@ -1,18 +1,12 @@
 # MiniGit
 
-MiniGit 是使用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习 Git 的对象模型、暂存区、引用、历史和合并。项目采用自己的仓库格式，不承诺与 Git 仓库互读；网络协议、远程仓库和托管服务不在范围内。
+MiniGit 是用 C++20 编写的简化本地版本管理器，用于通过可阅读的实现学习内容寻址、三棵树、引用、历史、合并与恢复。采用自己的 `.minigit`／SHA-256 对象与 MGIX 等格式，不承诺与 Git 仓库互读；核心不调用系统 Git，也不使用 Git 库。
 
-Phase 0 构建基础、Phase 1 本地快照闭环、Phase 2 比较与安全更新及 Phase 3 合并与应用均已验收，当前版本仍为 `0.1.0`。Phase 1 验收时 Debug 与 sanitized 各 54 项检查全部通过；各阶段真实范围与验证记录见 [进度](docs/progress.md)。
+当前已逐项交付快照闭环、差异与查询、分支和安全工作更新、Merge／CherryPick／Revert／Stash、线性 Rebase 与松散对象 GC。会暂停的业务均提供继续／中止；短事务中断则先 recover。先按下方命令构建，再从 [学习实验](docs/learning-notes.md) 与 [代码导读](docs/code-walkthrough.md) 观察相同数据怎样经过不同层。
 
-Phase 2 的八个命令 diff／show／branch／switch／restore／reset／rm／mv 已完成整体验收，Debug 与 sanitized 各 147 项全量检查全部通过（130 单元、17 CLI），无 ASan／UBSan 报告。共同的数据模型、事务架构、与原生 Git 的边界及 Phase 3 依赖链集中记录在 [Phase 2 阶段总结](docs/progress.md#phase-2-阶段总结)。版本仍为 0.1.0；Phase 3 合并与应用的后续整体验收见下文，该 Phase 2 验收时 Phase 4 仍待实现；当前 Rebase 子项与 GC 边界见下文，最终目标未完成。
+当前版本为 `0.1.0`。Phase 0—4 已完成目标范围并通过整体验收；最终 Debug／sanitized 各 260 项（237 单元、23 CLI）全量检查通过，耗时 238.71／812.92 秒，无 ASan／UBSan 诊断。逐阶段历史证据与本轮范围集中见 [阶段总结](docs/progress.md#phase-4-阶段总结已验收)，本轮证据来自全部用例的实际执行。
 
-Phase 3 复用纯文本三方合并、Snapshot 的内容／模式／存在与 D/F 合并、完整 DAG 基线选择、显式提交工厂和真实 before 镜像。业务再组合 Index／Work／引用与日志，并以短事务发布；冲突状态支持跨进程继续／中止。各层接口与逐项验证历史集中在进度页，详细调用链见 [代码导读](docs/code-walkthrough.md)。
-
-Merge 使用唯一最低共同基线；CherryPick／Revert 根据单来源父快照正向／反向重放，成功保留空结果。Stash 独立保存 H/I/W/U，默认恢复 Work，--index 另合并暂存意图；pop 完整成功才删除条目，显式继续／中止不创建提交。首版 clean tracked、跨层 D/F、来源父数、未知节点和真实权限保护等限制见阶段总结，不承诺原生 Git 的全部策略或仓库格式兼容。
-
-Phase 3 的完整 Merge／CherryPick／Revert／Stash（限定本项目范围）已完成独立整体验收。冻结代码的 Debug 与 sanitized 各 237 项全量检查（216 单元、21 CLI）全部通过，用时 192.25／581.97 秒，无 ASan／UBSan 报告；共享架构、核心学习结果、Git 差异与 Phase 4 依赖集中见 [Phase 3 阶段总结](docs/progress.md#phase-3-阶段总结已验收)。版本仍为 0.1.0；Rebase 业务现已通过子项验收，GC 也已通过子项验收；Phase 4 全量整体验收与最终目标收尾仍待完成。
-
-Phase 4 首个子项 Rebase 状态持久化基础已通过子项验收：明确 Ready／Conflicted、线性 queue／cursor、onto 与原分支镜像，以及受约束的 canonical CAS 更新。状态基础源码与五组测试已冻结核对，两个预设相关 25 项及完整只读审查通过；该基础验收轮没有 rebase CLI 或实际重放；当前 Rebase 业务生命周期也已通过子项验收：两预设各 38 项相关检查及 rebase 实验通过；GC 也已通过子项验收：两预设各 24 项与 GC 实验通过；当前注册 260 项，尚未全量执行或完成 Phase 4 整体验收。范围见 [状态基础进度](docs/progress.md#rebase-状态基础已验收) 与 [Rebase 业务验收](docs/progress.md#rebase-业务生命周期已验收)，Phase 3 全量验收证据保持历史范围。
+实现与验证面向 Linux/POSIX；普通文件／对象载荷有 64 MiB 上限，路径、Index、树、图及事务有独立预算。需要读取或改写工作节点时拒绝软链与特殊节点；只用 Index 完成 Conflicted continue 可保留未暂存 FIFO，文件恢复不还原 owner／group／mtime。首版无 remote／pack、rename detection、多个 merge-base 合成、交互式 rebase 或 reflog expiration；GC 完整前检后有序删除，仍非原子事务。各命令完整范围与边界见下面的 CLI 表及 [架构](docs/architecture.md)。
 
 ## 构建与运行
 
@@ -190,7 +184,7 @@ bash examples/experiments/reset.sh ./build/debug/minigit
 | Phase 3 | `merge`、`cherry-pick`、`revert`、`stash`；需要继续或中止的操作同时提供相应恢复入口 |
 | Phase 4 | `rebase`、`gc`，完成复杂历史编辑和对象回收 |
 
-表中列出整个阶段的目标，当前 CLI 表列出本子项实现范围；阶段完成必须有验收证据，不能仅由命令名称存在判定。
+表中列出整个阶段的目标，当前 CLI 表列出已交付范围；Phase 0—4 均有实际验收证据，详细历史见进度页。
 
 ## 共享更新规划器：核心接口已实现
 
@@ -206,7 +200,7 @@ bash examples/experiments/reset.sh ./build/debug/minigit
 4. [学习笔记](docs/learning-notes.md)：可执行的观察实验、取舍与常见误区。
 5. [进度](docs/progress.md)：完成状态、验证证据、阶段验收与下一步。
 
-Phase 1 的暂存、提交与历史实验可直接运行。branch 管理已通过子项验收；switch 与 restore 已通过子项验收，reset 已通过子项验收，rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移已通过子项验收，合并及历史重写随后续阶段交付，当前状态统一由进度文档记录。
+上述阅读入口连接已交付的快照、工作更新、合并／重放、Stash 与 GC；学习页提供真实 CLI 实验和 C++ 思考题。Phase 0—4 的完整范围与最终验证见 [阶段总结](docs/progress.md#phase-4-阶段总结已验收)，各实验的实际执行轮次保留在进度页。
 
 ### 中断事务的恢复
 

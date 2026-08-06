@@ -441,3 +441,10 @@ Roots::path／raw 共用独立的 metadata 预算，raw 先按 file_size 检查�
 
 
 [test_gc.cpp](../tests/unit/test_gc.cpp) 八组覆盖全部 refs／parents／nested Tree、Index 所有 stages 且不读 Work／不需身份、保留的已删分支与 HEAD 日志、fresh Commit→old Tree／Blob 与 future mtime、非 top Stash H/I/U、active Merge／Rebase Ready／Conflicted／saved Stack 和 raw Index／Work、真实 Prepared guard 与部分 sweep 重试、损坏 orphan／schema／typed edge／unsafe inventory／root 的零删除拒绝。部分 sweep fixture 让 Blob fanout 为 0500，正常先删 Commit／Tree 后 Blob unlink 拒绝，恢复权限后再次完整前检并清掉余项；需要非 root 身份，root 会跳过该权限 fixture。本轮真实 uid1000 执行该权限 fixture 通过，无 SKIP；两预设相关 24 项与实验均通过，完整命令和范围见 [GC 验收](progress.md#gc已验收)，未执行全 260 项。
+
+
+## 完整项目的复习顺序
+
+回到 object codec／ObjectStore，再看 Snapshot／Index 与 refs／DAG；随后沿纯引擎→caller-lock planner→self-lock 业务→Transaction／Operation 追一次发布，最后用 GC 查根集合与完整闭包。Rebase 最能暴露单步 helper 与持久队列的区别，GC 最能暴露普通 Blob 与语义容器的区别；上文实际源码与 tests 已给每层入口。
+
+该文档节点不改代码，全部命令与 Phase 0—4 已整体验收；最终两个预设各 260 项通过，无 ASan／UBSan 诊断。当前完整范围、已知限制与后续扩展依赖见 [最终总结](progress.md#phase-4-阶段总结已验收)；阅读纯 API 契约时仍先确认 caller-lock／self-lock 与 immutable storage／mutable publication，避免调用层次上的重复锁或越过计划。
