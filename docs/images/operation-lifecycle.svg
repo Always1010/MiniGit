@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="650" viewBox="0 0 1040 650" role="img" aria-labelledby="title desc">
+<title id="title">冲突恢复：解决结果进 Index，原始现场留在备份</title><desc id="desc">启动后可直接完成，或发布冲突和 Operation 状态。冲突解决并 add 后 continue 读取 Index；abort 读取真实 before 备份。任一步短事务中断，先 recover，再继续业务。</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker></defs>
+<rect width="1040" height="650" rx="20" fill="#f8fafc"/>
+<g font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" fill="#0f172a">
+<text x="36" y="52" font-size="26" fill="#0f172a" text-anchor="start" font-weight="600">冲突恢复：解决结果进 Index，原始现场留在备份</text>
+<rect x="40" y="105" width="220" height="100" rx="14" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
+<text x="150.0" y="151.0" font-size="21" fill="#0f172a" text-anchor="middle" font-weight="600">启动操作</text>
+<text x="150.0" y="182.0" font-size="16" fill="#475569" text-anchor="middle" font-weight="400">检查跟踪状态与对象</text>
+<rect x="365" y="105" width="260" height="100" rx="14" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+<text x="495.0" y="151.0" font-size="21" fill="#0f172a" text-anchor="middle" font-weight="600">计算候选结果</text>
+<text x="495.0" y="182.0" font-size="16" fill="#475569" text-anchor="middle" font-weight="400">三方合并／来源策略</text>
+<rect x="775" y="105" width="225" height="100" rx="14" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="2"/>
+<text x="887.5" y="151.0" font-size="21" fill="#0f172a" text-anchor="middle" font-weight="600">操作完成</text>
+<text x="887.5" y="182.0" font-size="16" fill="#475569" text-anchor="middle" font-weight="400">事务发布，清理状态</text>
+<rect x="365" y="300" width="260" height="105" rx="14" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
+<text x="495.0" y="348.5" font-size="21" fill="#0f172a" text-anchor="middle" font-weight="600">冲突已发布</text>
+<text x="495.0" y="379.5" font-size="16" fill="#475569" text-anchor="middle" font-weight="400">stages + Work + State</text>
+<rect x="775" y="300" width="225" height="105" rx="14" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="2"/>
+<text x="887.5" y="348.5" font-size="21" fill="#0f172a" text-anchor="middle" font-weight="600">continue</text>
+<text x="887.5" y="379.5" font-size="16" fill="#475569" text-anchor="middle" font-weight="400">读取已解决的 Index</text>
+<rect x="40" y="300" width="220" height="105" rx="14" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
+<text x="150.0" y="348.5" font-size="21" fill="#0f172a" text-anchor="middle" font-weight="600">abort</text>
+<text x="150.0" y="379.5" font-size="16" fill="#475569" text-anchor="middle" font-weight="400">恢复真实 before 备份</text>
+<polyline points="260,155 365,155" fill="none" stroke="#475569" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="625,155 775,155" fill="none" stroke="#475569" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="700" y="138" font-size="16" fill="#475569" text-anchor="middle" font-weight="400">无冲突</text>
+<polyline points="495,205 495,300" fill="none" stroke="#475569" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="555" y="261" font-size="16" fill="#475569" text-anchor="middle" font-weight="400">发生冲突</text>
+<polyline points="625,352 775,352" fill="none" stroke="#475569" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="700" y="332" font-size="16" fill="#475569" text-anchor="middle" font-weight="400">解决并 add</text>
+<polyline points="890,300 890,205" fill="none" stroke="#475569" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<polyline points="365,352 260,352" fill="none" stroke="#475569" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="312" y="332" font-size="16" fill="#475569" text-anchor="middle" font-weight="400">放弃</text>
+<text x="520" y="463" font-size="18" fill="#0f172a" text-anchor="middle" font-weight="400">continue 使用暂存结果；abort 使用操作前实际内容和权限。</text>
+<rect x="40" y="510" width="960" height="95" rx="14" fill="#eef2ff" stroke="#a5b4fc" stroke-width="2"/>
+<text x="520" y="547" font-size="20" fill="#0f172a" text-anchor="middle" font-weight="600">任一步短事务中断：先 recover，再 continue／abort</text>
+<text x="520" y="581" font-size="17" fill="#475569" text-anchor="middle" font-weight="400">Prepared → before　／　Committed → after；Rebase 完成一步后可能继续队列。</text>
+</g></svg>

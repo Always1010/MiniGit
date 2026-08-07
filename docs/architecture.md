@@ -1,714 +1,142 @@
-# 架构与数据约束
+# 架构与约束
 
-本页描述已交付体系：不可变 Objects、Index 与 Refs／DAG 提供内容、暂存和历史；纯 Diff／TextMerge／SnapshotMerge 计算差异与候选结果；业务持锁调用 planner，组合短 Transaction 和跨进程 Operation，完成安全更新、冲突继续／中止及线性 Rebase。GC 从完整语义根标记对象闭包，再有序回收。Phase 0—4 已整体验收，历史过程、最终全量证据与能力边界集中见 [阶段总结](progress.md#phase-4-阶段总结已验收)，下文按职责解释实际接口。
-
-## 依赖方向
-
-CLI 负责解析参数、显示结果和返回退出码，commands 层协调具体命令涉及的模块。Repository 只提供仓库发现、初始化和上下文，不集中承载全部命令逻辑。`minigit_core` 承载版本管理逻辑，直接调用核心库时不需要运行 CLI 子进程。OpenSSL EVP 和 zlib 是对象存储底层依赖；C++20 标准库提供字节容器、路径和基础文件操作。
+## 模块分层
 
 ```mermaid
-flowchart TD
-    CLI[CLI 参数与输出] --> Commands[Commands 命令协调]
-    Commands --> Repo[Repository 仓库发现与初始化上下文]
-    Commands --> Worktree[Worktree 路径检查与文件读写]
-    Commands --> Switch[Switch 四状态覆盖策略]
-    Switch --> WorktreeUpdate
-    Switch --> Branches
-    Switch --> Reflog
-    Commands --> WorktreeUpdate[WorktreeUpdate 目标与授权规划]
-    WorktreeUpdate --> Worktree
-    WorktreeUpdate --> Snapshot
-    WorktreeUpdate --> Transaction
-    Commands --> Index[Index 版本化暂存区]
-    Commands --> Refs[Refs 与 HEAD]
-    Commands --> Branches[Branches 列表与引用管理]
-    Branches --> Refs
-    Branches --> DAG
-    Branches --> Reflog
-    Branches --> Transaction
-    Commands --> History[History 提交协调与身份]
-    Commands --> DAG[DAG 提交图遍历]
-    Commands --> Snapshot[Snapshot 路径映射与 Tree 转换]
-    Commands --> Diff[Diff 快照比较]
-    Commands --> Inspection[Inspection 查询与内容来源]
-    Inspection --> Diff
-    Inspection --> Snapshot
-    Inspection --> Refs
-    Inspection --> Worktree
-    Commands --> Operations[Operations 可恢复操作状态]
-    Commands --> Objects[ObjectStore 内容寻址对象库]
-    Operations --> Merge[Merge 三方合并]
-    Merge --> Diff
-    History --> Refs
-    History --> Snapshot
-    History --> Reflog[Reflog 移动规划]
-    History --> Transaction[Transaction 发布与恢复]
-    Reflog --> Refs
-    Reflog --> Plan[TransactionPlan 元数据计划]
-    Transaction --> Plan
-    Transaction --> LogCodec[MGRL 编解码]
-    DAG --> Snapshot
-    Refs --> Snapshot
-    Snapshot --> Objects
-    Index --> Objects
-    Refs --> Objects
-    Objects --> Codec[Blob / Tree / Commit 编解码]
-    Objects --> Hash[OpenSSL EVP SHA-256]
-    Objects --> Compression[zlib 压缩与解压]
+flowchart TB
+    CLI[CLI：参数、输出、退出码] --> Business[业务：提交、切换、合并、重放、Stash]
+    Business --> Model[数据模型：Index、Snapshot、Refs、DAG]
+    Business --> Engine[差异与合并：Diff、TextMerge、SnapshotMerge]
+    Business --> Plan[规划器：目标、授权、实际 before]
+    Business --> State[Operation：冲突上下文与 Rebase 队列]
+    State --> Plan
+    Plan --> Txn[Transaction：发布与恢复]
+    Model --> Objects[ObjectStore：Blob、Tree、Commit]
+    Engine --> Objects
+    Txn --> Objects
+    GC[GC：语义根与依赖闭包] --> Objects
+    State --> GC
 ```
 
-核心类型 [ObjectId](../include/minigit/object_id.hpp) 以固定 32 字节保存摘要，`from_bytes` 与 `bytes` 处理内部表示，`from_hex` 与 `hex` 处理 64 位十六进制文本。文本格式与内部字节表示明确分离，防止将十六进制文本误写入 tree 的二进制摘要字段。
+CLI 只负责入口，`minigit_core` 提供可直接调用的 C++ 业务。Repository 提供仓库发现、初始化与根路径；ObjectStore 使用 OpenSSL EVP 与 zlib。源码入口见[代码导读](code-walkthrough.md)。
 
-当前 [ObjectStore](../include/minigit/object_store.hpp) 提供 `write`、`read` 和 `object_path`。[Repository](../include/minigit/repository.hpp) 提供 `init`、`discover`、`root`、`metadata`；它不代替 CLI 命令协调。文件工具提供 `RepoLock`、`atomic_write`、`read_file`，详见 [fs.hpp](../include/minigit/fs.hpp)。
+业务入口取得 `RepoLock`，内部 planner 和存储工厂要求调用者已持锁，避免重复加锁。锁协调 MiniGit 进程，不锁住外部编辑器。
 
-共享文件接口 `FileData` 同时保存字节与完整权限位 `07777`；`read_file_data` 从同一打开的普通文件获取读取前后 stat，检查大小、权限及纳秒级修改／状态时间没有变化，最后核对字节数。它返回已打开文件的稳定观测，不能保证当前路径没有被外部编辑器替换。`read_file` 复用这条读取链，仅返回字节。
-
-`atomic_write_with_permissions` 在内容写完后为临时文件设置并核对明确权限，再同步与替换，使新内容和权限一起发布；旧 `atomic_write` 继续采用创建模式 `0644` 并受 umask 影响。`WorktreeFile` 组合 FileData 与由它计算的 FileState，`read_worktree_file` 复用路径分类：缺失、目录或普通文件祖先造成的 ENOTDIR 返回空，软链及特殊类型明确失败。读取不保存对象；add 和 scan 仍逐文件处理。
-
-Snapshot 单独承载 `FileState/Snapshot` 模型、对象类型读取和 Index/Tree 转换，不依赖引用或命令。Refs 调用它校验发布目标；History 负责身份、HEAD 与提交协调。`head_snapshot` 保留在 History，因为它需要解析可变 HEAD。路径转义位于 [format.hpp](../include/minigit/format.hpp)，CLI 直接使用，Diff 无需依赖状态查询模块。
-
-## 持久化边界
-
-仓库元数据存放在 `.minigit` 专用目录。当前初始化写入 `config`，内容为 `format=1` 和 `hash=sha256` 两行；`HEAD` 为 `ref: refs/heads/main`，此时 main 尚无首个提交。松散对象路径为 `objects/<摘要前两位>/<剩余六十二位>`。初始化先在临时目录构造元数据，再发布为 `.minigit`，有效仓库重复初始化保留已有内容。
-
-当前持久化布局如下；reflog 在首次记录事件时创建。OperationState v1 基础已验收，可由核心 planner 创建／删除，Merge 生命周期已接入 State 创建／删除：
+## 持久化布局
 
 ```text
 .minigit/
   config                 format=1 / hash=sha256
-  HEAD                   ref: refs/heads/main 或完整提交 ID
-  identity               version=1 与显式本地 name/email
-  index                  MGIX v1 暂存区及校验和
-  write.lock             持久锁文件；解锁不删除
-  transaction            MGTR v1，未完成短事务时存在
-  transaction-staging/   本次双方节点的内部暂存
-  operation              MGOP v1 三种历史操作；v2 为 StashApply 冲突恢复上下文
-  stashstack             MGST v1，newest-first 活跃 Work Commit 列表
-  refs/stash             活跃栈 top，与 stashstack 配对
+  HEAD                   符号分支或完整 Commit ID
+  identity               仓库本地 name/email
+  index                  MGIX v1：路径、模式、Blob ID、stage
+  write.lock             持久锁文件，解锁不删除
   objects/ab/<62位ID>     zlib 松散对象
-  refs/heads/<分支>       完整提交 ID 与换行
-  refs/tags/<标签>        完整提交 ID 与换行
-  logs/HEAD              MGRL v1，HEAD 移动事件
-  logs/refs/heads/<分支>  MGRL v1，该分支移动事件
+  refs/heads/<分支>       分支 Commit ID
+  refs/tags/<标签>        轻量标签 Commit ID
+  logs/HEAD              MGRL v1：HEAD 移动事件
+  logs/refs/heads/<分支>  MGRL v1：分支移动事件
+  stashstack             MGST v1：newest-first Work Commit 栈
+  refs/stash             与栈 top 配对
+  operation              MGOP：跨命令操作状态
+  transaction            MGTR v1：未完成短事务
+  transaction-staging/   本次事务的内部暂存节点
 ```
 
-identity、index 和具体引用在首次使用时创建。Index、引用、快照、提交及版本化 Operation 状态均已实现，后者支持已交付业务的冲突继续／中止，以及 Rebase Ready 队列推进。各项职责与阶段如下：
+初始化 HEAD 指向尚无提交的 `main`。Index、身份、引用和日志按首次使用创建；缺失和损坏必须区分，不将损坏数据视为空仓库。
 
-| 数据 | 责任 | 更新特征 |
-| --- | --- | --- |
-| 对象库 | 由摘要寻址的 blob、tree、commit；本子项 | 内容不可变，重复写入同一内容可复用 |
-| Index | 路径、文件模式、blob 摘要及冲突阶段 | 自有版本化格式，不复用 Git index 格式 |
-| Refs / HEAD | 分支、轻量标签、当前分支或分离提交 | 小型可变数据，校验名称与目标类型 |
-| Reflog | HEAD／分支的 old、new、原因事件序列 | Phase 2 已验收；与引用同事务发布，不能替代对象存储 |
-| 操作状态 | 正在进行的合并或历史编辑及恢复信息 | Phase 3 起用于继续、中止与重启恢复 |
-
-Index 已由 [index.hpp](../include/minigit/index.hpp) 定义为条目列表，`IndexEntry` 持有 `path/mode/id/stage`。磁盘格式为 `MGIX` 魔数、大端版本和条目数量；每项保存大端路径长度、路径字节、大端模式、stage 字节及原始 32 字节摘要，末尾附 SHA-256 校验。条目按路径和 stage 排序；同一路径不能同时包含 stage 0 和冲突阶段，正常快照不能同时包含文件路径及其子路径。文件缺失表示空 Index，文件损坏明确拒绝，不降级为空。
-
-`add_paths` 在一个 `RepoLock` 下加载 Index，仅遍历选择范围，每读取一个文件就保存 Blob，只保留模式与对象 ID，在所有选择完成后一次性保存新 Index，内存不累积全部文件内容。失败可能留下不可达对象，但不会把部分选择写入 Index。`scan_worktree` 的 `Snapshot` 是路径到文件模式及 Blob 摘要的映射，计算摘要不保存对象；`read_worktree_entry` 单独检查跟踪路径，使以后 `status` 能区分删除与工作区修改。
-
-[refs.hpp](../include/minigit/refs.hpp) 定义 `Head`，同时保留符号分支名称及可选提交 ID，空 ID 表示未出生分支。引用文件保存完整 ID；`read_ref` 将文件缺失与损坏区分，`update_ref` 校验调用方预期旧值及目标 Commit 的完整可读取快照，再以原子替换发布新值。删除嵌套引用时只清理命名空间内的空父目录，保留 heads/tags；重试的幂等更新也补目录同步。`resolve_commit` 解析 HEAD、完整 ID、分支与标签，遇到同名分支及标签明确拒绝歧义。
-
-[snapshot.hpp](../include/minigit/snapshot.hpp) 的 `Snapshot` 将目录树展开为路径映射；`write_snapshot` 校验 Blob 并递归构造子 Tree，`read_snapshot` 按模式校验每个对象类型。展开限制为 128 层 Tree、100000 Tree 条目（包含文件与目录）及 64 MiB 展开路径／Tree 数据，以免小型复用图展开为无限制内存。[history.hpp](../include/minigit/history.hpp) 的 `create_commit` 在一个写锁下读取 Index、生成根 Tree、记录旧 HEAD parent、写入 Commit，最后由 reflog 规划器构造引用与日志的元数据计划，通过短事务发布。身份文件单独使用显式版本和 name/email 字段。
-
-[tags.hpp](../include/minigit/tags.hpp) 将轻量标签命令组合到已验证的引用机制：`create_tag` 解析目标并使用预期旧值更新，`delete_tag` 复用安全目录清理，`list_tags` 先验证所有目标，再返回按名称排序的映射。三项操作各持有一个写锁；标签不保存新对象，也不改变 HEAD 或 Index。首版只允许指向具有有效快照的 Commit。
-
-对象写入成功只表示内容已保存，后续引用更新成功才表示提交进入可见历史。Phase 1 即引入写锁、临时文件和元数据原子替换。`ObjectStore::write` 要求调用者持有 `RepoLock`，不会自行重复加锁；锁使用持久 `write.lock` 文件并阻塞获取，不通过删除锁文件表示解锁。`atomic_write` 使用临时文件、同步和原子替换。Phase 2 扩展工作区、Index、引用等多文件更新的事务与恢复机制，单文件原子替换不能自动保证全部状态的整体原子性。
-
-目录创建及对象复用也同步父目录，覆盖一次写入已发布但目录同步失败后的重试。`atomic_write` 在替换之后若同步失败，会报错但新内容可能已经可见；调用者不能把所有异常理解为旧文件仍在。当前没有断电故障注入证据，不承诺命令级断电事务。
+MGIX／MGRL／MGST／MGOP／MGTR 使用版本、长度与计数检查，并附 SHA-256 校验。MGOP v1 用于 Merge／CherryPick／Revert，v2 用于 StashApply 与 Rebase 的专用上下文。
 
 ## 数据不变量
 
-- 对象摘要计算输入为 `type + SP + decimal_size + NUL + payload`；长度统计字节数。压缩后的字节不参与摘要计算。
-- 读取对象后验证压缩流、头部类型、声明长度和摘要，错误返回明确诊断；损坏对象不能继续解释为有效快照。
-- tree 条目编码为 `mode + SP + basename + NUL + raw_object_id`，摘要字段固定 32 字节。按 basename 的无符号 UTF-8 字节排序，模式只允许 `100644`、`100755`、`40000`。禁止重复名称、无效 UTF-8、路径分隔符以及 `.`、`..`、`.git`、`.minigit` 名称。
-- commit 编解码类型持有 tree、零个或多个 parent、author、committer 和 message。作者与提交者当前仅检查非空单行文本，不自动补充或验证业务时间语法；消息禁止 NUL。`create_commit` 从显式本地身份构造 `Name <email> seconds +0000`，使用运行时 UTC 秒；业务层拒绝空白消息、NUL 和非法身份。
-- Index 记录将要提交的快照。`commit` 使用 Index，不重新把工作区的最新内容暗中纳入提交。
-- Repository 保存绝对根路径，普通文件工具支持绝对和相对路径；先按原始路径逐段检查软链接，再规范化结果，不能提前消除 `link/..`。计划中的版本快照使用仓库相对路径，并拒绝越界与元数据目录，不能依赖字符串前缀判断归属。
-- 分支和标签引用有效对象，HEAD 可以指向尚无首个提交的分支。未出生分支与损坏引用必须区分。
-- 工作区写入之前检查未提交修改与未跟踪文件的覆盖风险。规划拒绝不发布可变状态；事务执行中断可能留下部分更新，由 recover 按 journal 恢复。
-- 所有不支持的格式版本、文件类型和命令选项显式报错，不静默降级。
-- 文件工具限制一次读取或写入为 64 MiB，对象解压后的完整封装也受此限制，实际 payload 上限需扣除头部；采用 Linux/POSIX 文件接口并拒绝路径中的软链接，其他平台没有验证。
-
-## 关键数据流
-
-`add` 的实际流程：发现仓库 → 检查与枚举路径 → 读取文件原始字节与模式 → 写入 blob → 更新 Index。重复添加相同文件应复用同一 blob。对象可能先于 Index 更新而存在；暂时不可达对象允许后续回收。
-
-`commit` 的实际流程：读取 Index → 分目录构造 tree → 读取 HEAD 作为父提交 → 序列化 commit → 写入对象 → 规划引用与 reflog → 短事务发布。初次提交没有 parent；多父提交由合并阶段引入。
-
-```mermaid
-flowchart LR
-    W[工作区文件] -->|add| B[Blob 对象]
-    B --> I[Index 快照]
-    I -->|commit| T[Tree 对象]
-    T --> C[Commit 对象]
-    P[旧 HEAD 提交] -->|parent| C
-    C -->|更新| R[当前分支引用]
-    H[HEAD] -->|符号指向| R
-```
-
-[status.hpp](../include/minigit/status.hpp) 的 `collect_status` 在一个写锁下读取一致的 MiniGit 元数据，分别比较 HEAD tree 与 Index、Index 与工作区，并单独枚举未跟踪路径。比较 Blob ID 与模式，模式变化也是修改。冲突路径从 Index 的 stage 集合映射到状态码，不能把冲突条目当成普通 stage 0。状态读取校验所有 Index Blob，不把缺失对象伪装成文件修改；只计算工作区摘要，不保存对象、Index 或引用。[dag.hpp](../include/minigit/dag.hpp) 的 `load_commit_graph` 沿所有 parent 收集闭包，对已发现节点去重，并检查父对象存在且类型为 Commit。`topological_order` 用 Kahn 算法统计每个节点尚未输出的子边，在计数变为零时输出；同时可输出的节点按 ObjectId 字节序排序，不能根据文件目录顺序或作者时间推断历史。`log_history` 获取一个写锁并解析起点，空 HEAD 返回空历史；显示上限只截断结果，遍历仍校验完整闭包。图限制 100000 节点、1000000 父边及 64 MiB 解码数据，避免损坏或极大历史无限制展开。后续 `diff` 复用快照比较，`merge` 则接收共同祖先、当前快照和待合入快照三个输入。
-
-## 行差异与显示边界
-
-[diff.hpp](../include/minigit/diff.hpp) 的纯算法不读取仓库：`split_lines` 借用内容缓冲区；`diff_lines` 返回两侧的半开编辑区间；`make_hunks` 将编辑与上下文组装为显示块；`format_file_diff` 接收两侧可选的内容视图和模式。缺失侧用 `nullopt`，不能用空 Bytes 代替。工作区内容来源与引用解析由后续命令协调层负责，算法不依赖 Status 或可变 HEAD。
-
-[inspection.hpp](../include/minigit/inspection.hpp) 的 `repository_diff` 在一个 RepoLock 内选择两侧：Index→工作区、HEAD/修订→Index、修订→工作区或两个历史快照。涉及 Index 时拒绝冲突阶段，历史双修订不读取当前 Index。工作区候选只包含比较基准与需要的 Index 路径，不扫描无关未跟踪文件；内容由 WorktreeFile 读取，不假设尚未 add 的摘要已存在于对象库。`diff_snapshots` 作为持锁的共享快照查询，为后续 show 复用。逐路径加载内容、格式化并释放，最终结果不超过 64 MiB，输出前完成全部校验。
-
-`show_object` 同样取得一个锁，并按 spec 选择对象、提交内路径或 Index stage。文件选择必须读到 Blob，不能把 Tree payload 当作文件；提交先读完整快照，再调用 `diff_snapshots` 比较第一父提交。原始对象及历史路径不读取 Index。`format_commit` 位于 Format，供 log 与 show 复用；它只组织已经解码的字段，不负责仓库访问或身份策略。单个条目、完整 log 与 show 输出均限制 64 MiB，避免消息缩进和头部展开突破源对象预算。
-
-LCS 表最多 4000000 个单元，内部比较经过字节确认的行 ID。相同前后缀不进入 DP；超过表格预算仅替换剩余区间，超过每侧 100000 行则拒绝文本差异。Hunk 坐标始终零基，输出非空范围加一，空范围保持起点；无 LF 提示不计入行数。格式化先构造完整结果，每文件输出限制 64 MiB，显示路径最多 4096 字节并在复制前检查；二进制 NUL 仅显示摘要，不声称生成可恢复二进制内容的补丁。
-
-```mermaid
-flowchart LR
-    Data[旧与新字节及文件模式] --> Split[拆行为视图及 LF 标记]
-    Split --> IDs[精确行等价 ID]
-    IDs --> LCS[有界 LCS 与编辑区间]
-    LCS --> Hunk[上下文与 Hunk]
-    Hunk --> Patch[统一文本补丁]
-    LCS --> Future[后续三方合并]
-```
-
-## 工程取舍
-
-先实现松散对象，便于检查字节和定位问题；packfile、增量对象与网络协议不进入首版。自有 Index 格式降低初期编码负担，同时要求显式版本和损坏检查。普通 UTF-8 路径限制使首版聚焦对象语义；路径编码、大小写差异及平台文件模式仍需单独扩展和验证。
-
-每层都应把业务错误转换为稳定的错误类型，由 CLI 统一报告。单元测试验证格式和不变量，集成测试验证跨模块状态变化，端到端测试检查命令输出、退出码和磁盘结果。更多验收条件见 [进度](progress.md)。
-
-## Reflog：引用事件与事务发布
-
-[reflog.hpp](../include/minigit/reflog.hpp) 的 `ReflogEntry` 持有两个 `std::optional<ObjectId>` 和一个拥有自身字节的原因字符串；`Reflog` 是按发生顺序保存的 `std::vector`。端点缺失表示未出生或删除后的引用，不用全零 ID 冒充缺失。它记录本地引用事件，不改变 Commit 对象，也不以 parent 图代替事件顺序。
-
-MGRL v1 是独立元数据格式，字段按以下顺序编码：
-
-| 字段 | 编码与约束 |
+| 数据 | 核心约束 |
 | --- | --- |
-| 魔数、版本、条目数 | `MGRL`，大端 `uint32_t` 版本 1，大端 `uint32_t` 数量 |
-| 每项 old、new | 分别为单字节存在标志 0／1；存在时接原始 32 字节 ID |
-| 每项原因 | 大端 `uint32_t` 字节长度，再接非空 UTF-8；最多 4096 字节，禁止 ASCII 控制字符及 DEL |
-| 尾部校验 | 前面全部主体字节的 SHA-256，固定 32 字节 |
+| ObjectId | 内部 32 字节，文本为完整 64 位十六进制 |
+| Blob | 字节内容；摘要涵盖类型、长度与 payload |
+| Tree | `mode SP basename NUL raw-id`；按无符号 UTF-8 名称排序，无重复 |
+| 模式 | 文件 `100644`／`100755`，子目录 `40000` |
+| Commit | 根 Tree、有序 parents、author／committer、消息；消息禁止 NUL |
+| Index | 按 path／stage 排序；同路径不能同时有 stage 0 与冲突阶段 |
+| Snapshot | 路径→模式与 Blob ID；普通文件和其后代路径不能同时存在 |
+| Refs | 严格校验名称、目标 Commit 与预期旧值；HEAD 可为未出生分支 |
 
-每份编码日志最多 8 MiB、100000 项。解码先验证大小和校验，再检查版本、存在标志、长度、UTF-8 和尾部剩余字节。日志丢失返回空序列，日志损坏明确失败。读取与规划要求调用者持有 RepoLock；CLI 另外检查待恢复事务，并在完整格式化至最多 64 MiB 后才输出。
+读取对象验证压缩流、封装长度、类型与摘要。路径先检查原始组件再规范化，拒绝越界、元数据路径及软链；不能先消除 `link/..` 再检查。正常快照只保存文件可执行位，事务备份另保存完整权限 `07777`。
 
-```mermaid
-flowchart TD
-    C[完整 Commit 对象已保存] --> P[plan_move_head 校验预期 HEAD]
-    P --> B[符号 HEAD: 当前分支 ref 与两份日志]
-    P --> D[分离 HEAD: HEAD 文件与 HEAD 日志]
-    B --> T[TransactionPlan 精确 before/after 元数据]
-    D --> T
-    T --> V[校验旧日志的 Commit 类型与语义根]
-    V --> J[MGTR Prepared 发布]
-    J --> A[发布引用和 MGRL 文件]
-    A --> K[同一 MGTR 原子变为 Committed]
-    J --> R[recover 重放已保存日志字节]
-    K --> R
-```
+## 暂存与提交
 
-当前符号 HEAD 下的 commit 改变分支 ref，并规划 `logs/HEAD` 与 `logs/refs/heads/<分支>`；HEAD 的符号文本本身保持同一分支。分离 HEAD 下的 commit 规划 HEAD 文件和 `logs/HEAD`。switch 复用规划器处理分支切换：不同分支即使指向同一个 ID，符号名称的变化也生成 HEAD 事件；目标分支没有移动时无需改写其分支日志。相同 Head 状态则不产生移动事件。
+`add` 逐文件读取并保存 Blob，保留路径／模式／ID，全部选择成功后一次发布 Index。失败可遗留不可达对象，旧 Index 保留。
 
-`plan_append_reflog` 与 `plan_move_head` 只准备内存中的 MetadataChange，不写文件；已有日志尾项的 new 必须与追加事件的 old 连续。实现先复制计划，在副本中完成检查与编码，再移动赋回，因此异常不会留下半个日志规划。执行器将日志 before/after 存为备份 Blob，与引用一起恢复；recover 不再次调用 append，避免一次中断增加两次事件。
+`commit` 从 Index 构造分层 Tree 和 Commit，再规划引用与 reflog，最后用短事务发布。存储工厂 `store_commit_snapshot` 只保存不可变对象，不读取当前 Index／Work，也不移动 HEAD。内容已保存与历史已发布是两个步骤。
 
-事务预检与 `transaction_roots` 解析日志双方所有存在的 ID，验证对象哈希、Commit 类型及结构，并将它们加入语义根；历史事件不逐项展开 Tree。旧 Commit 的树缺损不应阻止单纯保存这条历史线索，新发布的提交目标仍须通过完整 Snapshot 校验。GC 的后续子项实现见末节；actor、时间、过期策略、选择器及 reflog 撤销命令不在当前格式中。
+## 工作区更新
 
-## Branches：管理引用，保持三棵树原值
+业务决定覆盖策略，`WorktreeUpdate` 接收目标与精确授权路径，捕获实际 before，再生成事务计划。授权目录名称不能代替授权每个文件；未知、忽略文件和陌生空目录仍受保护。删除只处理已记录文件和空目录。
 
-[branches.hpp](../include/minigit/branches.hpp) 提供 `BranchInfo`、名称转换、列表、纯创建规划和创建／删除业务入口。`BranchInfo::id` 为空表示当前未出生分支，不意味着对应文件损坏；分离 HEAD 不属于任何当前分支。列表使用名称排序，按唯一 Commit ID 校验完整 Snapshot，避免多条分支指向同一提交时重复展开；短名总字节预算为 64 MiB。
+Switch 对每条路径比较旧 HEAD=A、Index=B、Work=C、目标=D，按顺序判断：
 
-`branch_ref` 只接收短名，拒绝 HEAD、refs/ 前缀和纯 64 位十六进制 ID，随后校验完整 refs/heads 名称与日志路径的 4096 字节／128 分量边界。`list_branches/create_branch/delete_branch` 各自取得 RepoLock 并检查待恢复事务；`plan_create_branch` 要求调用者已持锁，供 switch -c 将“创建引用”和“切换工作区”合在一个计划里。
-
-```mermaid
-flowchart TD
-    N[branch 短名与目标修订] --> C[校验名称和完整目标 Snapshot]
-    C --> P[plan_create_branch 生成 ref 与 branch log]
-    P --> T[Transaction 发布或恢复]
-    D[branch -d 名称] --> G[加载 HEAD 全 parent 闭包]
-    G --> K[拓扑校验后检查目标成员资格]
-    K --> X[规划删除 ref 与 branch log]
-    F[branch -D 名称] --> X
-    X --> V[事务仍校验原 ref Snapshot 和日志 Commit 根]
-    V --> T
-    T --> U[HEAD / Index / 工作区保持原值]
-```
-
-新分支记录缺失→目标，强制移动记录旧值→目标；两者只改分支引用和 `logs/refs/heads/<名称>`，不生成 HEAD 移动事件。当前符号分支不能被该入口覆盖或删除，避免在没有工作区更新计划的情况下直接改变当前快照位置。非当前分支强制指向原目标是验证后的无操作，不添加重复事件。
-
-安全删除的定义是“分支 tip 在当前 HEAD 的 parent 闭包中”，包含 HEAD 本身及所有父边，不以名称、时间或相同文件内容推断。先用 DAG 的拓扑校验拒绝损坏闭包与环，再检查包含关系。`-D` 跳过祖先判断，仍要求待删 ref 的完整快照及原日志结构、Commit 根有效；强制参数不绕过持久化协议。
-
-删除将 ref 和该分支日志的 after 都设为缺失，在同一事务中发布；HEAD 日志不删除。只清理相关命名空间中的空父目录，保留 refs/heads 与 logs/refs/heads，并支持删除 topic/sub 后创建 topic。事务备份可用于未完成删除的回滚，完成删除后不会永久留一份分支日志。对象回收仍是后续阶段的独立职责。
-
-## Switch：先证明可覆盖，再统一发布
-
-[switch.hpp](../include/minigit/switch.hpp) 的 SwitchOptions 提供 new_branch、detach 与 target，`switch_worktree` 自行取得一次 RepoLock。普通目标经 branch_ref 选择短分支；detach 或新分支来源经 resolve_commit 解析。旧 HEAD 与目标的完整快照、完整 Index 编码和所有 Blob 均先校验，未解决 stages 拒绝。
-
-令 A 为旧 HEAD、B 为 stage 0 Index、C 为实际工作文件、D 为目标。单路径状态包含模式和 Blob ID，缺失与空文件不同；按下表顺序判断：
-
-| 条件 | 该路径的 Index 与 Work |
+| 条件 | 处理 |
 | --- | --- |
-| A == D | 保留 B、C |
-| 否则 B == D | 保留 B、C |
-| 否则 B == A 且 C == B | 更新到 D |
-| 其余 | 整个操作拒绝 |
+| A=D 或 B=D | 保留 B／C |
+| 否则 B=A 且 C=B | 更新到 D |
+| 其余 | 整体拒绝 |
 
-实现分两遍判断：第一遍只看 A/B/D，确定保留或更新路径，并拒绝不兼容的 staged 状态；先校验完整最终 Index 的预算与 D/F 拓扑，才为更新路径读取 C 并要求 C==B。前两种保留情况不读取 C，因此不扫描无关文件，也不因未变化路径上的软链而失败；需要改写的软链和特殊节点拒绝。路径并集为 A∪B∪D，精确 owned 为 A∪B。全局校验防止保留的 staged 子文件与新目标父文件冲突；实际目录中的未知子项由共享 planner 继续检查。
+Restore 的来源、路径和 Index／Work 目的独立；Reset 按 soft／mixed／hard 扩大更新范围；Rm 检查暂存内容是否会丢失；Mv 分别迁移 Index B 与 Work C。参数和模式表集中在[命令参考](commands.md#恢复重置与路径操作)。
 
-```mermaid
-flowchart TD
-    S[旧 HEAD A / Index B / 目标 D] --> M[第一遍 A/B/D: 保留或选更新路径]
-    M --> V[完整最终 Index 预算与 D/F 校验]
-    V --> C[第二遍: 只读更新路径 C 并要求 C==B]
-    C --> N[可选 plan_create_branch]
-    N --> H[plan_move_head: HEAD 与日志]
-    H --> P[plan_index_update / plan_worktree_update]
-    P --> T[统一 execute_transaction]
-    T --> R[Prepared 回实际 before / Committed 到 after]
-```
+目标模型区分 File、Directory、Absent。空 Blob 是零字节文件，不能代替 Absent；需要更新目录权限时，完整目录库存也要纳入检查。规划失败不发布可变状态，可留下不可变备份 Blob。
 
-业务入口不在持锁期间调用 self-lock create_branch，而组合 caller-lock 规划函数。普通 switch 不移动目标分支 tip；-c 才创建 ref 与分支日志。未出生且 -c 没有显式来源时，仅改变符号 HEAD 并记录 null→null 事件，不创建空 ref，保留已暂存和实际文件。Head 同值无操作仍先校验 Index；symbolic 不同但 ID 相同则仍记录切换。
+## 冲突与恢复
 
-工作区路径并集最多 200000 项／64 MiB 名称；原始与最终组合 Index 快照均限 100000 项／64 MiB 路径及条目数据，后续规划与事务继续遵循各自预算。完整权限用实际 before 备份，新写文件采用模式默认权限。核心与 CLI 已通过子项验收，验证证据见进度页；无强制丢弃修改、前一分支或远端追踪选择，不承诺原生 Git 全部 switch 策略兼容。
+![冲突恢复：启动后可直接完成，冲突时解决 Index 后继续或从真实备份中止；短事务中断先 recover](images/operation-lifecycle.svg)
 
-## Restore：选择范围和发布目的相互独立
+短 Transaction 负责一次 Work／Index／HEAD／refs／logs／operation 的组合发布。日志记录精确 before／after：Prepared 恢复 before，Committed 确认 after；恢复再次中断后可以重试。所有备份与现场先完成校验，计划外修改会阻止恢复。
 
-[restore.hpp](../include/minigit/restore.hpp) 的 RestoreOptions 分开保存 source、staged、worktree；restore_paths 取得一次 RepoLock。核心与 CLI 已通过子项验收，执行证据见进度页。来源选择与目的选择分别表达：不指定目的标志时默认更新 Work，来源为 Index stage 0；仅 staged 或 staged+worktree 默认来源 HEAD，未出生 HEAD 无提交时拒绝。显式 source 必须解析并读取完整 Commit 快照；它可在未出生仓库中提供来源，HEAD 仍不移动。
+Operation 保存跨命令上下文、原始 HEAD／整份 Index 和受影响区域的实际备份。它的状态更新也通过短事务发布：
 
-| 目的 | 默认来源 | 可变状态 |
-| --- | --- | --- |
-| 默认／worktree | Index stage 0 | 选中实际文件 |
-| staged | HEAD | 选中 Index 条目 |
-| staged + worktree | HEAD | 选中 Index 与实际文件，同一事务 |
-
-Index 读取校验全部阶段的 Blob，但不会全局拒绝冲突。默认 Index→Work 只拒绝选中冲突路径；未选中阶段保留。显式 Commit→Work 可恢复冲突位置，仍保留 Index；staged 更新才移除所选路径的全部阶段，再加入来源的 stage 0。
-
-每个原始路径先独立匹配 source∪Index(all stages)，选择为 exact 或带斜杠边界的 prefix，没有 glob。重复与重叠选择去重，根选择覆盖全部已知版本路径。Index-only 使用词法选择，不探测实际工作文件的软链；实际 Work 修改交给 planner 检查，词法合法不代表可以覆盖未知内容。
-
-```mermaid
-flowchart TD
-    S[来源快照与完整 Index] --> P[每个参数匹配 / prefix 合并]
-    P --> I[若 staged: 替换选中 stage / 最终 Index 校验]
-    P --> W[若 Work: 来源 FileState 或缺失]
-    W --> O[旧 HEAD 与 Index 精确 owned 路径]
-    O --> B[共享 planner 捕获实际 before]
-    I --> T[一次 Transaction]
-    B --> T
-    T --> H[HEAD / refs / reflog 保持原位]
-```
-
-工作区覆盖授权为旧 HEAD∪Index 全阶段的精确文件路径，来源中独有的历史文件不自动获得覆盖当前未知文件的权限。D/F 转换须选择包含旧文件的范围：每个已知旧子文件都要显式删除，未知子项仍阻止整体转换。来源缺失与 empty Blob 不同；工作区单目的不清 Index，Index 单目的不读取实际文件内容，但成功的事务仍可写入元数据镜像 Blob；这不等于对象库完全不写入。
-
-来源与全部参数匹配先校验；需要更新 Index 时，再校验完整最终 Index，之后组合 Index 与 Work 的 caller-lock 计划，最后发布一次事务。无 HEAD 或日志移动规划。Index 全阶段限 100000 不同路径／300000 条记录，仍校验各预算与 typed Blob；共享 planner 还在捕获备份前检查 WorkChange 与已规划 MetadataChange 合计不超过 100000。来源串最多 4096 字节，原始路径每个最多 8192 字节、200000 参数／64 MiB；规范路径最多 4096 字节／128 分量，candidate、selected、owned 各限 200000 路径／64 MiB 名称。Restore、Reset、Rm 与 Mv 已通过子项验收，Phase 2 也已完成整体验收。
-
-## Reset：整体改变当前位置，按模式扩大发布范围
-
-[reset.hpp](../include/minigit/reset.hpp) 用 ResetMode 枚举 Soft／Mixed／Hard，ResetOptions 的 mode 默认 Mixed，revision 为 optional。reset_repository 取得一次 RepoLock；没有 revision 和显式 HEAD 在未出生仓库里是不同输入，不能提前统一成同一字符串。
-
-| 模式 | HEAD／当前分支与日志 | Index | 实际工作文件 |
-| --- | --- | --- | --- |
-| soft | 移至目标，保留符号／detached 绑定 | 原字节保留，任何冲突拒绝 | 不读取，不修改 |
-| mixed（默认） | 同 soft | 完整替换为目标 stage 0，清冲突 | 不读取，不修改 |
-| hard | 同 soft | 同 mixed | 选定路径并集恢复为目标 |
-
-所有模式读取完整当前 Index，校验全部 stages 的 Blob、100000 不同路径／300000 条记录／64 MiB 编码预算；目标读取完整 Commit／Tree／Blob。mixed／hard 再校验最终 Index，逻辑相同则保留精确旧字节。hard 的路径并集为旧 HEAD A∪原 Index 全阶段∪目标 D，精确 owned 只取 A∪Index；没有 Switch 的干净矩阵，允许覆盖这些已跟踪文件的实际编辑。
-
-```mermaid
-flowchart TD
-    O[模式 / optional revision] --> V[完整 Index 与目标快照校验]
-    V --> H[plan_move_head: 当前绑定与日志]
-    H --> I[若 mixed/hard: plan_index_update]
-    I --> W[若 hard: 精确 owned 与目标 / 共享 planner]
-    W --> B[完整事务预算 / 实际 before 捕获]
-    B --> T[一次 execute_transaction]
-    T --> R[Prepared 回真实 before / Committed 到 after]
-```
-
-目标 ID 与当前 ID 相同只省略引用及日志移动，mixed／hard 仍处理 Index／Work。默认未出生目标为空：soft 校验后无操作，mixed 清 Index，hard 再删旧 Index 的已授权工作文件；空 Index 已缺失时不擅自持久化空文件。显式有效提交可建立当前未出生分支，显式 HEAD 仍失败；detached reset 改 raw HEAD 与其日志，不移动任何已有分支。
-
-hard 不能借父路径授权删除陌生后代。D/F 转换列出全部已知旧文件，未知／忽略子文件、陌生空子目录、软链或 FIFO 阻止需要的改写；删除叶文件可保留空父目录。完全相同的未知普通文件若字节和完整权限都无需改变，可被共享 planner 当作无操作，不能据此授权不同内容覆盖。实际 before 必须可读取和保存，hard 不跳过权限、同设备与恢复边界。
-
-hard 的 union／owned 各最多 200000 路径／64 MiB 名称，路径4096字节／128分量，revision4096字节。共享纯预算 API 已实现，合计 Work／metadata 数量、路径、元数据前后镜像及 journal 预算在备份捕获前校验；两份合法 Index 也可能因为同时存入 journal 超限。Reset、Rm 与 Mv 已通过子项验收；Phase 2 已完成整体验收。
-
-## Remove：删除范围与丢弃内容的授权分开检查
-
-Rm 已通过子项验收，[remove.hpp](../include/minigit/remove.hpp) 提供 RemoveOptions{cached, force, recursive} 与自取一次 RepoLock 的 remove_paths。A 为当前 HEAD 快照，B 为 Index stage 0，C 为实际工作文件；缺失 C 必须是真正 Absent，不能把 Directory 或被祖先 File 遮挡的后代当成正常缺失。
-
-| 模式 | 所选正常路径的条件 | 所选冲突 | Work 处理 |
-| --- | --- | --- | --- |
-| 普通 | B==A 且（C==B 或 C 真正缺失） | 拒绝 | 安全检查后删除 |
-| cached | B==A 或 B==C | 拒绝 | B==A 时不探测，否则只读 C；不删除 |
-| force | 跳过内容一致性判断 | 清所选全部 stages | 共享 planner 删除精确已授权节点 |
-| cached + force | 跳过内容一致性判断 | 清所选全部 stages | 完全不探测或删除 Work |
-
-候选只取 Index 所有阶段，不把 HEAD 独有或实际未跟踪路径加入选择。每个参数独立匹配后去重合并；有后代的 prefix／根选择要求 recursive，即使冲突同时包含 exact 父路径。完整 Index 全阶段 typed Blob、HEAD 快照、最终 Index 编码与预算仍须有效，force 不绕过这些检查。
-
-```mermaid
-flowchart TD
-    I[完整 Index 已知路径与阶段] --> S[每个参数匹配 / recursive 判定]
-    S --> N[最终 Index 移除所选全部阶段 / schema预算]
-    N --> P[普通 / cached 安全矩阵或明确 force]
-    P --> C[plan_index_update]
-    C --> W[非 cached: selected null targets / exact owned]
-    W --> V[共享 planner 验证 / 捕获真实 before]
-    V --> T[一次 Transaction: Index + 必要 Work]
-    T --> H[HEAD / refs / reflog 不变]
-```
-
-目录 prefix 通常只生成叶文件的删除目标，已有父目录不改，从而保留未知／忽略兄弟与空目录。只有选中的 tracked File 实际变为 Directory，才需要检查其完整目录内容；精确位置授权不继承给陌生 child。普通模式视此为本地改动，force 仍保护未知子项和软链／特殊文件。
-
-非 force 的工作区安全判断与后续 planner 必须使用一致的真实 C：规划结果的 before 再与先前内容／完整权限比较，避免长准备过程中用新 dirty 内容替换原判断。cached 的 B==C 只读校验不产生 WorkChange，也不锁外部编辑器。词法选择、有界路径集合与 Index 类型／编码预算已提取到 core-private [checkout_support.hpp](../src/core/checkout_support.hpp)／[checkout_support.cpp](../src/core/checkout_support.cpp)，Restore、Reset 和 Remove 调用同一组纯检查；没有新公共 Repository 路径接口，Mv 已通过子项验收。
-
-## Move：同一路径变换保留两份独立版本
-
-Mv 已通过子项验收，[move.hpp](../include/minigit/move.hpp) 的 move_path 自取一次 RepoLock，CLI 每次只接受 source／destination。词法路径规范化与完整 Index 对象检查复用 checkout_support；业务单独判断源实体、目的碰撞和目录完整授权，不把这些策略加入共享 helper。
-
-| 数据 | 源状态 | 迁移后的目的状态 |
-| --- | --- | --- |
-| Index B | 所选正常 stage 0 的 mode／ID | 原 mode／ID，仅替换路径 |
-| Work C | 实际普通文件的字节、执行位、完整权限 | 实际 C 的 Blob／完整权限 |
-| HEAD A | 已提交快照 | 不改变 |
-
-源的 B 与 C 可不同，所选冲突拒绝，未选阶段保留。先检查源／目的无 payload 拓扑，再校验完整最终 Index 的编码、D/F 与预算，并检查 Index 元数据计划预算，随后逐文件捕获 C。共享 planner 的实际源目录库存必须全部已知，每个文件为所选路径，每个目录有所选后代。未知／忽略 child、陌生 emptyDir 或软链／FIFO 不随目录源自动迁移。
-
-目的为已有普通 Directory 时追加 source basename 一次，随后 final root 的任何实际节点或 Index exact／后代占用都拒绝；同内容不等于覆盖许可。根、自身、目录后代或祖先重叠拒绝。目的 required parents 默认 0755，已有不变父目录保留权限；首版迁移文件完整权限，不迁移源目录权限。
-
-```mermaid
-flowchart TD
-    I[词法源目的 / 完整 Index typed 检查] --> C[源目的拓扑 / final root 无碰撞]
-    C --> M[路径映射 / 最终 Index schema与元数据计划预算]
-    M --> B[逐文件保存实际 C Blob / 完整权限]
-    B --> P[Index B 路径映射 + Work C 目标]
-    P --> W[共享 planner 库存与总预算 / 核对 source before 与 destination Absent]
-    W --> T[一次 Transaction: 源删除 + 目的写入 + Index]
-    T --> H[HEAD / refs / 日志 / identity 不变]
-```
-
-捕获 C 后的规划拒绝可遗留不可达的不可变 Blob，不发布工作文件或 Index；execute_transaction 开始后的执行中断可能留下 pending journal 与部分更新，必须 recover。这一边界无需先构造整目录 provisional 计划；完整事务预算由共享 planner 再验证。源真实 before、目的 Absent 与事务预检分别约束不同阶段，RepoLock 仍不锁外部编辑器。实际调用链见导读；Mv 子项及 Phase 2 整体验收均已完成，完整结果见 [Phase 2 阶段总结](progress.md#phase-2-阶段总结)。
-
-## WorktreeUpdate：把授权目标变为真实节点计划
-
-[worktree_update.hpp](../include/minigit/worktree_update.hpp) 提供 `WorktreeTarget`、`WorktreeTargets`、`plan_worktree_update` 与 `plan_index_update`。二者都要求 caller-held RepoLock，不取得第二把锁。业务层选择目标、决定哪些旧路径可改，再把工作区、Index、HEAD 和引用日志组合到同一个 TransactionPlan；规划器不自行决定 switch 或 reset 的策略，也不提供这些 CLI。
-
-WorktreeTarget 的可选 FileState 表示目标文件，directory=true 表示显式 Directory，二者互斥。file 为空且 directory=false 表示该路径不再作为普通文件；若新子路径需要它成为父目录，最终节点会由文件转为目录，否则删除。指向空 Blob 则表示保留零字节文件。可选完整权限默认从模式取得 `0644`／`0755`，显式权限必须与 `100644`／`100755` 的执行位一致，仍遵循事务的权限边界。已接入的 mv 用显式权限保留实际文件完整权限，而不是只把内容变成普通 0644 文件。
-
-```mermaid
-flowchart TD
-    T[Targets: 部分路径的 File / Directory / Absent] --> V[路径 / 模式 / Blob 类型 / 预算检查]
-    O[Owned paths: 允许改写的旧跟踪文件] --> P[实际节点 / keep-delete inventory / 必要同值子项]
-    V --> P
-    P --> B[两侧拓扑 / 权限 / combined 事务预算]
-    B --> C[逐文件捕获实际 before Blob 与权限]
-    C --> W[TransactionPlan.work]
-    I[目标 Index 与精确旧 Index 字节] --> M[TransactionPlan.metadata]
-    W --> X[事务 Prepared / 发布 / Committed]
-    M --> X
-    X --> R[recover 选择 before 或 after]
-```
-
-改变实际普通文件必须获得 owned_paths 对该路径的精确授权；授权某个目录名不能代替授权其中每个文件。新文件的路径确实缺失时可以创建。忽略规则不把已有未授权文件变成可覆盖内容，业务层还需决定何时允许覆盖已跟踪修改；这个授权集合本身不证明工作区与 HEAD 一致。
-
-部分更新只补新目标必要的缺失父目录，新目录权限默认为 0755；已有且不变化的父目录不记录，保留无关兄弟节点。目录变成文件或缺失时，递归检查完整实际目录：每个旧文件都要有精确授权及显式删除目标。精确 owned 的旧文件位置若实际变为空目录，可显式移除空节点；这不给子项递归授权。目录必须精确获授权或含已授权的后代路径，陌生空子目录、软链或 FIFO 拒绝。删除一个叶文件允许保留已空父目录，这是当前简化。执行器最终只删除已记录文件与空目录，不使用 remove_all。
-
-每次工作区规划要求 plan.work 为空，但可保留其他已准备的 metadata。实现向副本添加 WorkChange，成功才赋回；异常保留原计划，已经写入的不可变备份对象可能留下。它不发布工作区或元数据，备份读取逐文件释放，不积累全部文件内容。
-
-| 输入或结果 | 当前预算 |
+| 操作 | 结果与继续来源 |
 | --- | --- |
-| Targets、owned_paths | 各最多 200000 路径、64 MiB 路径字节 |
-| 中间 desired／actual 节点缓存 | 各最多 200000 节点、64 MiB 展开名称字节；新键插入前检查 |
-| 每个路径 | 最多 4096 字节、128 分量 |
-| 生成的工作区改动 | 最多 100000 WorkChange，受事务预算约束 |
+| Merge | 唯一最低共同祖先；快进或两父提交；冲突继续读取 resolved Index |
+| CherryPick／Revert | 来源父快照或空快照决定变化方向；单父新提交，包括空结果 |
+| StashApply | 分别合并保存的 Work 与可选 Index；不创建提交、不移动 HEAD |
+| Rebase | oldest-first 线性队列，临时 detached；原分支最后更新与 attach |
 
-`plan_index_update` 支持所有 stage，校验目标及现有 Index 编码、模式、路径和所引用的 Blob 类型。现有文件损坏拒绝，缺失则精确记录 before=null；不将缺失擅自换成编码后的空 Index。已有 index 元数据计划拒绝重复规划，只有精确编码字节相同才是无操作。它复用 MGIX 与 MGTR，没有新增持久化格式。
+冲突阶段保存原始输入，marker 只供工作区显示。Continue 检查完整 Index 已为 stage 0；Abort 恢复整份 raw Index／HEAD 与受影响区域的实际 before。区域外 Work 保留，新增未知子项或引用外部变化可阻挡中止。
 
-展开预算覆盖推导父目录与递归清单，roots 从受限 desired 复制；输入合法不意味着所有展开结果都能保留。该预算限制名称和节点数量，不将文件内容累计为总文件大小上限。
+Rebase 的 Ready 表示当前来源尚未执行，Conflicted 表示等待 Index 解决；不能将 Ready 的 Index 当成解决结果。每步保存首次 before、更新最新 after，累计备份须处理文件／目录转换和原 File／Absent 祖先。完成当前冲突后若还有来源，下一步重新要求干净 tracked Work。
 
-本子项核心实现已完成，验证入口是核心单元测试，构建与验证证据见进度页；switch 已提供真实 CLI 学习实验。共享规划机制已实现，不代表各业务命令的覆盖策略已经交付。
+## Stash 的两份版本
 
-### 显式 Directory target：为真实目录镜像补齐表达
+保存 H（HEAD）、I（Index）、W（tracked Work），`-u` 另存 U（非忽略 untracked）。I 的 parent 是 H，W 的 parents 为 H、I 和可选 U。活跃栈的每个 entry 都是根，不能只保护 top。
 
-本项扩展已通过子项验收：WorktreeTarget 第三个默认 bool directory=false，保持已有两字段 aggregate 的文件／缺失语义。directory=true 要求 file 为空，permissions 可指定完整目录权限；新目录默认 0755，已有目录未指定权限时保留真实权限。所有正目标都生成必要父目录，自动父目录不能覆盖显式目录权限，File 祖先仍拒绝。
+恢复始终计算 `RW=merge(H,当前,W)`；`--index` 另算 `RI=merge(H,当前,I)`。默认不把 clean RW 全部暂存。U 只写到真实缺失位置；部分跨层 D/F 冲突拒绝。状态绑定原栈与 refs/stash 的精确字节，Pop 完整成功后才删指定位置。
 
-权限改变也使 Directory 成为事务记录，必须检查完整实际 inventory。保留模式不把 chmod 意图变成递归删除：已知文件需要 exact owned，沿已有明确目标或 actual 镜像保留；已知目录需要 exact owned 或已授权后代。已有删除／替换目标优先，未知文件、空子目录、软链与特殊节点仍阻止操作。必要的 before==after 后代也记入 work，满足执行器“记录目录的全部实际子项”契约；完全相同 Directory 的无操作不枚举无关兄弟。
-
-被记录的 Directory 两侧都至少具备 owner-read／execute；最终 work 中有后代（包括 after=Absent）时，两侧 Directory 须 owner-rwx。完整拓扑和 combined work／metadata 预算先于捕获备份，不放宽 Transaction。原空目录可按 exact owned 恢复，但这个位置授权不延伸到未知后代。此处仅补共享 planner；持久镜像字段与语义 roots 由下节 OperationState 基础提供，abort 的接入见末节 Merge 生命周期。
-
-## 工作区短事务与恢复
-
-短事务机制已通过 Debug/sanitized 相关回归及实验验收。commit 的引用与 reflog 事务发布已通过后续子项验收；branch 创建、移动与删除接入同一机制，已通过子项验收。add/tag 继续使用各自原子元数据写入。所有业务查询和修改检查待恢复事务；原始 Blob/Tree 观察仍可使用。分支与工作区更新命令已复用这些共同机制。
-
-问题来自更新范围：切换分支可能需要删除旧文件、创建目录、写入新文件，并修改 Index 与 HEAD。分别原子替换每个文件，仍可能在第三步崩溃后留下前两步的新内容。事务因此保存每个节点的 before/after 和可恢复意图，而不是只记录“曾经执行过哪个命令”。
-
-[transaction.hpp](../include/minigit/transaction.hpp) 区分 `Absent`、`File` 与 `Directory`；文件保存 Blob ID 和完整权限，目录保存权限，缺失与空文件不同。`capture_work_node` 备份实际工作字节，不能用 HEAD 快照代替：若用户在提交后编辑过文件，中止时必须恢复编辑后的原内容。元数据保存精确可选字节，缺失与空文件也分别表示；日志内部将字节存为 Blob，避免把多个大 Index 嵌入日志。
-
-```mermaid
-stateDiagram-v2
-    [*] --> Preparing: 完整预检及内部暂存
-    Preparing --> Prepared: 同步并发布事务日志
-    Prepared --> Applying: 更新工作区及元数据
-    Applying --> Committed: 原子替换日志状态
-    Committed --> [*]: 清理日志和内部暂存
-    Prepared --> Rollback: recover
-    Applying --> Rollback: 日志仍为 Prepared
-    Rollback --> [*]: 恢复 before 后清理
-    Committed --> Rollforward: recover
-    Rollforward --> [*]: 确认 after 后清理
-```
-
-`.minigit/transaction` 使用 MGTR v1：大端版本和计数、状态字节、路径及双方 NodeImage、元数据备份 Blob ID，最后为整个主体的 SHA-256；总计最多 64 MiB，最多 100000 项改动、每路径 4096 字节和 128 分量。它是单个带校验的日志；Prepared/Committed 状态与全部数据一起原子发布。独立的“成功标记”会使两份文件的清理顺序产生歧义，因此不采用它。`.minigit/transaction-staging` 只保存本次待发布节点，名称可以由日志推导；owner-write 可写目录先在内部暂存区创建并设置精确权限，再原子移动到工作区；缺少 owner-write 的只读空目录若目标确实 Absent，则在目标父目录直接 exclusive mkdir 并设置精确权限。工作目录不产生随机临时文件，文件／目录转换时也无需删除未知临时项。
-
-恢复先检查整份日志、所有备份对象、当前工作节点和元数据，只有当前状态属于 before、after 或明确的合法中间缺失状态才开始修改。删除仅针对计划中的普通文件和空目录；目录内出现计划外条目、外部编辑、软链接、特殊文件、损坏备份或不支持的设备布局都会拒绝并保留现场。重复执行恢复必须收敛到同一结果。
-
-安全文件操作固定父目录 fd：删除使用 `unlinkat`，文件及可写目录发布使用 `renameat`／`renameat2(RENAME_NOREPLACE)`，只读空目录使用 exclusive `mkdirat` 加精确权限设置，最后同步受影响父目录。暂存目录在极端 umask 下可能最初为 0000；Linux 的 `O_PATH` 固定其 inode，再经 `/proc/self/fd` 设置访问权限以完成精确权限和同步。当前要求 Linux/POSIX、可用 procfs，并拒绝事务涉及的跨文件系统发布。写锁只协调 MiniGit 进程，不能锁住普通编辑器；预检后与单次系统调用之间的外部竞态仍是明确边界。
-
-公开 API 的测试钩子在持久化步骤之后模拟子进程突然退出，不通过生产 CLI 或环境变量开启。阶段证据会记录实际覆盖的崩溃点；没有系统调用同步失败注入或真实断电实验时，不把进程退出测试写成断电证明。
-
-当前恢复不保存 owner/group 或文件时间戳；重新发布相同内容时 inode 和 mtime 可以变化。设备检查涵盖当前节点、已存在父链及元数据暂存，拒绝不同 st_dev；同设备挂载点等布局不作完整识别。同步发生在发布之后的失败重试，恢复会重发文件、核对目录权限并同步实际存在父链。
-
-进程在 `atomic_write` 的随机临时文件写入内部被终止时，内部暂存可能出现未记录的 `.minigit-tmp-*`；此时恢复拒绝自动删除未知项并保留现场。现有恢复设计和测试以公开持久化步骤完成边界为证据，不承诺任意系统调用内部中断均能自动恢复。只读目录的直接创建也有系统调用内部边界：mkdir 的初始 0700 受 umask 影响可能为 0000，设置最终权限之前还可能是 0700；中断后若这个节点既不等于 before 也不等于 after，严格恢复会拒绝并保留现场，不猜测它可被 chmod。exclusive=true 只允许新建，EEXIST 立即失败，不能趁重试改动外部已有目录。系统调用级故障注入及已知临时项协议属于后续改进。
-
-## 纯文本合并：先隔离字节算法
-
-Phase 3 的 [纯文本接口](../include/minigit/merge_text.hpp) 已通过子项验收，数据输入为 Bytes 与现有 Line／EditScript，不读取仓库或持锁。三份输入借用 span，内部 Line 借用输入；结果拥有字节，冲突同时记录基线行范围与输出 marker 字节范围，不把行号当作字节偏移。下节 Snapshot 适配器负责保存 Blob 与构造冲突 stages；历史基线选择、实际发布及恢复操作仍属于后续业务模块。
-
-两个 base→side 脚本共享基线坐标，先形成严格交互区块，再完整重放两侧；相邻替换和边界插入通常可独立组合，内部点插入与宽替换则取传递闭包。EOF 无 LF 与下一侧追加行需要额外合组，不由上下文 hunk 决定。输出和输入有各自预算，coarse 可保守冲突；实际源码、七组单元与独立性质验证均已通过验收，语义例子见 [三方文本学习笔记](learning-notes.md#三方文本先比较相对基线的修改)。
-
-## SnapshotMerge：对象适配与业务发布保持独立
-
-SnapshotMerge 已通过子项验收。[merge_snapshot.hpp](../include/minigit/merge_snapshot.hpp) 的唯一公开 merge_snapshots 要求调用者已持 RepoLock，读取全部原始 typed Blob 后可保存不可变新对象；返回候选 Index、完整 work 布局和冲突，不写实际工作文件或可变元数据。纯 merge_text 仍负责字节算法；文件存在、mode、二进制选择及 D/F 是适配层语义，未来业务才把结果交给 planner／Transaction。
-
-干净 Index 为 stage 0；冲突记录原始 1／2／3，缺失阶段不补零 ID。marker Blob 只在 work 呈现，不能代替原始 stages；内容与 mode 可分别成功或冲突。两侧新建不同 ID 必冲突，包括空文件：非 NUL 分类 AddAdd 并呈现 whole-file marker，NUL 优先分类 Binary 并保留 ours 字节；没有基线的不同 mode 由 mode_conflict 独立报告。最短 D/F 区域升级全部路径为原始 conflict stages，work 只采用 ours 区域布局，不能同时放 parent File 与 child File。
-
-输入纯结构预检与全部对象校验先于新对象保存，按文件读／合并／保存后释放内容。Snapshot／最终 Index 的 100000 distinct 文件预算不是 write_snapshot 的 100000 Tree entries（含目录）预算；深层候选还须后续建树校验。实际源码、语义组与独立性质验证已通过子项验收；完整 DAG 上的 single-base 选择见下节，尚未发布合并业务。具体例子见 [快照合并学习笔记](learning-notes.md#快照合并原始版本与呈现内容各有位置)。
-
-## Single-lowest merge base：先完整验证父图
-
-此 helper 已通过子项验收，无新 CLI。接口 find_merge_base(repo, left, right) 要求调用者持有 RepoLock，返回 optional<ObjectId>，复用已有 load_commit_graph 与 topological_order；先完整读取双方祖先闭包并校验类型、对象、父边与环，再作基线选择。same ID 或快进关系也不能绕过深层损坏检查，不读取任何 Tree 或工作区。
-
-在 child-before-parent 顺序中，第一轮把两 root 的标记沿全部 parents 作 OR，得到双方可达的共同祖先；第二轮把“本节点是共同祖先或已有共同后代”的标记传播给父节点。共同祖先且没有共同后代者才是 lowest；它表达父图偏序，不是时间最新。零个返回 nullopt，一个返回该 ID，多个报 Error，不构造递归虚拟基线。未来 merge 业务明确拒绝 unrelated histories；helper 的 nullopt 本身不执行业务拒绝或发布。
+## 对象回收与边界
 
 ```mermaid
 flowchart LR
-    R[两个 Commit ID] --> G[完整祖先闭包 / 预算与对象校验]
-    G --> T[拓扑校验 / child-before-parent]
-    T --> A[全部父边传播两侧 reachable]
-    A --> D[全部父边传播共同后代]
-    D --> L[唯一 lowest / nullopt / 多基线 Error]
+    Inventory[全部松散对象认证] --> Graph[类型边与拓扑校验]
+    Graph --> Roots[引用、日志、Index、Stash、Operation、新对象]
+    Roots --> Mark[沿全部父边与 Tree 子项标记]
+    Mark --> Sweep[只删未标记对象，引用者先删]
 ```
 
-继承 DAG 的 100000 节点、1000000 父边及 64 MiB 解码数据预算；重复父边的 OR 幂等。实际两轮传播与接口已核对，构建、语义测试及独立 DAG 性质验证通过，精确范围见进度页。完整 Directory WorktreeTargets 已通过子项验收，caller-lock CommitSnapshot 工厂也已验收，持久 Operation codec／roots 与业务 guard 也已验收，下一层组合 SnapshotMerge 与事务发布，完成 Merge 的 start／continue／abort。
-
-## CommitSnapshot 工厂：保存对象与移动 HEAD 分开
-
-本项已通过子项验收。caller-lock store_commit_snapshot：调用者提供 Snapshot、有序 parents、message 与可选原 author；工厂只读取当前显式 identity、校验输入并保存不可变 Tree／Commit，不读取 HEAD、Index 或 Work，不规划 ref／日志。它保留 pending transaction guard，不承担业务空提交策略；未来继续操作须在已持锁的内部调用它，而不是再次进入 self-lock create_commit。
-
-未提供 author 时，author／committer 都由当前 identity 与运行时 UTC 业务秒生成；提供原 author 时原字段连同其原业务时间按 Commit codec 校验并保留，committer 仍取当前身份。参数 parent 顺序和重复边原样保存，校验可按 ID 去重；每个显式父 Commit 自己的完整 Tree／Blob 必须可读，但不遍历其整个祖先 DAG。公开 store_commit_snapshot 的 100000 parents 与完整 Commit／ObjectStore frame 的 64 MiB 预算先于任何 Tree 写入；候选建树仍受含目录的 Tree entry 预算。
-
-create_commit 继续在消息拒绝后自己取锁，先检查 identity，再读取 HEAD parent／Index 并处理初始空与 allow-empty；已有 parent 的空提交检查比较实际 Tree ID，不改为展平 Snapshot 相等。ordinary create_commit 仍先 write_snapshot 并比较 Tree ID，再复用 prepare_commit／store_final_commit 保存对象，最后由原 plan_move_head／Transaction 一次发布；没有为了共享而改变原失败顺序。因而普通提交的晚期 actor／frame 错误可留下不可达 Tree；公开工厂的 actor／frame 前检则在写 Tree 前完成。五组新增测试与冻结私有链已核对，定向回归及完整只读审查通过；不可变准备不提前发布元数据。本项不引入 Factory 类、LongOperation codec 或 merge CLI。
-
-## OperationState v1：跨调用的记录仍由短事务发布
-
-本项基础状态／roots／guard 已通过子项验收，不交付 merge CLI 或 continue／abort。v1 只接受 Merge／Conflicted，original_head 与 current_head 结构相同且都有 Commit ID；不接受 unborn、Ready 或其他 kind。状态保存 original raw HEAD、可选整份 raw Index 的 backup Blob、单个 source_commit、message 及按路径排序唯一的 work。WorkChange.before 是第一次实际镜像，after 是上次操作发布后的镜像，不是用户解决冲突后当前文件的 CAS。
-
-纯 MGOP v1 codec 采用 magic、BE u32 版本／长度／计数、单字节 kind／phase／presence、原始 32 字节 ID 与末尾 SHA-256；校验版本、枚举、presence、长度／数量、checksum、raw HEAD 与保存的 logical Head 一致，以及两侧 Work 拓扑／权限；不读取磁盘。raw HEAD 保留 detached ID 原大小写；不能查当前 ref 来解释历史 id。缺失 Index 是 null，合法空 Index 也有实际 backup Blob，空 Blob 不是合法 Index。记录限 100000、路径 4096 字节／128 分量，完整编码限 64 MiB；这不保证与其他 Work／metadata 合并后的 TransactionPlan 能发布。
-
-```mermaid
-flowchart LR
-    S[历史 Head / raw HEAD / 整份 Index 备份 / 受影响 Work] --> C[纯 codec 结构与 checksum]
-    C --> R[语义 roots / typed Commit 与 Blob / Index 内部各 stages]
-    R --> P[expected State 比较 / next Plan combined 预算]
-    P --> T[短事务 operation before-after 发布与恢复]
-```
-
-state_roots 校验 Commit 类型与结构，Work File 为 Blob；raw Index backup 为 Blob，还需 decode_index 并校验内部各 stage 的 Blob。历史 Commit roots 不展开 Tree／parents，业务随后预验参与合并的完整快照，后续 GC 自 roots 遍历闭包。事务 operation metadata 的 before／after 共用同一语义校验和根并集；删除 after=null 时 before roots 仍保留到短事务清理，journal 的 metadata backup Blob 与状态内部 Index backup 是两层不同对象。
-
-caller-lock read／guard／roots／plan 不写对象或 Work；plan 使用实际原字节、expected State 的 canonical 编码比较，首版允许创建、删除、同值无操作，拒绝 existing→不同 State，并以 next 副本保证异常时 caller plan 不变。历史结构有效不表示当前 HEAD 仍匹配，未来业务须另作 current Head CAS；事务继续保护规划后的原 metadata 字节。
-
-业务 guard 只加在 commit、switch、reset、branch 创建／删除（含 force），在 RepoLock／短事务 guard 之后执行；坏 operation 节点也拒绝。config、查询、add／rm／restore／mv、tag／hash-object 允许，但短事务与原冲突／unknown 策略仍生效。内部 caller-lock planners、存储工厂及状态读根不加 operation guard，避免未来继续／中止被自己的记录阻止。实际 API、validate_state／Reader／raw_operation／state_roots／plan 链已核对，最终构建、定向回归与完整审查通过；Merge 生命周期的接入与相关回归见下节，完整只读审查通过。
-
-## Merge 生命周期：把已有引擎组合成一次业务发布
-
-本项已实现 start／continue／abort，两个预设的相关回归、真实实验及完整只读审查通过。首版启动要求 HEAD、Index 与已跟踪 Work 的内容／文件模式干净，任何实际改写仍保护未知与忽略内容，不把新命令当作工作区强制清理；incoming 节点与目标字节及权限完全相同、无需写入时，允许保留并更新 Index。未知 D/F 子项或空目录保护没有放宽。历史先走完整祖先校验与唯一 lowest 基线；up-to-date 不生成操作状态，fast-forward／unborn 可直接更新目标，不制造无必要合并 Commit。无共同祖先或多个 lowest 在发布前拒绝，不递归构造虚拟 base。
-
-真正分叉合并把 base／ours／theirs 交 SnapshotMerge。clean 结果生成有序 parents=[ours, theirs] 的新 Commit，Index／Work／HEAD及日志在一笔事务发布；conflict 保持 HEAD，Index 原始 1／2／3、无 D/F 的呈现 Work 与 Merge／Conflicted State 同事务。marker Blob 不是原始 stages，resolved 不靠 marker 字符串判断。
-
-```mermaid
-flowchart TD
-    S[启动 / 干净跟踪状态 / 完整历史与对象校验] --> U[up-to-date / 无 State]
-    S --> F[fast-forward 或 unborn / 一次事务 / 无 State]
-    S --> M[唯一 base 的 SnapshotMerge]
-    M --> C[clean / 两父 Commit / 一次事务 / 无 State]
-    M --> X[conflict / stages + Work + State / HEAD 保持]
-    X --> I[用户编辑并用解决工具更新 Index]
-    I --> N[continue / 整份 Index stage0 / 两父 Commit + 删除 State]
-    X --> A[abort / raw metadata + affected Work before / 删除 State]
-```
-
-continue 读取当前完整 Index，拒绝残留非零 stages，允许未暂存 Work 继续保留；提交来源仍是 Index，不能额外吸收 Work。当前 HEAD 须符合 State.current_head，源与原提交完整快照另验；成功 Commit／HEAD／日志与 State 删除同事务，失败保持状态以便重试。
-
-State.work 记录受影响区域，不限于实际写入的 plan.work：非零 stages 与 D/F root 的冲突节点即使保持 ours，也捕获真实 before==after；D/F 区域内 root→leaf 的实际目录祖先同样记录，避免中止重建时把 0710 变成默认 0755。未受影响 parent 与未知空目录不纳入授权，codec 的双侧目录后代 0700 约束不放宽；不能形成可恢复镜像时拒绝启动。
-
-abort 不用 HEAD Snapshot 代替备份：整份 raw Index、精确 original raw HEAD 与受影响区域的真实 before NodeImages 恢复。若原 File／Absent 在解决过程中变成目录，为恢复 root 下当前 Index 新跟踪子项补删除目标；unknown 子项仍拒绝。区域外新跟踪文件的 Work 保留，但整份 Index 回退会撤掉其暂存信息。额外 unknown 子项或外部 HEAD／ref 变化阻挡恢复时整笔拒绝，不递归强删。短事务 recover 始终先于长期动作；规划失败可留不可达 immutable Blob，执行中断则可能留 journal，恢复后再继续／中止。该 Merge 子项仅实现单步 Merge／Conflicted；下节扩展 CherryPick／Revert，仍不交付 Ready。
-
-
-## 单来源重放：同一个三方引擎，不同的基线方向
-
-CherryPick／Revert 已通过完整 start／continue／abort 子项验收。令来源提交为 S，其唯一父或空快照为 P，当前提交为 H：CherryPick 输入 (base=P, ours=H, theirs=S)；Revert 交换 base／theirs，输入 (base=S, ours=H, theirs=P)。这里 P 取自来源的父关系，不是 find_merge_base；完整 source／current DAG 只作完整性校验，允许无共同历史与 root 来源，多父 source 因首版没有 mainline 选择而拒绝。
-
-```mermaid
-flowchart LR
-    S[来源 S 与唯一父 P / root 则空] --> C[CherryPick / P,H,S]
-    S --> R[Revert / S,H,P]
-    C --> M[SnapshotMerge]
-    R --> M
-    M --> N[clean / 单父 H 的新 Commit / 一次事务]
-    M --> X[conflict / stages + Work + matching State]
-    X --> I[continue / resolved Index / 新 Commit]
-    X --> A[abort / 实际受影响 Work + raw metadata]
-```
-
-成功即使没有文件变化也创建新提交，不借 Merge 的 up-to-date／FF 快捷分支丢掉一次重放事件。CherryPick 默认来源消息与原 author 字节，Revert 默认 Revert 加完整来源 ID，author 为当前身份；两者 committer 均为当前身份，--message 只在启动覆盖消息。非法来源消息不能默默修补，CherryPick 须提供合法覆盖。当前 HEAD 必须 non-unborn，启动仍要求干净跟踪状态。
-
-本项已将 MGOP v1 kind 闭集扩为 Merge=1／CherryPick=2／Revert=3，保持原 layout、Conflicted、equal Heads 与原 raw bytes CAS，不添加 Ready。已提取 core-private operation_support 共享真实受影响区域捕获与中止，不复制另一套恢复器；continue 不读取未暂存 Work，入口 kind 不匹配即拒绝。full permissions、D/F 同值镜像、未知子项、outsideaffected Work 与 whole Index 恢复范围保留原约束。实际源码和私有调用链已冻结核对，完整只读审查、两预设构建与相关 31 项检查及实验通过，该 Replay 验收轮未交付 Stash 恢复，下节记录后续保存与恢复验收；重放序列仍未交付。
-
-
-## Stash 保存：四份内容，两份栈元数据
-
-该保存子项已实现并验收 push／list／show／drop／clear，当轮不接入 apply／pop 的合并生命周期，后续恢复见末节。H 是当前已提交快照；I 是当时 stage0 Index，父为 H；W 是 HEAD∪Index exact tracked 路径的实际工作文件，父有序为 [H,I]；仅 -u 时增加 U，U 为独立 root，W 的第三父指向 U。dirty Index／Work 是 push 的输入，不能沿用 Merge／Replay 的 cleantracked 启动条件；未出生 HEAD、Index 冲突与 unsafe 节点仍拒绝。
-
-```mermaid
-flowchart LR
-    H[HEAD H] --> I[Index Commit / parent H]
-    H --> W[Work Commit / parents H,I,optional U]
-    I --> W
-    U[非忽略 untracked root U / -u] --> W
-    W --> S[MGST newest-first stack / 每个 entry 均为根]
-    S --> T[stack + refs/stash + Index/Work cleanup / 一次短事务]
-```
-
-MGST v1 保存 newest-first Work Commit IDs，允许重复 ID 的独立位置。stack 与 refs/stash top 必须一致；drop／clear 同事务修改两份元数据，不用 reflog 代替仍存活条目。read 保留整份 optional 原 bytes，包含 encoded-empty／missing 和 ref 的大写拼写，planning 用 expected entries＋exact raw stack/ref CAS；相同逻辑 no-op 保留原字节。所有 stack entries 的 typed W/H/I/U 是语义根，不能只保护 top。root 查询不展开 Tree／DAG，也不依赖 live Index／Work；具体 show 再读取所选完整快照。
-
-push 无内容变化返回 NoChanges，不要求身份、不重写原 raw Index；真正保存才使用提交工厂和明确身份。-u 仅捕获 ignore-aware 未跟踪普通文件，ignored 内容不被清除。保存结果只含文件 bytes／100644 或 100755，不归档完整 07777 或 emptyDir；短事务 before 镜像另保存这些真实节点和权限，保障失败与中断恢复。HEAD／分支／日志不动，query 不探测当前 Index／Work。本批源码已冻结核对，两个预设的相关 38 项及实验通过，交叉完整审查通过，该保存轮不覆盖 apply／pop／--index／continue／abort。
-
-scan_worktree 的预算统计 visited 节点，含目录和随后因 ignore 略过的节点，逐节点在 stat 前检查 200000／累计路径 64 MiB／4096 字节／128 components；不能只计最终文件。add 的 walk 仍以 budget=null 调用，原策略未改。保存树另对 File＋隐式 Directory 共 100000 entries 与展开路径／Tree 数据 64 MiB 前检，W∪U 还须 100000 files 且无 D/F。cleanup 同 FileState 无需改写时保留原 full permissions。list／show 允许 active State；push／drop／clear 禁止。栈 roots 不展开 Tree，show 展开所选全部自快照；drop／clear 的旧 top refs/stash 事务预检仍要求 Work Tree 完整。
-
-
-## MGOP v2：保存选中栈的历史上下文
-
-本共享基础已实现并验收，仅新 kind=4 StashApply 使用 v2；Merge／CherryPick／Revert 的 kind=1／2／3 仍编码 v1，旧字节与 expected CAS 保持。StashApply 必须有 StashOperation：pop 布尔、u32 position、完整原 MGST 的 stack_blob 和精确 65-byte raw_ref。它只允许 Conflicted 和相等非 unborn Heads，没有 Ready；内部消息固定为 stash:apply 或 stash:pop，与 pop 一致，不是未来 Commit 消息，也不要求身份。
-
-v2 保留 common body，在 Work records 后、checksum 前附 context presence／pop／position／stack ID／raw-ref 长度及字节；仅支持真实 kind 的固定布局，拒绝缺 context、非法 presence、旧 kind 带 context 与未知 kind／version，不给未来 rebase 预留万能字段。64 MiB／100000 Work／4096 bytes／128 components 与双侧权限拓扑预算不放宽。
-
-state_roots 除原 Head／source／Work／raw Index roots，还读取 typed Stack Blob、decode 完整 MGST 并校验全部 entries 的 W/H/I/U schema；position 必须选中 source，saved raw_ref 则必须指向当时 top，非 top 选择不能将二者混成一个 ID。历史语义校验不读取 live stashstack／ref、Index／Work，不展开 Commit Tree／DAG，恢复中短 journal 可复用。read／plan 仍不写对象；existing State 仍只可删除或同值 noop，拒绝 replacement。
-
-后续恢复业务（见下节）成功时另绑定 live exact Stack/ref，在最终 Txn 中 pin 两份同值 metadata；pop 只有完整成功才删选中位置。保存 context 并不等于完成 restore 合并／continue／abort，也不表示单 State 合法就满足 combined Txn 预算。本项无新 CLI／实验，实际 core／五组 tests 已冻结核对，独立审查与两个预设的相关 45 项回归通过。
-
-
-## Stash 恢复：两个合并结果，一次发布
-
-本项完整恢复生命周期已通过子项验收，源码与接口已冻结核对，独立审查通过，两预设相关 37 项及新旧 Stash 实验通过。保存时 H／I／W／可选 U 与当前 O 分别保留；启动要求已出生 HEAD、resolved Index=O、tracked Work 干净。RW=merge(H,O,W) 始终决定 Work，U 单独恢复；默认 Index 保持 O，仅将 RW 冲突区域替换为原始 stages。--index 另算 RI=merge(H,O,I)，以 RI 的 Index 为基底，再组合 RW 的冲突；不能把 RW 的 clean stage0 全部暂存来冒充恢复 I。
-
-```mermaid
-flowchart TD
-    S[保存 H / I / W / U 与 clean 当前 O] --> W[RW = merge H,O,W]
-    S --> I[--index: RI = merge H,O,I]
-    W --> C[默认 O 或 RI Index / 合并冲突 groups]
-    I --> C
-    C --> V[跨层 D/F 与 final Index schema / budget 前检]
-    W --> T[Work = RW + U / U 目标实际缺失]
-    V --> P[Index + Work planner / actual before]
-    T --> P
-    P --> X[最终 exact Stack/ref pin 或成功 pop 更新 / 一次 Txn]
-    X --> A[clean 成功 / 无 Commit 或 HEAD 移动]
-    X --> F[conflict / MGOP v2 + 全备份 / 栈保留]
-    F --> N[continue: resolved typed Index / 不读 Work]
-    F --> B[abort: raw Index/HEAD + affected before / 栈保留]
-```
-
-初次冲突报告分 Work／Index／Both。仅 RI 冲突时 Work 可以完全干净；两层同一普通路径的原始 stage groups 完全相同才合成 Both，不同 groups 拒绝发布。--index 下任何 RW D/F 冲突拒绝；RI 的 D/F 与 RW 冲突区域交叉也拒绝，最后完整 Index 的跨层 D/F／schema 必须合法。这是单份 Index 表达独立暂存意图的保守边界，不声称覆盖 Git 的所有 --index 情形。
-
-U 不进入三方合并，恢复叶必须实际缺失，已有同内容文件、空目录、ignored 文件或 FIFO 也不能被当成可占用位置。持久 Stash 恢复 bytes／executable mode；短事务 before 另用实际 full permissions／Directory／Absent。规划拒绝不发布 mutable 状态，可能留下不可达 immutable Blob；执行中断仍须先 recover。
-
-普通 apply、冲突启动以及 abort／continue 的最终计划必须绑定完整原 Stack/ref 两份 exact bytes；栈 planner 的逻辑同值 no-op 本来不生成 metadata，因此业务需显式加入两份同值 pin。pop 只在无冲突或继续完整成功时删除选中位置，不能只删 top 或在冲突发布时提前删。continue 要求 matching StashApply、saved context/live pair 与 HEAD CAS、完整 resolved typed Index，不读取 Work、不创建提交；abort 复用实际区域恢复与未知子项保护，再绑定栈 pair，恢复 whole optional raw Index／raw HEAD。StashApply 仍只有 Conflicted／equal Heads，不接受 Ready；Rebase 基础的扩展见下节。
-
-最终 pair pin 仍走 Transaction 的 refs/stash 语义预检，因此即使选择非 top，apply／continue／abort 也要求原 top W 的自 Tree 完整；read_stash_stack／stash_roots 的 typed-only 历史角色检查并不替代这一步。冲突备份沿用共享 conflict_work，包含 Index-only 冲突的同值 Work、D/F 区域与其实际目录祖先，解决后中止不会因“启动时没写这个文件”漏掉真实权限。
-
-
-Phase 3 四组业务及共享依赖已完成整体验收，两预设各 237 项全量检查通过，阶段架构与下一队列／可达标记依赖集中见 [Phase 3 总结](progress.md#phase-3-阶段总结已验收)。该 Phase 3 验收轮没有 Rebase 队列或 Ready；当前状态基础与已验收 Rebase 业务见下节，GC 的后续子项验收见末节。
-
-
-## Rebase 状态基础：区分待执行与已冲突
-
-本子项源码与五组测试已冻结核对并通过子项验收；两个预设相关 25 项与完整只读审查通过。新 closed kind5 使用 MGOP v2，context 保存 onto、ordered unique queue、cursor 与 exact original_branch_ref；旧 v1 与 Stash v2 bytes 不变。Ready 意味着 queue[cursor] 尚未执行，Conflicted 意味着该来源冲突已经发布；原 HEAD 是恢复锚点，current 必须 detached，可以随新单父提交推进。codec 不推断来源 DAG、真实 Work 或 live 分支状态。
-
-```mermaid
-stateDiagram-v2
-    [*] --> Ready: 保存上下文 / 未执行来源
-    Ready --> Conflicted: 同 cursor / 同 current
-    Ready --> Ready: cursor+1 / 新 current 单父旧 current
-    Conflicted --> Ready: cursor+1 / 新 current 单父旧 current
-    Ready --> [*]: 删除 State / 业务最终收尾或中止
-    Conflicted --> [*]: 删除 State / 末步完成或中止
-```
-
-图只描述该基础轮的状态更新约束；Rebase 业务的后续验收见下节。推进必须保留 original logical/raw HEAD、raw Index、onto、queue、rawbranch 与全部旧 Work 的 first before；after 可更新。纯 validator 只拒绝不合法 replacement，业务负责实际捕获新 keys、处理原 File／Absent 祖先遮挡、D/F full permissions／必要 noops，最后 live CAS／attach。typed roots 包含全部 queue 与 onto，去重 Commit payload 总量 64 MiB，不展开 Tree／DAG；完整 GC 的后续子项验收见末节。
-
-
-## Rebase 业务：原分支固定，临时位置逐来源前进
-
-本项已通过子项验收。完整 DAG 选择 unique base 后先处理 UpToDate／FF；分歧才创建 first-parent 线性队列，来源单父与完整自 Snapshot 前检后，将临时 HEAD detached 到 onto。原分支保持 exact original ref，只有最后成功才更新与 attach；每一步通过现有 planner／factory／Operation／Transaction 发布，不创建另一套文件恢复器。
-
-```mermaid
-flowchart TD
-    S[clean 当前状态 / 完整 DAG / unique base] --> Q[up-to-date 或 FF / 无 State 或身份需求]
-    S --> D[分歧线性 queue / 全来源快照前检]
-    D --> R[detach onto + checkout + Ready / 原 branch pin]
-    R --> M[当前 source parent,current,source 三方合并]
-    M --> N[clean / 原 author + 新 committer / 单父 preserve-empty]
-    M --> C[conflict / stages + Work + Conflicted / 同 cursor]
-    C --> I[continue / resolved Index / 不读 Work]
-    I --> N
-    N --> R2[尚有来源: next Ready / next step 须 clean]
-    R2 --> M
-    N --> F[最后成功 / branch更新与attach + State删除]
-    R --> A[abort / original raw metadata + cumulative actual before]
-    C --> A
-```
-
-Ready 与 Conflicted 的持久含义决定 continue 来源：不能把尚未执行来源的 Ready Index 当作解决结果。Conflicted 完成当前来源后若仍有步骤，dirty Work 会阻挡下一 Ready；末步不读取 Work。累计 first before 必须尊重旧 original File／Absent 祖先遮挡，latest after 也随真实布局更新，D/F full permissions 与 noops、unknown 后代保护不放宽。实际调用链见 [Rebase 导读](code-walkthrough.md#rebase-business从单步到有持久边界的循环)。两预设各 38 项与实验通过、完整审查通过，验证范围见 [进度](progress.md#rebase-业务生命周期已验收)；GC 子项验收见下节；Phase 4 后续完整验收见末节总结。
-
-
-## GC：先认证全部对象，再标记根的完整闭包
-
-本项源码与八组测试已最终冻结并通过子项验收，两个预设各 24 项、实验与完整审查通过。GC 持有 RepoLock，pending Transaction 必须先 recover；active Operation 允许保留，其 original／current、raw Index 与 Stash 备份、全部 Rebase queue／onto、Work before／after 都要通过 typed semantic roots 展开。GC 不用 Commit 快照代替操作现场备份，也不读 Work 来猜哪些对象应保留。
-
-```mermaid
-flowchart TD
-    L[RepoLock / 拒绝 pending Transaction] --> V[规范 loose inventory / 全部对象认证与 typed edges]
-    V --> K[Kahn 拓扑 / 引用者到被引用者 / cycle拒绝]
-    K --> R[HEAD / refs / Index all stages / reflog / Stash / Operation semantic roots]
-    K --> F[mtime grace 内与 future objects / 附加根]
-    R --> M[Commit all parents + Tree / Tree children / 完整闭包]
-    F --> M
-    M --> P[全部根与图前检完成 / 选取标记外候选]
-    P --> D[按拓扑筛未标记项 / 引用者先删 / unlink与parent sync]
-```
-
-freshness 是可达性输入：新孤立 Commit 指向的旧 Tree／Blob 也必须保留。全部 orphan 先验证，损坏无根对象同样应阻止任何删除；闭包不能只走第一父。root metadata 与对象 graph 都有预算，payload 一对象读取后释放。Kahn 排序在任何删除之前验证无 cycle，sweep 引用者先于其 child；任意 ID 顺序可能先删 child，失败时剩余 orphan 图就出现悬空边。该顺序保留正常中断后剩图的引用闭合性，不变成原子删除协议。GC 首版不引入 journal、pack 或 reflog expiration；删除失败可能已经删掉部分无根对象，不提供短事务式回滚，任意外部写入者仍不受 RepoLock 约束。实际算法、预算与验证范围见 [GC 进度](progress.md#gc已验收)；该 GC 子项轮未全量执行 260 项；后续 Phase 4 最终全量验收见末节。
-
-
-## 最终依赖链：不可变内容、可恢复发布与可达闭包
-
-全部目标命令及 Phase 0—4 已整体验收，最终两个预设各 260 项完整检查通过。不可变对象承担内容与历史，Index／Work／HEAD 是独立可变状态；planner 与短 Transaction 将它们的发布组成可检查的计划，Operation 只保存跨步骤所需上下文与真实原镜像。GC 的 semantic roots／完整 mark 正是这套模型的另一面，不能把 Blob 容器可达误当内部 IDs 也可达。
-
-```mermaid
-flowchart LR
-    O[Blob / Tree / Commit] --> S[Snapshot / Index / 完整 DAG]
-    S --> P[纯 Diff / 三方引擎 / 来源策略]
-    P --> B[业务 / RepoLock]
-    B --> U[caller-lock planner / actual before]
-    U --> T[Transaction / Work与metadata发布]
-    B --> L[Operation / Ready或Conflicted / 原镜像与queue]
-    L --> T
-    S --> G[GC semantic roots / 全图前检与mark]
-    L --> G
-    G --> D[有序非原子unlink]
-```
-
-平台／预算、系统调用内部中断、外部竞态和原生 Git 差异维持本文各节契约；最终汇总与完整测试证据见 [Phase 4 总结](progress.md#phase-4-阶段总结已验收)。本节点没有新源码或恢复协议，不由图推断 pack／交互式 rebase 已交付。
+GC 拒绝 pending Transaction，允许 active Operation。根包含 Index 所有 stage、全部 Stash entries、raw Index／Stack 备份内部 ID、Rebase onto／完整队列、Work before／after。默认一天 freshness 与未来 mtime 对象也是额外根，要保留完整依赖闭包。
+
+删除前认证所有对象，包括 orphan；任一损坏均阻止删除。Sweep 按引用者先于被引用者的拓扑顺序，避免正常部分删除留下悬空依赖；删除失败可能已清理部分对象，无原子回滚。
+
+## 资源与平台
+
+| 范围 | 上限 |
+| --- | --- |
+| 普通文件／对象完整封装、主要输出 | 64 MiB；对象 payload 需扣除头部 |
+| 规范工作路径 | 4096 字节、128 分量 |
+| Tree 展开 | 128 层、100000 entries（含目录）、64 MiB 展开数据 |
+| Index | 100000 不同路径、300000 stage 记录、64 MiB 编码 |
+| 工作规划输入／中间节点 | 各 200000 路径或节点、64 MiB 名称 |
+| 短事务／Operation | 100000 改动记录、64 MiB 编码；组合预算另校验 |
+| DAG／GC 图 | 100000 节点、1000000 边、64 MiB 逻辑图数据 |
+| 每份 reflog | 100000 事件、8 MiB 编码 |
+| 行差异 | 每侧 100000 行、4000000 个 LCS 单元 |
+
+这些预算分别约束输入、展开和组合结果，不等于精确 heap 上限。文件读取从同一 fd 获取字节与权限并检查期间变化，不保证返回后路径不被替换。
+
+工作区事务依赖 Linux/POSIX、可用 `/proc/self/fd` 和同文件系统发布；文件需 owner-read，目录需可读遍历，更新子项的目录需 owner-rwx。恢复保留内容与权限，不恢复 owner／group／mtime。测试覆盖公开持久化步骤完成后的中断；系统调用内部留下未知临时项或非 before／after 节点时会严格拒绝自动恢复，不承诺任意断电均可恢复。

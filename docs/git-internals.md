@@ -1,281 +1,78 @@
-# Git 原理与 MiniGit 的选择
+# 原理图解
 
-本文介绍 MiniGit 的对象库与快照实现。可通过 `hash-object` 和 `cat-file` 观察对象，`add` 保存暂存内容，`commit` 将 Index 组织为 Tree 并链接 parent，`status` 比较三棵树。验收状态见 [进度](progress.md)，对象格式约束见 [架构](architecture.md)。真实 Git 的行为以本页链接的官方资料为参考，MiniGit 的自有格式不视为兼容性实现。
+MiniGit 借鉴 Git 的内容寻址与快照模型，采用自己的持久化格式。先理解下面三组关系，再运行[学习实验](learning-notes.md)。
 
-## 内容寻址与快照
+## 三棵树：已经提交、准备提交、正在编辑
 
-内容寻址把对象完整内容映射为摘要，再用摘要检索对象。blob 保存文件字节，文件名和模式由 tree 保存；commit 连接根 tree、父提交和提交元数据。因而重命名文件通常改变 tree，文件内容不变时 blob 可以复用。真实 Git 的对象模型和松散对象封装见 [Git Objects](https://git-scm.com/book/en/v2/Git-Internals-Git-Objects)。
+![三棵树：add 将工作版本存入 Index，commit 将暂存快照记录到 HEAD](images/three-trees.svg)
 
-MiniGit 使用以下未压缩字节作为 SHA-256 输入：
+HEAD 的 Tree 是已提交快照，Index 是下次提交的内容，工作区是当前实际文件。
 
-```text
-blob 3\0abc
-```
-
-这里 `\0` 表示一个 NUL 字节，不是反斜杠和数字两个字符；`3` 是 payload 的字节长度。对头部和 payload 一起求摘要，使类型和长度参与对象身份。随后压缩这串字节并写入对象库。读取过程先解压，再校验头部、长度和摘要。
-
-文件的相同 payload 会得到相同 blob 摘要。两次提交即使文件内容一致，只要作者、提交者、业务时间、父提交或消息改变，commit 摘要仍可能改变。
-
-当前 `hash-object file` 只计算摘要，不写入磁盘；`hash-object -w file` 通过仓库写锁保存 zlib 松散对象。`cat-file -t` 返回类型，`cat-file -p` 可输出保存的字节。因此修改工作区文件不会修改已保存对象。[对象实验](../examples/experiments/objects.sh) 会运行并检查这个性质。
-
-## Tree 为什么是二进制结构
-
-MiniGit 的 tree 编解码接口采用以下条目编码：
-
-```text
-mode SP basename NUL <32 bytes object id>
-```
-
-模式区分普通文件、可执行文件和目录。文件条目指向 blob，目录条目指向子 tree。文件名没有跨目录部分，因此 `src/main.cpp` 在根 tree 中表现为 `src` 子树，在子树中表现为 `main.cpp` 文件。
-
-名称排序必须固定，否则同一个目录从不同遍历顺序构造，会得到不同 tree 摘要。MiniGit 按 basename 的无符号 UTF-8 字节排序，模式只接受 `100644`、`100755`、`40000`；解码拒绝未排序或重复条目。没有验证真实 Git 的特殊目录排序规则之前，不能将“排序一致”当作格式兼容的证据。
-
-当前 `encode_commit` 和 `decode_commit` 在文本中保存 `tree`、重复的 `parent` 行、`author`、`committer`、空行及消息。author/committer 只要求非空单行文本，并未验证身份和时间语法；业务 `create_commit` 负责提供规范身份与运行时 UTC 时间。底层编解码不自动猜测身份，使格式层与命令策略各有职责。
-
-## 工作区、Index 与 HEAD
-
-这三个状态回答不同问题：工作区是现在的文件，Index 是下一次提交准备记录的内容，HEAD 的根 tree 是当前提交已经记录的内容。
-
-| 比较 | 含义 | 例子 |
-| --- | --- | --- |
-| HEAD → Index | 已暂存改动 | 文件从 `A` 暂存成 `B` |
-| Index → 工作区 | 未暂存改动 | 暂存 `B` 后继续编辑成 `C` |
-| 工作区路径不在 Index | 未跟踪文件候选 | 新建文件尚未 add |
-
-因此 `add` 后继续编辑，再执行 `commit`，应提交暂存的版本。Index 不是“被跟踪文件名的清单”，而是一次待提交快照的持久化表示。真实 Git index 还含冲突阶段、统计信息及扩展等结构，详见 [gitformat-index](https://git-scm.com/docs/gitformat-index)；MiniGit 使用单独版本化的自有格式。
-
-MiniGit 的 `add` 已体现这种分离：工作区字节先成为不可变 Blob，Index 记录其 ID。删除文件通过移除 Index 条目表示，不需要为“已删除”再创建对象。可执行位由 Index 与 Tree 保存，属于快照的一部分，即使内容摘要相同，模式变化也必须进入下一次提交。
-
-如果 HEAD 保存 A、Index 保存 B、工作区保存 C，MiniGit status 输出 `MM`，两列对应不同状态边界。只比较 HEAD 与工作区会丢失 B，无法解释下一次 commit 将保存什么。只比较文件修改时间也不可靠：内容寻址直接比较内容 ID，同时单独比较可执行模式。
-
-## 快照保存，差异临时计算
-
-Commit 引用的是完整 Tree，Blob 保存完整字节；两个提交之间的补丁是在读取时计算出来的。默认 `git diff` 比较 Index 与工作区，`git diff --cached` 比较 HEAD 与 Index，双提交参数比较两个快照；真实 Git 还提供 Myers、minimal、patience、histogram 等算法选择，见 [git-diff](https://git-scm.com/docs/git-diff)。MiniGit 的行差异引擎采用有界 LCS，命令接入状态见 [进度](progress.md)。
-
-设旧行序列为 A，新行序列为 B，`L(i,j)` 表示从 A 的第 i 行、B 的第 j 行开始能保留的最长公共子序列长度。末端值为零；若当前行相等，`L(i,j)=1+L(i+1,j+1)`；否则取 `max(L(i+1,j),L(i,j+1))`。相等行保留，不相等处根据更大的剩余值删除或插入。平局优先删除，使重复行也有稳定结果。
-
-例如 `A=[red, green, blue]`，`B=[red, yellow, blue]`，共同子序列为 red、blue，中间编辑为删除 green、插入 yellow。内部 Edit 记录旧区间和新区间的零基起点及数量；未来合并可将 base→ours 和 base→theirs 的编辑投射到同一 base 坐标，识别是否修改了同一区间，无需解析显示补丁。
-
-MiniGit 先剥离相同前后缀，将精确相等的行映射成相同整数，再对剩余部分计算 DP，避免每个单元重复比较长行。表格限制为 4000000 个单元（包括边界行列）；超预算时将剩余区间整体替换，结果仍准确，但可能不够精简，也可能让以后合并更保守。每侧最多 100000 行，超限明确报错；这是资源边界，不把多行文本伪装成一条行记录。
-
-选择 LCS 是为了让递推、回溯和编辑坐标容易核验，代价是剩余区间的时间及空间随两侧行数乘积增长。Myers 从编辑路径出发，对改动较少的长文件通常更合适；将来替换算法时，保留 EditScript 接口和逐字节应用测试即可，不要求 Merge 跟随重写。这是先固定语义再改善性能的边界。
-
-行保留原始 CR 字节及是否有末尾 LF，空文件是零行，`a\n` 与 `a` 不相等。统一补丁在编辑附近显示三行上下文，合并相接的上下文范围，并为缺少 LF 的输出行添加提示；提示不参与行数。任何一侧含 NUL 时仅显示二进制差异摘要。空文件新增、删除及只有可执行位变化时，仍需输出文件和模式信息；“不存在”与“零字节文件”是不同快照状态。
-
-## 引用、提交图与恢复
-
-分支是可移动的提交引用；轻量标签通常保持指向选定对象。HEAD 可符号指向分支，也可直接指向提交，后者称为分离 HEAD。提交通过 parent 构成有向无环历史，分支名不存入 commit 内容，见 [Git References](https://git-scm.com/book/en/v2/Git-Internals-Git-References)。
-
-MiniGit 首次提交没有 parent，后续提交记录提交前的 HEAD。父关系让相同文件快照处于不同历史位置时仍有不同身份。分支引用保存一个 ID，移动分支只需更新很小的引用文件；树与 Blob 可以继续复用。当前 `create_commit` 已支持更新符号分支或分离 HEAD；branch 列表、创建及删除已通过子项验收，switch 已接入工作区切换，验证状态见进度页。
-
-MiniGit 的 log 已遍历完整 parent 图，不能只沿第一父链。一份合并历史若 D 的父为 B、C，而 B、C 的父都为 A，需输出 D、B/C、A，且 A 只出现一次。具体 B/C 顺序采用对象 ID 排序，但 A 必须在 B 和 C 之后，这就是拓扑约束。作者时间由用户及运行环境决定，不能代替父关系。
-
-轻量标签不需要额外对象：MiniGit 的 `tag saved-B` 将当前提交 ID 写入标签引用，随后提交 C 只移动分支。`log saved-B` 仍从原提交开始。附注标签则需要 Tag 对象保存身份、消息及目标；首版范围限定轻量标签，所以 ObjectType 保持 Blob/Tree/Commit 三类。
-
-规划中的 merge 为两个分支找到共同祖先，比较 base、ours、theirs，得到结果 tree；产生新合并提交时记录两个 parent。cherry-pick 把一个提交相对其父提交的改变应用到当前历史，revert 则应用逆向改变。冲突状态需要持久化，才能在解决后继续或中止，不能只留下冲突标记而丢失操作上下文。
-
-引用移动不等于删除对象。reflog 记录移动的线索，gc 根据根集合分析可达性，再遵守保留规则回收不可达对象。真实 Git 还有 packfile 和增量对象，见 [gitformat-pack](https://git-scm.com/docs/gitformat-pack)。MiniGit 首先使用松散对象，gc 的具体策略见末节已验收首版。
-
-## 创建分支不等于切换分支
-
-MiniGit 的 `branch topic` 把当前提交 ID 写入 refs/heads/topic，同时记录该分支的创建事件。HEAD 仍绑定原分支，Index 和工作文件也不改变。main 与 topic 此刻指向同一个不可变 Commit；随后在 main 提交 B，main 才前进，topic 仍指向 A。分支保存位置，提交保存快照与父关系。
-
-`branch -d topic` 用当前 HEAD 的完整祖先集合判断是否可安全删除。若 B 的 parent 是 A，topic 指向 A，则从 B 沿 parent 可达 A，可以删除 topic；如果另一个分支指向独立提交 C，文件即使与 B 相同，也不能由快照相等推导出已合入。多父历史必须包含所有 parent，拓扑校验保证判断来自有效的图。
-
-`-D` 明确放弃这项祖先保护，但仍要求原分支快照和删除事务中的日志对象有效。它同时删除分支 ref 与分支日志，不改变 Commit 本身，也不删除 HEAD 日志。删除分支后对象暂时仍在；GC 根据当前引用、保留日志和进行中操作等根决定可达性。本实现不提供删除后永久保存分支日志的保证。
-
-## Reflog 记录位置变化，log 读取父关系
-
-MiniGit 已接入自己的 MGRL 引用日志，验证状态见 [进度](progress.md)。连续提交 A、B 时，Commit B 的 parent 为 A，而初始分支日志记录“缺失→A”和“A→B”。前者回答 B 从哪里发展，后者回答本地引用经历了什么动作。reset 将引用从 B 移回 A 时，无需改写 B 的 parent，也不会创建一个“反向 parent”；它会留下新的 B→A 事件。
-
-核心移动规划还能区分两条都指向 A 的分支。HEAD 从一条分支切到另一条，提交 ID 没变，符号绑定已变，所以 HEAD 日志可以记录 A→A。这样的自环是有效事件，却不能作为提交 DAG 的父边。branch 管理已通过子项验收，switch 与 commit 已实际记录事件，Reset 已通过子项验收。
-
-```mermaid
-flowchart LR
-    subgraph Parent[不可变 parent 关系]
-        B[Commit B] --> A[Commit A]
-    end
-    subgraph Events[可变引用的本地事件序列]
-        E1[缺失到 A] --> E2[A 到 B]
-        E2 -.reset 事件.-> E3[B 到 A]
-    end
-```
-
-MiniGit 将当前分支引用、HEAD 日志和分支日志放入同一短事务；分离 HEAD 使用 HEAD 文件和它的日志。恢复重放已规划的完整 before/after 日志字节，不重新生成业务事件。Reflog 不保存文件内容，GC 须沿它保留的 Commit ID 检查对象可达性；只保留装着日志字节的备份 Blob 不够。
-
-当前 CLI `reflog` 逆序显示事件，缺失端点用 `-`，只接受 HEAD 或分支，文件缺失为空。显示的 `HEAD@{0}` 是序号标签，尚未支持选择器解析、身份、时间、过期或撤销动作。MGRL 是 MiniGit 的简化格式，不声称兼容 Git 的 reflog 文件。
-
-## 与真实 Git 的差异
-
-| 方面 | MiniGit 的目标 | 真实 Git 的参考 |
-| --- | --- | --- |
-| 哈希 | 固定 SHA-256，32 字节内部表示 | 同时涉及 SHA-1 与 SHA-256 仓库和迁移机制 |
-| 仓库格式 | 自有格式和版本标识 | 生产级格式、扩展和兼容约束 |
-| Index | 按学习需求设计的版本化格式 | 具有多版本、扩展与冲突阶段的格式 |
-| 对象存储 | 首先只支持 zlib 松散对象 | 包含 packfile、增量和维护机制 |
-| 路径与类型 | 首版普通 UTF-8 路径、二进制文件、可执行位；拒绝软链接 | 支持范围更广，具体行为受平台影响 |
-| 命令 | 分阶段实现本地版本管理 | 包含网络传输、远程、钩子、子模块等大量功能 |
-
-真实 Git 的 SHA-256 格式与转换包含对象引用及兼容映射等要求，单独替换哈希函数不足以实现兼容，见 [hash-function-transition](https://git-scm.com/docs/hash-function-transition)。MiniGit 不使用 Git 命令或其内部库代替自身业务算法。
-
-## 更新目标与实际恢复原状之间还有一道边界
-
-除了 HEAD、Index 和工作区，修改命令还需要明确“请求写入的目标”。目标可以来自某个提交或 Index，也可以只覆盖部分路径。四份状态的用途不同：
-
-| 状态 | 回答的问题 |
+| 操作 | 比较或读取 |
 | --- | --- |
-| HEAD 快照 | 当前历史已经记录什么？ |
-| Index 快照 | 下一次 commit 准备记录什么？ |
-| 实际工作区 | 用户现在拥有的字节和权限是什么？ |
-| 更新目标 | 这次操作明确希望哪些路径变为什么？ |
+| `diff --cached` | HEAD→Index，查看已暂存变化 |
+| `diff` | Index→工作区，查看未暂存变化 |
+| `diff HEAD` | HEAD→工作区，查看当前文件相对历史的变化 |
+| `show HEAD:note` | 读取已提交版本 |
+| `show :note` | 读取暂存版本 |
 
-设 HEAD=A、Index=B、实际工作区=C，本次请求目标为 D。业务命令先决定 C 是否可以覆盖；获得授权后，规划器把 C 捕获为 before、D 作为 after。此时 Prepared 恢复必须回到 C，不能拿 A 或 B 代替“操作前实际文件”。这是短事务 rollback；restore 与 reset 选择历史版本作为业务目标，又是另外一层语义。`minigit recover` 不让用户选择某个提交，它按已有事务状态完成恢复。
+例如 HEAD=A、Index=B、Work=C，状态为 `MM`。此时 commit 保存 B，工作文件仍为 C。Index 保存对象 ID 与模式，不能只把它理解为文件名清单。
 
-部分更新也不能把未列出的路径当成删除。只要求改写 dir/a 时，dir/b 可以是未跟踪文件，已有 dir 目录无需加入计划。若目标改成一个名为 dir 的文件，就必须检查整个 dir，证明每个旧文件已授权且明确删除；未知内容和陌生空子目录会阻止转换。若原已授权文件位置本身变为空目录，可以按显式目标移除这个空节点；不能由父位置授权推导出子项也可删除。所有这些检查已由共享规划器实现；switch、restore 已接入，reset 三模式重置已通过子项验收，rm 删除与取消暂存已通过子项验收，mv 文件与目录迁移也已接入，验证证据见进度页。
+## 对象：字节、名字、历史各有位置
 
-## Switch 不要求切换后所有文件都等于目标
+![对象关系：HEAD 经分支指向 Commit，Commit 指向父提交和 Tree，Tree 指向 Blob](images/object-model.svg)
 
-分支名决定下次 commit 更新哪个 ref，提交快照决定目标 D。branch 只添加引用；switch 还协调 Index 与工作区，但会保留兼容的本地修改。设一个文件在旧 HEAD 和目标中都为 a，Index=b、work=c：目标没有要求改变它，b/c 可以保留。若旧 HEAD=a、Index=b、目标=d 且 b 不等于 d，即使 work=b，也拒绝覆盖已暂存 b。完整判断矩阵见架构页。
+| 对象或引用 | 保存什么 |
+| --- | --- |
+| Blob | 文件字节，不含文件名 |
+| Tree | 名称、模式与 Blob／子 Tree ID |
+| Commit | 根 Tree、parent、author、committer 与消息 |
+| 分支／轻量标签 | 一个 Commit ID |
+| HEAD | 当前分支的符号引用，或 detached Commit ID |
 
-所以成功切换不证明工作区干净，切换也不是把所有路径强行替换为历史版本。文件模式参与比较；局部规则通过后，最终 Index 还须满足文件与目录不能占据同一前缀的约束。Prepared 的恢复仍回真实 work，而不是回旧 HEAD。
+同字节文件复用 Blob；改名改变 Tree，内容不变时无需新 Blob。提交保存完整快照入口，补丁在查询时计算；相同快照也可能因父关系、身份或消息不同得到不同 Commit。
 
-符号 HEAD 可以指向尚不存在的 refs/heads/new，表示首提交将建立哪条分支。未出生 switch -c 只改变这个绑定，null→null 日志仍有有效事件；它没有造出空 Commit。Detached HEAD 则直接保存 Commit ID，后续 commit 移动 HEAD 本身。MiniGit 明确使用自己的保护矩阵与简化选项，未实现 Git 的全部 checkout/switch 行为。
+对象摘要输入为 `type + 空格 + 字节长度 + NUL + payload`，例如 `blob 3\0abc` 中的 `\0` 代表一个 NUL 字节。MiniGit 对未压缩封装求 SHA-256，再用 zlib 保存；读取时校验压缩流、类型、长度和摘要。
 
-## Restore 选择内容，不移动历史位置
+## 分支、历史与引用事件
 
-同样是 HEAD=A、Index=B、work=C，默认 Restore 请求把选中 C 恢复为 B；staged 目的请求把选中 B 恢复为 A，保留 C；同时两个目的请求把 B/C 恢复为 A。显式历史来源可以替换 A 的角色，HEAD 与 reflog 仍保持原位。它与 switch 的历史绑定变化不同，Restore 的显式选择允许覆盖已授权的本地文件修改。
+创建分支只保存一个位置，不切换工作文件。Switch 改变当前绑定，并安全更新 Index／Work；Reset 移动当前位置，按模式决定是否更新内容。
 
-工作区来源若没有某个已选文件，则目标为删除；存在零字节 Blob 时则保留空文件。Index 冲突的 stage 1/2/3 不是三个普通工作文件：工作区单目的不会自动清冲突记录，staged 目的才用来源 stage 0 替换所选阶段。目录 prefix 选择是批量版本路径，不是递归删除当前未知目录的授权。
+Commit 的 parent 组成不可变 DAG，合并提交可有两个 parent。`log` 遍历所有父边、去重共享祖先，并保证子提交先于父提交；作者时间不能代替拓扑关系。
 
-这些内容来源与目的策略已由 Restore 实现并验收；未出生 HEAD 不能提供默认 staged 来源，有效显式历史来源则不依赖当前分支已经诞生。
+`reflog` 记录本地引用移动事件。例如 Reset 从 B 回到 A，只追加 B→A 事件，不改 B 的 parent。两条分支都指向 A 时，切换仍可记录 A→A：事件序列与提交父图是两种数据。
 
-## Reset 的三种模式共用目标，不共用发布范围
+## 三方合并与冲突
 
-令 A=当前 HEAD、B=Index、C=实际 Work、D=请求目标。soft 只让当前历史位置到 D，保留 B/C；mixed 再把 B 换成 D，仍保留 C；hard 再把已授权的 C 恢复到 D。它不切换当前分支名称，即使 revision 来自另一个分支；detached 状态也不会因为目标名称而重新附着。
+三方引擎比较基线与两侧变化。独立修改可组合，重叠且不同的修改需要解决。
 
-同 ID hard reset 仍可能清除 staged／working 修改，故不能把“引用没移动”当作整命令无操作。反过来，引用真正移动时会追加 reset:soft／mixed／hard 事件，旧 Commit 的 parent 不会改变。没有 ORIG_HEAD 或 reflog 选择器，不能将事件展示直接当作撤销接口。
+| base | ours | theirs | 结果 |
+| --- | --- | --- | --- |
+| a / b / c | A / b / c | a / b / C | A / b / C |
+| a / b / c | a / B / c | a / X / c | 中间一行冲突 |
+| a / b / c | a / B / c | a / B / c | 相同修改保留一次 |
 
-hard 授权丢弃已跟踪编辑，但只对旧 HEAD 和旧 Index 的精确文件路径负责；未知目录内容不会因为整个 reset 的名称获得删除权。它和 Restore 的范围选择、Switch 的兼容保留策略不同，三者仍共用捕获实际 before 与短事务恢复。Reset 已通过子项验收，不声称与 Git 所有模式和未知文件处理兼容。
+Index stage 1／2／3 保存原始 base／ours／theirs；缺失的一侧不补零 ID。工作文件中的 marker 只是呈现，不能代替原始阶段。`add` 将解决结果变为 stage 0，continue 使用 Index，而非重新读取 Work。
 
-## Rm 把删除放入 Index，不直接改历史
+CherryPick 使用“来源父、当前、来源”三个快照；Revert 交换基线与来源，应用逆向变化。Rebase 重复执行单父重放，创建新链，最终才移动原分支。
 
-普通 rm 删除已知工作文件并移除 Index 条目，下一次 commit 才记录删除；--cached 保留实际文件，只移除 Index。它不会改 HEAD 或追加引用事件，Prepared 恢复仍可找回被删实际字节与原 Index。与 Restore、Reset 相同，删除也要先保存可恢复的真实 before。
+## 恢复与可达性
 
-cached 的内容规则允许 B 等于 HEAD 或磁盘版本，目的是避免无意丢掉仅存在于 Index 的版本；目录 prefix 需 -r，并只选择已知路径。这些概念可与 [Git 官方 git-rm 文档](https://git-scm.com/docs/git-rm)对照。MiniGit 使用 exact／prefix，无 glob，成功默认静默；它另有明确的未知目录及特殊类型保护，不实现 Git 全部 pathspec、dry-run 或 sparse 功能。
+请求目标与操作前实际状态不同。HEAD=A、Index=B、Work=C，操作目标=D 时，事务 before 必须保存 C；拿 A 代替备份会丢失未提交编辑。
 
-Rm 已通过子项验收。普通模式将 Directory 当成本地类型变化，不能借“没有普通 FileState”得出缺失；force 只改变内容丢弃策略，不能把 owned 祖先变成递归授权。cached 则先利用 B==A 的纯对象判断避免无关物理工作路径读取。
+短事务处理一次发布中断，跨进程 Operation 记录冲突或 Rebase 队列。`recover` 先处理短事务，之后才能 continue／abort；状态图见[架构](architecture.md#冲突与恢复)。
 
-## MiniGit 如何处理更新中断
+对象仍存在不代表有分支指向它，删除分支也不立即删除对象。GC 从引用、日志、Index 各 stage、完整 Stash 栈和操作备份等根遍历依赖。装有 Index 字节的备份 Blob 还包含其他 Blob ID，这些内部引用也必须保留；新 Commit 的保留窗口同样覆盖它依赖的旧 Tree／Blob。
 
-对象寻址解决“保存什么内容”，引用描述“哪段历史可见”，Index 和工作区则是另外两份状态。一次操作改变这些可变状态时，不能从对象数据库的不可变性推导出整个操作的原子性。
+## 实现取舍
 
-MiniGit 在 Phase 2 增加自己的短事务日志：实际工作文件先备份为 Blob，节点的 before/after 与精确元数据形成恢复计划，Prepared 状态选择恢复旧值，Committed 状态选择确认新值。这是 MiniGit 的工程方案，不代表它复刻了 Git 的锁文件、工作区更新或全部失败行为。内容模型与操作恢复协议是不同层次，可以参考同一对象原理，同时采用明确的简化协议。
+| 方面 | MiniGit 范围 |
+| --- | --- |
+| 格式 | 固定 SHA-256、自有 Index／日志／状态格式，不与 Git 仓库互读 |
+| 文件与平台 | 普通 UTF-8 相对路径、二进制内容与可执行位；Linux/POSIX，拒绝需要访问的软链与特殊节点 |
+| 存储 | zlib 松散对象，无 pack／增量对象 |
+| 差异 | 有界 LCS；超表格预算整体替换变化区间，可能更保守；无重命名检测 |
+| 合并与重放 | 唯一 merge base、线性 Rebase，无交互式重放 |
+| 其他 | 无 remote、子模块或 reflog 过期策略 |
 
-日志可以让下一次进程识别上一次未完成的工作，它的备份也不能被 gc 回收：如果备份 Blob 被回收，日志本身存在也无法恢复。日志中的 Index、HEAD、引用和 reflog 还包含语义引用，不能仅保留装着元数据字节的 Blob；本版 gc 拒绝 pending 短事务，须先 recover，不在未清理 journal 上执行回收。
-
-## Mv 为什么不能等同于移动后再 add
-
-Mv 已通过子项验收。设 Index 的源存 B，工作文件后来被编辑成 C：直接移动文件再 add 目的会把 C 放入 Index，丢失原暂存版本 B。正确映射分别保留 B 的 mode／ID 与 C 的实际内容／完整权限，再让源删除、目的写入及 Index 路径变更一起发布。HEAD 未移动，下一次 commit 才保存迁移后的快照；当前差异显示为 A／D，不提供 rename 检测。
-
-[Git 官方 git-mv 文档](https://git-scm.com/docs/git-mv)描述成功迁移后更新 Index、仍需提交，以及已有目的目录接收源的形式。真实 Git 还支持软链、多源、force 和 dry-run；MiniGit 首版每次一个源、一个目的，不接受这些扩展，默认任何目的碰撞都拒绝。目录授权只覆盖确实已知的库存，不能把整个目录名字当成收集陌生内容的许可；源目录权限也不随新目录迁移。
-
-## 三方文本为什么需要基线
-
-[Git 官方 git-merge-file 文档](https://git-scm.com/docs/git-merge-file)用共同 base 与两份修改解释三方合并，并在同一区域存在不兼容修改时呈现冲突。MiniGit 的纯文本算法已通过子项验收，不复刻该命令的全部策略、标签与选项；该纯文本验收轮的仓库 merge、基线历史选择和冲突阶段发布仍待后续，实际后续交付见末节与进度页。
-
-base=[a,b,c]，ours=[A,b,c]，theirs=[a,b,C] 可以得到 [A,b,C]；仅比较 ours 与 theirs 却看不出 a 和 c 各自原来的版本。同一区块先分别按完整 base 重放，两侧结果相同可以去重，否则保留固定 ours／theirs markers。LF 状态也是字节事实，不能由“看起来是同一行”推断等价。独立位置与 EOF 例子见学习笔记。
-
-## 文件合并还要合并存在与模式
-
-纯文本只比较字节，SnapshotMerge 已实现的语义还包括文件存在、执行位与路径结构。base 缺失并不等于 base 是一个空文件；ours 新建 empty、theirs 新建 note 仍是两份新建版本冲突，不能因为空字节相等快捷选择 note。相反，ours 仅改 executable mode、theirs 改内容时，可以把两份独立修改组合。
-
-冲突 stages 保存原始版本，work 的 marker 只是用户将来解决冲突时的呈现内容。D/F 区域还须保持一个实际可发布的布局：选择 ours 的 parent File 就不能同时创建 theirs 的 child File，不自动生成别名。此处描述 Snapshot 适配器的候选结果；该适配器验收轮，实际工作区保护、Index 发布和 continue／abort 仍待业务接入，后续完整实现见下文。
-
-## 基线来自父图，不来自文件相等或提交时间
-
-single-lowest merge-base helper 已通过子项验收。两份 Commit 可以具有相同 Tree 却没有共同祖先，因此文件相等不能代替历史关系；共同祖先也不能只沿 first parent 寻找。若共同祖先有 R 和 X，且 X 是 R 的后代，X 才是最低基线，R 仍属于完整校验范围。
-
-先验证全部祖先，再沿 child-before-parent 顺序传播双方可达性与共同后代标记。没有共同后代的共同祖先才留下；多个这样的节点表示 crisscross，本版明确拒绝，不用 ObjectId 或 timestamp 任选一个。没有共同祖先返回 nullopt，未来业务才据此拒绝 unrelated merge。选择基线不展开 Tree；真正合并文件仍需读取选定快照并调用 SnapshotMerge。
-
-## 版本快照与恢复镜像各自保存什么
-
-MiniGit 的 HEAD Snapshot 保存文件 Blob 与 100644／100755，不保存空目录或完整 st_mode 权限。实际 work 的 NodeImage 还要区分 Directory 与 Absent，记录完整 07777 权限；否则原先存在的空目录在中止时会被误当作不存在，0700 目录也可能变成默认 0755。
-
-显式 Directory target 已补共享 planner 的这个表达缺口并通过子项验收，不意味着 abort 已实现。恢复目录权限同样受安全 inventory 约束：更改 root mode 不授权它的未知子项，精确授权空 root 也不授权陌生空 child。长期操作必须保存真实 before 镜像，短事务 recover 决定 Prepared／Committed 的 before／after，而未来 operation abort 才恢复操作开始时的镜像，二者不能混为一件事。
-
-## Tree ID 与文件投影相等不是同一条件
-
-CommitSnapshot 工厂已通过子项验收，空提交策略仍由 create_commit 决定。一个合法父 Tree 可以含空子 Tree，展平 read_snapshot 看不到文件；write_snapshot(empty) 则构造空根 Tree。两份 Snapshot 同为空不保证这两个 Tree ID 相等，直接用 Snapshot equality 拒绝会改变既有业务判定。
-
-对象工厂允许显式空 Snapshot，支持初始或多父 Commit；它不猜当前分支，也不擅自认定消息相同或文件投影相同就不能保存。重放原 author 与当前 committer 同样是不同角色：前者保留源字段，后者记录本次显式身份；来源、parent 顺序与允许空的策略由后续业务选择，不让存储层从 Index 推断。
-
-## 长期状态的根不是一个备份 Blob 就够了
-
-OperationState v1 基础的独立验收当时未包含 merge／continue／abort 命令，现由下节业务使用。原 Index 备份先是普通 Blob；GC 仅沿 Blob 没有子对象可遍历，却可能遗漏该 Index 内所有 stage 引用，因此 state_roots 要解码备份的 MGIX 并显式返回每个 stage Blob ID。Work before／after File、original／current／source Commit 也都是语义根，事务删除 State 时仍须保留 before 根。
-
-历史 Head 的 typed Commit 校验不同于业务对当前 HEAD 的 CAS，也不同于展开其 Tree／parents。保存 raw HEAD 与整份 optional Index 是为了将来精确恢复元数据；Work 仅恢复记录的受影响路径，不能把未涉入文件当作删掉。State codec 的 64 MiB 上限只验证单文件，真正发布还要承受 operation／Index／日志双方总量和 Work 数量的 combined 事务预算。
-
-## 合并提交与冲突状态是两种结果
-
-Merge 生命周期已通过子项验收。fast-forward 只移动现有历史 tip，up-to-date 无新 Commit；真正分叉的 clean 合并记录有序 [ours, theirs] 两父，即使结果文件恰与一侧相同，历史连接仍有意义。共同基线来自完整父图，unrelated／crisscross 首版明确拒绝。
-
-冲突时 HEAD 保持，Index stages 1／2／3 是原始版本，Work marker 是呈现，State 保存未来继续／中止所需上下文。继续以用户已解决的整份 stage0 Index 为来源，不把未暂存 Work 自动提交。中止范围则不同：整份 Index 恢复原字节，Work 恢复受影响区域，含未改写但发生冲突的 ours 同值节点与 D/F 区域内真实目录权限。原 File／Absent 变为目录时，恢复 root 下当前 Index 新跟踪子项可删除，unknown 不获授权；区域外新跟踪 Work 保留，其暂存信息随整份 Index 恢复而撤销。incoming 未跟踪文件与目标内容／权限相同而无需写入时可保留并加入 Index，实际覆盖仍受 unknown 保护，不能视为完整原生 Git 行为兼容。实际 CLI 与生命周期检查、实验通过，完整只读审查通过；状态基础和业务分别验证，不把此子项当作 Phase 3 整体验收。
-
-
-## CherryPick 是搬变化，Revert 是应用反向变化
-
-两项生命周期已通过子项验收。来源 S 的父快照 P 与 S 的差异是要搬来的变化，CherryPick 将 P→S 应用到当前 H；Revert 以 S 为 base、P 为 theirs，将反向变化应用到 H。因此两项允许跨历史，来源 root 用空 P，多父来源没有唯一 P 且不提供 mainline，明确拒绝；不能套用 merge-base 或 fast-forward 的决策。
-
-成功提交只有父 H，并始终保存一次新历史节点，包括空结果。CherryPick 保留 S 的 author，默认 S 的消息；Revert 由当前 actor 作 author，默认消息标出完整 S ID，committer 都由当前身份生成。冲突 stages 1／2／3 对应本次实际 base／ours／theirs，Revert 的 stage1 是 S、stage3 是 P；它们不是固定等于某个分支名。消息覆盖仅启动使用，继续读取已保存消息。实际 API 与状态闭集扩展已冻结并通过完整只读审查，相关单元、CLI 与实验在两种预设均通过，完整范围见进度页。
-
-[Git 官方 cherry-pick 文档](https://git-scm.com/docs/git-cherry-pick)与 [Git 官方 revert 文档](https://git-scm.com/docs/git-revert)中的 -m／--mainline 是选择多父来源的父序号，决定相对哪份父快照重放。MiniGit 本版不提供该功能，明确拒绝这两个选项；启动专用 --message text 是 MiniGit 的消息覆盖选项，不能把它误读为 mainline。Merge 继续使用自己的 -m 消息选项。
-
-
-## Stash 的 Index 与 Work 必须分别保存
-
-[Git 官方 stash 文档](https://git-scm.com/docs/git-stash)用 H、I、W 的父关系解释保存：W 的第一父为当时 HEAD，第二父记录当时 Index，I 自身以 H 为父；同页的 apply／pop --index 会尝试恢复 Index 与 Work 两层修改。MiniGit 已通过保存／查询子项验收，采用明确 H/I/W 和可选 U root 关系，该保存验收轮尚未交付 apply／pop／--index，恢复生命周期的后续验收见下节，不能仅由模型相似推断恢复能力。
-
-MiniGit 的活跃列表使用单独 MGST 校验栈，不依赖 refs/stash 的 reflog；newest-first 的每项都要保留根，refs/stash 只指 top。push 保存 H=A、I=B、W=C，不能因两个层次同一路径就用一个 Snapshot 替代。-u 的 U 仅包含未忽略的未跟踪文件，持久 Trees 保存 bytes 与执行位；实际完整权限与空目录属于短事务回滚镜像，不是 Stash 的完整归档格式。show 完整验证 I，却只展示 H→W+U，不把暂存内容与实际 Work 混成一个版本；list 仅看 typed Commit 消息，drop／clear 仍受旧 top Work Tree 的事务预检。保存子项及下一批恢复生命周期分别验收，当前源码已冻结，两个预设的相关检查、保存实验及交叉完整审查通过。
-
-
-## 栈位置、选中来源和栈顶不是同一个 ID
-
-MGOP v2 StashApply context 基础已通过子项验收。选择 stash@{2} 时，source 是保存栈的第 2 项，refs/stash 却仍是第 0 项；State 必须保存整份 MGST Blob、position 与精确 raw ref，语义校验分别核对这两个关系。只保存 source 或 top 会丢掉恢复期间其他仍活跃 entries 的根。
-
-状态读取验证历史备份而不是现盘 CAS，实际 apply／pop 的最终 publication 才另比较 live stack/ref。内部 stash:apply／stash:pop 消息是动作标识，不生成 Commit；身份不是恢复上下文读取条件。codec 已冻结并核对，Debug 相关回归与独立审查通过，sanitized 对应检查通过。该 v2 基础轮不引入恢复命令，pop 完整成功后删除、冲突时保留等业务规则由下节后续恢复子项实现，不把 v2 codec 的完成当作 Stash 生命周期已交付。
-
-
-## --index 要恢复保存的暂存意图
-
-完整 Stash 恢复生命周期已通过子项验收。MiniGit 默认将 H→W 合并到当前 O，Index 保持 O（冲突区域写原 stages）；--index 独立把 H→I 合并到 O，Work 仍由 H→W 决定。于是同一路径可以恢复为 Index=B、Work=C，不能用最后 Work 快照一次 add 替代两层含义。Work／Index／Both 是初次冲突报告的层次，单份 Index 无法表达不同原始 stage groups 或某些跨层 D/F 时明确拒绝，不任意选择一层覆盖另一层。
-
-[Git 官方 stash 文档](https://git-scm.com/docs/git-stash)说明 --index 尝试恢复暂存状态，pop 遇冲突会保留条目，解决后需手动 drop。MiniGit 的 stash --continue／--abort 是显式生命周期扩展：continue 从 resolved typed Index 完成并按原 pop 意图删除条目，保留未暂存 Work；abort 恢复保存的实际 before。原生 Git 没有这两个 stash 子动作。MiniGit 首版要求启动 Index=HEAD 且 tracked Work 干净，选择器仅 stash@{十进制位置}，使用 MGST 活跃栈而非 refs/stash reflog；不把这些接口称为 Git 兼容实现。本项不创建提交、不移动 HEAD／reflog，也不要求身份，两预设相关检查、恢复与原保存实验及独立完整审查通过；该 Stash 恢复轮的后续 Phase 3 全量验收见下段。
-
-
-Phase 3 两预设各 237 项全量检查通过，整体验收已完成；命令范围、Git 差异与学习成果集中见 [阶段总结](progress.md#phase-3-阶段总结已验收)。后续 Rebase 不能只重复调用有自锁和 guard 的公开 Replay 入口；GC 也不能把 typed-only roots 当成完整可达闭包，Rebase 业务后续验收见下节，GC 首版子项验收见末节。
-
-
-## Ready 不是已经解决的冲突
-
-Rebase 状态基础已通过子项验收，实际重放业务也已在下节通过子项验收。Ready 保存未执行的 queue[cursor]；预算、身份或 unknown 保护拒绝导致步骤没发布时，continue 应重试该来源，不能把当前 Index 当成它的解决结果生成空提交并跳过去。只有 Conflicted 表示来源冲突已发布，才允许以后从 resolved Index 完成当前来源。
-
-原分支镜像与 original HEAD 提供恢复锚点，current detached 是新的重放位置。每次新 Commit 的单父应是旧 current；来源作者与 preserve-empty 在该基础轮还是待实现业务策略。基础子项只持久化队列与验证状态推进，不改 refs／Work 或自动生成提交；后续业务已经实现下述策略。旧 kind 的 bytes 保持与 expected canonical CAS 更新约束，使共享状态格式扩展不改变已有 Merge／Replay／Stash 解释。
-
-
-## Rebase 是有顺序的重放，不是合并父关系
-
-本业务已通过子项验收。从唯一共同 base 到 original 的 first-parent 线性来源依次重放到 onto，ours 是当前已重放的新历史，theirs 是下一原来源，base 是该来源自己的父；每次成功的新 Commit 只有父 current。原作者与消息保留，当前身份生成 committer，空结果也统一保留；原 symbolic branch 在中间步骤不移动，最后 attach 与 State 删除一起发布。
-
-[Git 官方 rebase 文档](https://git-scm.com/docs/git-rebase)描述重放时 ours 是已重放序列，并区分原本为空、变为空和已应用提交的策略，提供 --empty 与 interactive／rebase-merges 等选项。MiniGit 本版选择统一 preserve-empty、唯一 base 后的纯线性单父队列，不提供这些复杂选项、--onto、mainline 或 skip；多父来源拒绝，不重建 merge topology。无状态 UpToDate／FF 不要求身份，真正来源重放需要当前提交身份。公共接口与实际业务源码已最终冻结，两个预设相关 38 项及实验已通过；该业务验收来自真实行为验证，不只是 codec 能表示 Ready。
-
-
-## 回收依据是根与闭包，不是“当前分支看不到”
-
-[Git 官方 gc 文档](https://git-scm.com/docs/git-gc)说明保留范围包括引用、Index 与 reflog，也将较新对象连同其可达后代保留；原生维护还涉及打包与日志过期。MiniGit 本次已通过子项验收的首版只回收规范松散对象，默认 mtime grace 为 86400 秒，--prune-now 关闭该普通窗口，但 future-mtime 始终保守保留。没有 pack／reflog expiration，不等同于原生 git gc 的全部维护任务。
-
-rebase 移动原 branch 后，旧 Commit 仍可能由 HEAD／分支日志保留；Index 冲突 stage 和活跃操作队列也可能指向当前 Tree 看不到的内容。raw Index／MGST backup 是普通 Blob，只有 semantic decode 才能得到其内部 ID；GC 再沿 Commit 全父与 Tree／Blob 完整闭包标记。本版要求全部 orphan 一并认证、任何 typed edge 缺失或错误都在 unlink 前拒绝；该更保守前检策略与自有仓库格式的当前实现边界须一起理解，两个预设相关 24 项及实际 GC 实验通过；该 GC 子项轮尚未全量运行；后续 Phase 4 全量验收见末节。完整 typed graph 前检后还要求 Kahn 无 cycle，删除采用引用者先于 child 的拓扑顺序；这让正常部分删除后的剩余 orphan 不因先删 child 形成悬空边，仍不承诺原子回收或任意外部写入安全。
-
-
-## 把已实现模型连接起来
-
-Rebase 改变新历史的父链，GC 决定哪些旧对象仍有保留依据；二者都依赖正确区分引用事件、完整 DAG 与真实恢复镜像。MiniGit 的约定命令范围与 Phase 0—4 已整体验收，最终两个预设各 260 项全部通过；自有格式、单基线／线性重放、Stash 扩展和非原子回收等差异集中见 [最终阶段总结](progress.md#phase-4-阶段总结已验收)，不能仅凭命令名称相同宣称 Git 兼容。
+延伸阅读：[Git Objects](https://git-scm.com/book/en/v2/Git-Internals-Git-Objects)、[Git References](https://git-scm.com/book/en/v2/Git-Internals-Git-References)。具体格式与资源边界见[架构](architecture.md)。

@@ -1,6 +1,13 @@
-# 构建与验证策略
+# 构建与测试
 
-普通 `debug` 预设保留未优化的调试构建，适合逐行观察算法。`sanitized` 使用 `-g -O1`，同时启用 AddressSanitizer、UndefinedBehaviorSanitizer 和帧指针；当前 Linux 构建仍使用已验证的非 PIE 配置。优化允许编译器内联大量短小的标准库函数，调试符号保留，局部变量和源码单步顺序可能与无优化构建不同。
+需要 CMake 3.20+、C++20 编译器、OpenSSL 3、zlib、Catch2 v3，依赖由环境提供。
+
+## 构建预设
+
+| 预设 | 用途与选项 |
+| --- | --- |
+| `debug` | 未优化调试构建，适合逐行阅读 |
+| `sanitized` | `-g -O1`、ASan／UBSan、帧指针；Linux 使用非 PIE |
 
 ```sh
 cmake --preset debug
@@ -12,20 +19,27 @@ cmake --build --preset sanitized
 ctest --preset sanitized -R '^cli_basics$' --output-on-failure
 ```
 
-采用基础优化的依据是实际测量：大数量路径用例在无优化的 GCC sanitizer 构建中，采样多次落在 ASan FakeStack 的短函数调用处理；同一用例在普通 Debug 中只需数秒。编译时的 `-O1` 可以减少这种调用开销。AddressSanitizer 的[官方使用文档](https://clang.llvm.org/docs/AddressSanitizer.html#usage)也建议使用至少 `-O1` 取得合理性能；该资料描述 Clang，本项目当前的验证编译器是 GCC。
+Sanitized 保留调试符号，优化可能改变单步顺序和局部变量可见性。可在构建目录 `compile_commands.json` 核对选项。
 
-当前 Linux/GCC 环境的 100000 条 reflog 编解码用例，未优化 sanitized 曾用时约 192 秒，本轮 `-O1` 用时约 21 秒。该对比用于解释工程选择，各机器的耗时应通过实际运行测量。
+## 选择检查范围
 
-数量和字节预算的回归保留真实输入，包含展开路径、组合后的 Index、损坏对象及失败后状态不变等检查。构建保留已有 sanitizer 选项和完整断言。
+普通改动只运行受影响模块和 CLI；阶段验收或影响整个构建的改动运行完整回归。CTest 注册总数与实际执行数分开记录，中途取消不算通过。
 
-事务的纯预算入口 `validate_transaction_budget` 统一核对工作区与元数据合计条目、路径字节、元数据前后镜像总字节及编码日志大小。共享工作区规划器在保存新备份 Blob 前调用它；超限失败保留传入计划、工作文件和已有对象集合。预算检查不代替执行器的对象类型、路径结构与真实文件系统校验。
-
-通常只运行新功能及其受影响模块，具体筛选与结果写在 [进度](progress.md)。阶段验收和影响整个构建的编译选项调整运行完整回归。完整 sanitizer 命令为：
+例如修改 Rebase 时筛选其业务、状态与 CLI 测试：
 
 ```sh
+ctest --preset debug -R '^(unit\.(Rebase|OperationRebase)|rebase_cli$)' --output-on-failure
+```
+
+这只是筛选示例；涉及共享事务、工作规划器等模块时，需包含它们及调用方。
+
+完整回归：
+
+```sh
+ctest --preset debug --output-on-failure
 ctest --preset sanitized --output-on-failure
 ```
 
-CTest 注册总数与本次实际执行数分别记录。遇到失败先定位；受影响范围已经确定时只复验修补的部分。中途取消的检查不算通过，编译成功也不能代替行为测试。sanitizer 通过表示本轮执行未报告对应错误，不证明全部平台、线程交错或任意系统调用中断均已覆盖。
+文档改动检查本地链接、标题锚点、代码围栏、图示和 `git diff --check`，不需要运行完整 C++ 回归。学习脚本可用 `bash -n` 检查语法，运行方式见[学习实验](learning-notes.md)。
 
-编译参数可在构建目录的 `compile_commands.json` 中核对；`-O1`、`-g`、`-fsanitize=address,undefined` 与 `-fno-omit-frame-pointer` 应同时存在。可重复 CLI 实验使用临时仓库，见 [学习笔记](learning-notes.md)，核心原理从 [代码导读](code-walkthrough.md)进入。
+单元测试关注格式、算法和失败后状态，CLI 测试检查输出、退出码与磁盘结果。预算用例保留真实输入；编译成功不能替代行为检查。已有结果集中在[开发进度](progress.md)。
