@@ -90,7 +90,7 @@ std::vector<WorkChange> accumulate_work(const Repository& repo, const std::vecto
 }
 void plan_checkout(const Repository& repo, TransactionPlan& plan, const Snapshot& ours, const SnapshotMergeResult& merged,
                    const Index& index, const operation_support::WorkObservations& observed) {
-    checkout_support::validate_index_budget(merged.index); (void)encode_index(merged.index);
+    validate_index_budget(merged.index); (void)encode_index(merged.index);
     checkout_support::BoundedPaths owned;
     const auto targets = operation_support::changed_targets(ours, merged.work, owned);
     if (merged.index != index) plan_index_update(repo, plan, merged.index);

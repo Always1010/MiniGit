@@ -19,9 +19,6 @@ bool has_descendants(const std::set<std::string>& paths, const std::string& sele
 // Checks every argument before combining duplicates and covered prefixes.
 std::set<std::string> select_known_paths(const BoundedPaths& candidates,
                                        const std::vector<std::string>& selectors);
-// 100000 distinct paths / 300000 stage entries / 64 MiB encoded. Callers load
-// old Index through its schema-validating codec; new Index also needs encode.
-void validate_index_budget(const Index& index);
 // Budget checks and deduplicated typed Blob validation of every stage, no writes.
 void check_index_objects(const Repository& repo, const Index& index);
 }

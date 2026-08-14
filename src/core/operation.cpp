@@ -398,7 +398,7 @@ std::set<ObjectId> state_roots(const Repository& repo, const OperationState& sta
             if (count > 300000) throw Error("operation 原始索引超过 300000 阶段条目限制");
         }
         const auto index = decode_index(object.payload);
-        checkout_support::validate_index_budget(index);
+        validate_index_budget(index);
         for (const auto& entry : index) keep(entry.id, ObjectType::Blob);
     }
     if (state.stash) {

@@ -41,7 +41,7 @@ Index snapshot_index(const Snapshot& snapshot) {
         bytes += path.size() + 41;
         index.push_back({path, file.mode, file.id});
     }
-    checkout_support::validate_index_budget(index);
+    validate_index_budget(index);
     (void)encode_index(index);
     return index;
 }
@@ -202,7 +202,7 @@ SnapshotMergeResult merge_snapshots(const Repository& repo, const Snapshot& base
             result.conflicts.push_back({path, kind, std::move(text), mode_conflict});
         } else index.append(path, working, 0);
     }
-    checkout_support::validate_index_budget(result.index);
+    validate_index_budget(result.index);
     (void)encode_index(result.index);
     (void)snapshot_index(result.work); // Also proves the published layout has no D/F.
     return result;

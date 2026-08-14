@@ -57,7 +57,7 @@ ReplayResult start_replay(const Repository& repo, OperationKind kind, const Repl
     const auto observed = operation_support::clean_work(repo, ours);
     auto merged = kind == OperationKind::CherryPick ? merge_snapshots(repo, parent_snapshot, ours, source_snapshot) :
         merge_snapshots(repo, source_snapshot, ours, parent_snapshot);
-    checkout_support::validate_index_budget(merged.index);
+    validate_index_budget(merged.index);
     (void)encode_index(merged.index);
     checkout_support::BoundedPaths owned;
     const auto targets = operation_support::changed_targets(ours, merged.work, owned);

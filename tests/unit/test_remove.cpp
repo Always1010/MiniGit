@@ -7,6 +7,7 @@
 #include "minigit/worktree.hpp"
 #include "minigit/worktree_update.hpp"
 #include "temp_directory.hpp"
+#include "legacy_index.hpp"
 #include <map>
 #include <sys/stat.h>
 #include <utility>
@@ -383,7 +384,7 @@ TEST_CASE("Remove handles unborn detached corruption input budgets and pending j
         REQUIRE_THROWS_AS(remove_paths(repo, removal(repo, ".minigit/index"), {true, true}), Error);
         REQUIRE(remove_metadata(repo) == before);
         REQUIRE(remove_objects(repo) == objects);
-        { RepoLock lock(repo.metadata()); save_index(repo, {{std::string(4097, 'p'), "100644", load_index(repo).front().id, 1}}); }
+        { RepoLock lock(repo.metadata()); atomic_write(repo.metadata() / "index", test::legacy_index_entry({std::string(4097, 'p'), "100644", load_index(repo).front().id, 1})); }
         const auto oversized = remove_metadata(repo);
         REQUIRE_THROWS_AS(remove_paths(repo, removal(repo, "file"), {true, true}), Error);
         REQUIRE(remove_metadata(repo) == oversized);

@@ -6,9 +6,7 @@
 namespace minigit::checkout_support {
 namespace { constexpr std::size_t max_paths = 200000; }
 void validate_path(std::string_view path) {
-    validate_repo_path(path);
-    if (path.size() > 4096 || std::count(path.begin(), path.end(), '/') + 1 > 128)
-        throw Error("路径超过 4096 字节或 128 分量限制");
+    validate_repo_path_limits(path);
 }
 void BoundedPaths::add(const std::string& path) {
     if (paths.contains(path)) return;
@@ -67,19 +65,6 @@ std::set<std::string> select_known_paths(const BoundedPaths& candidates,
             selected.add(*it);
     }
     return std::move(selected.paths);
-}
-void validate_index_budget(const Index& index) {
-    if (index.size() > 300000) throw Error("索引阶段条目超过 300000 限制");
-    std::set<std::string> paths;
-    std::size_t bytes = 44;
-    for (const auto& entry : index) {
-        validate_path(entry.path);
-        if (paths.insert(entry.path).second && paths.size() > 100000)
-            throw Error("索引不同路径超过 100000 限制");
-        if (entry.path.size() > max_file_size - bytes || 41 > max_file_size - bytes - entry.path.size())
-            throw Error("索引超过 64 MiB 限制");
-        bytes += entry.path.size() + 41;
-    }
 }
 void check_index_objects(const Repository& repo, const Index& index) {
     validate_index_budget(index);

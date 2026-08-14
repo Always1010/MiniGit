@@ -51,7 +51,7 @@ public:
     Index finish() const {
         Index result; result.reserve(count_);
         for (const auto& [path, group] : groups_) { (void)path; result.insert(result.end(), group.begin(), group.end()); }
-        checkout_support::validate_index_budget(result); (void)encode_index(result);
+        validate_index_budget(result); (void)encode_index(result);
         return result;
     }
 private:

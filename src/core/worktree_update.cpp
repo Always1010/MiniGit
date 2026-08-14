@@ -10,9 +10,7 @@ namespace {
 constexpr std::size_t max_inputs = 200000;
 constexpr std::size_t max_changes = 100000;
 void validate_path(std::string_view path) {
-    validate_repo_path(path);
-    if (path.size() > 4096 || std::count(path.begin(), path.end(), '/') + 1 > 128)
-        throw Error("工作区更新路径超过事务限制");
+    validate_repo_path_limits(path);
 }
 template<class Paths, class Key>
 void validate_paths(const Paths& paths, Key key) {

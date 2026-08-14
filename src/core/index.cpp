@@ -3,6 +3,7 @@
 #include "minigit/fs.hpp"
 #include <algorithm>
 #include <map>
+#include <set>
 #include <utility>
 namespace minigit {
 namespace {
@@ -12,27 +13,6 @@ bool path_less(std::string_view a, std::string_view b) {
 }
 bool entry_less(const IndexEntry& a, const IndexEntry& b) {
     return a.path == b.path ? a.stage < b.stage : path_less(a.path, b.path);
-}
-bool valid_utf8(std::string_view text) {
-    std::size_t i = 0;
-    while (i < text.size()) {
-        const auto lead = static_cast<unsigned char>(text[i++]);
-        if (lead < 0x80U) continue;
-        unsigned count;
-        std::uint32_t cp, minimum;
-        if (lead >= 0xc2U && lead <= 0xdfU) { count = 1; cp = lead & 0x1fU; minimum = 0x80U; }
-        else if (lead >= 0xe0U && lead <= 0xefU) { count = 2; cp = lead & 0x0fU; minimum = 0x800U; }
-        else if (lead >= 0xf0U && lead <= 0xf4U) { count = 3; cp = lead & 7U; minimum = 0x10000U; }
-        else return false;
-        if (count > text.size() - i) return false;
-        for (unsigned j = 0; j < count; ++j) {
-            const auto next = static_cast<unsigned char>(text[i++]);
-            if ((next & 0xc0U) != 0x80U) return false;
-            cp = (cp << 6U) | (next & 0x3fU);
-        }
-        if (cp < minimum || cp > 0x10ffffU || (cp >= 0xd800U && cp <= 0xdfffU)) return false;
-    }
-    return true;
 }
 void validate_index(const Index& entries) {
     std::map<std::string, unsigned> stages;
@@ -59,16 +39,17 @@ void append_u32(Bytes& bytes, std::uint32_t value) {
     for (int shift = 24; shift >= 0; shift -= 8) bytes.push_back(static_cast<std::uint8_t>(value >> shift));
 }
 }
-void validate_repo_path(std::string_view path) {
-    if (path.empty() || path.find('\0') != std::string_view::npos ||
-        path.find('\\') != std::string_view::npos || !valid_utf8(path)) throw Error("非法仓库相对路径");
-    while (true) {
-        const auto slash = path.find('/');
-        const auto part = path.substr(0, slash);
-        if (part.empty() || part == "." || part == ".." || part == ".git" || part == ".minigit")
-            throw Error("非法仓库路径分量");
-        if (slash == std::string_view::npos) break;
-        path.remove_prefix(slash + 1);
+void validate_index_budget(const Index& index) {
+    if (index.size() > 300000) throw Error("索引阶段条目超过 300000 限制");
+    std::set<std::string> paths;
+    std::size_t bytes = 44;
+    for (const auto& entry : index) {
+        validate_repo_path_limits(entry.path);
+        if (paths.insert(entry.path).second && paths.size() > 100000)
+            throw Error("索引不同路径超过 100000 限制");
+        if (entry.path.size() > max_file_size - bytes || 41 > max_file_size - bytes - entry.path.size())
+            throw Error("索引超过 64 MiB 限制");
+        bytes += entry.path.size() + 41;
     }
 }
 Index load_index(const Repository& repo) {
@@ -118,6 +99,7 @@ Index decode_index(std::span<const std::uint8_t> bytes) {
     return entries;
 }
 Bytes encode_index(Index entries) {
+    validate_index_budget(entries);
     validate_index(entries);
     std::sort(entries.begin(), entries.end(), entry_less);
     // Validate the entire size before allocating or replacing the existing index.

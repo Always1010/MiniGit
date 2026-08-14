@@ -84,7 +84,7 @@ void move_path(const Repository& repo, const std::filesystem::path& source,
         destinations.emplace_hint(destinations.end(), entry.path, path);
         after.push_back({std::move(path), entry.mode, entry.id});
     }
-    checkout_support::validate_index_budget(after);
+    validate_index_budget(after);
     (void)encode_index(after);
     TransactionPlan plan;
     plan_index_update(repo, plan, after);

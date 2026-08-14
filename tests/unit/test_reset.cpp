@@ -7,6 +7,7 @@
 #include "minigit/worktree.hpp"
 #include "minigit/worktree_update.hpp"
 #include "temp_directory.hpp"
+#include "legacy_index.hpp"
 #include <map>
 #include <sys/stat.h>
 #include <utility>
@@ -214,7 +215,7 @@ TEST_CASE("Reset validates all Index stages and mixed hard clear valid directory
         }
     }
     SECTION("oversized Index paths reject before inspecting work or saving backups") {
-        { RepoLock lock(repo.metadata()); save_index(repo, {{std::string(4097, 'p'), "100644", blob, 1}}); }
+        { RepoLock lock(repo.metadata()); atomic_write(repo.metadata() / "index", test::legacy_index_entry({std::string(4097, 'p'), "100644", blob, 1})); }
         const auto before = reset_metadata(repo);
         const auto objects = reset_objects(repo);
         REQUIRE_THROWS_AS(reset_repository(repo, {ResetMode::Hard, a.hex()}), Error);

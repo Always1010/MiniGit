@@ -22,7 +22,7 @@ examples/experiments/  临时仓库学习实验
 | 摘要与封装 | [object_id.cpp](../src/core/object_id.cpp)、[objects.cpp](../src/core/objects.cpp) | 原始摘要与文本 ID；类型／长度／NUL 头 |
 | 文件与仓库 | [fs.cpp](../src/core/fs.cpp)、[repository.cpp](../src/core/repository.cpp) | 路径检查、RepoLock、稳定读取与初始化 |
 | 对象存储 | [object_store.cpp](../src/core/object_store.cpp) | zlib 保存、复用、读取校验 |
-| 暂存 | [index.cpp](../src/core/index.cpp)、[worktree.cpp](../src/core/worktree.cpp) | MGIX 编解码、`add_paths`、逐文件保存 |
+| 暂存 | [repo_path.cpp](../src/core/repo_path.cpp)、[index.cpp](../src/core/index.cpp)、[worktree.cpp](../src/core/worktree.cpp) | MGIX 编解码、`add_paths`、逐文件保存 |
 | 快照与引用 | [snapshot.cpp](../src/core/snapshot.cpp)、[refs.cpp](../src/core/refs.cpp) | Tree 往返、未出生 HEAD、预期旧值校验 |
 | 提交 | [history.cpp](../src/core/history.cpp) | `create_commit` 与 `store_commit_snapshot` 的发布边界 |
 | 状态与差异 | [status.cpp](../src/core/status.cpp)、[diff.cpp](../src/core/diff.cpp)、[inspection.cpp](../src/core/inspection.cpp) | 三棵树、纯 EditScript、内容来源选择 |
@@ -44,7 +44,7 @@ examples/experiments/  临时仓库学习实验
 | [switch.cpp](../src/core/switch.cpp) | A/B/C/D 兼容矩阵，组合 ref／Index／Work |
 | [restore.cpp](../src/core/restore.cpp)、[reset.cpp](../src/core/reset.cpp) | 来源与目的独立、模式决定发布范围 |
 | [remove.cpp](../src/core/remove.cpp)、[move.cpp](../src/core/move.cpp) | 内容保护、B／C 独立迁移、目的占用拒绝 |
-| [checkout_support.cpp](../src/core/checkout_support.cpp) | 私有路径选择、Index 与预算检查 |
+| [checkout_support.cpp](../src/core/checkout_support.cpp) | 私有路径选择与对象检查；路径和 Index 不变量由模型层定义 |
 
 检查 `TransactionPlan` 时区分 File、Directory 和 Absent；元数据 before 是精确原字节。Prepared 回真实现场，不能以旧 HEAD 快照代替它。
 

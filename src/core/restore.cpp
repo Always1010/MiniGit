@@ -58,7 +58,7 @@ void restore_paths(const Repository& repo, const std::vector<std::filesystem::pa
         }
         // Combined distinct-path/stage budgets and DF topology must pass before
         // any worktree inspection or immutable backup-object capture.
-        checkout_support::validate_index_budget(next_index);
+        validate_index_budget(next_index);
         (void)encode_index(next_index);
         std::sort(next_index.begin(), next_index.end(), [](const auto& left, const auto& right) {
             return left.path == right.path ? left.stage < right.stage : left.path < right.path;
