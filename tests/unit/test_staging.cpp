@@ -3,6 +3,7 @@
 #include "minigit/object_store.hpp"
 #include "minigit/worktree.hpp"
 #include "temp_directory.hpp"
+#include "legacy_index.hpp"
 #include <algorithm>
 using namespace minigit;
 namespace {
@@ -83,6 +84,34 @@ TEST_CASE("Index round trips sorted UTF-8 paths and conflict stages", "[staging]
     save_index(repo, decoded);
     REQUIRE(read_file(repo.metadata() / "index") == original);
     save_index(repo, {});
+    REQUIRE(load_index(repo).empty());
+}
+TEST_CASE("Add enforces shared path limits before publishing and can clear a legacy index", "[staging]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    auto directory = repo.root();
+    for (std::size_t depth = 0; depth < 127; ++depth) directory /= "d";
+    detail::ensure_directory(directory);
+    atomic_write(directory / "f", to_bytes("content"));
+    add_paths(repo, {directory / "f"});
+    const auto original = read_file(repo.metadata() / "index");
+    const auto id = load_index(repo).front().id;
+    REQUIRE(load_index(repo).front().path.size() == 255);
+
+    std::filesystem::create_directory(directory / "d");
+    atomic_write(directory / "d/f", to_bytes("too deep"));
+    REQUIRE_THROWS_AS(add_paths(repo, {directory / "d/f"}), Error);
+    REQUIRE_THROWS_AS(add_paths(repo, {}, true), Error);
+    REQUIRE(read_file(repo.metadata() / "index") == original);
+    REQUIRE_THROWS_AS(encode_index({{std::string(4097, 'x'), "100644", id}}), Error);
+
+    // Authenticate an old-format index whose path predates the write limits.
+    const auto legacy_path = (directory / "d/f").lexically_relative(repo.root()).generic_string();
+    const auto legacy = test::legacy_index_entry({legacy_path, "100644", id});
+    atomic_write(repo.metadata() / "index", legacy);
+    REQUIRE(load_index(repo).front().path == legacy_path);
+    std::filesystem::remove_all(repo.root() / "d");
+    add_paths(repo, {}, true);
     REQUIRE(load_index(repo).empty());
 }
 TEST_CASE("Invalid index entries never replace the persisted index", "[staging]") {

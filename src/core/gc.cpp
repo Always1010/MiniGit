@@ -224,7 +224,7 @@ void other_roots(const Repository& repo, Roots& roots, const std::map<std::strin
             for (const auto byte : std::span(*raw).subspan(8, 4)) count = (count << 8U) | byte;
             if (count > 300000) throw Error("GC Index 超过 300000 stage 条目限制");
         }
-        const auto index = decode_index(*raw); checkout_support::validate_index_budget(index);
+        const auto index = decode_index(*raw); validate_index_budget(index);
         for (const auto& entry : index) roots.keep(entry.id, ObjectType::Blob);
     }
     const auto raw_stack = roots.raw("stashstack"); const auto stack = raw_stack ? decode_stash_stack(*raw_stack) : StashStack{};

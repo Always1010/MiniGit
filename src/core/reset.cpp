@@ -36,7 +36,7 @@ void reset_repository(const Repository& repo, const ResetOptions& options) {
     if (options.mode != ResetMode::Soft) {
         after_index.reserve(target.size());
         for (const auto& [path, state] : target) after_index.push_back({path, state.mode, state.id});
-        checkout_support::validate_index_budget(after_index);
+        validate_index_budget(after_index);
         (void)encode_index(after_index);
     }
     checkout_support::BoundedPaths paths, owned;

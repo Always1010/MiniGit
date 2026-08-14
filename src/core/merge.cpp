@@ -14,7 +14,7 @@ Index snapshot_index(const Snapshot& snapshot) {
     Index index;
     index.reserve(snapshot.size());
     for (const auto& [path, file] : snapshot) index.push_back({path, file.mode, file.id});
-    checkout_support::validate_index_budget(index);
+    validate_index_budget(index);
     (void)encode_index(index);
     return index;
 }
@@ -55,7 +55,7 @@ MergeResult start_merge(const Repository& repo, const MergeOptions& options, con
     SnapshotMergeResult merged;
     if (fast_forward) { merged.index = snapshot_index(theirs); merged.work = theirs; }
     else merged = merge_snapshots(repo, read_snapshot(repo, read_commit(repo, *base).tree), ours, theirs);
-    checkout_support::validate_index_budget(merged.index);
+    validate_index_budget(merged.index);
     (void)encode_index(merged.index);
     checkout_support::BoundedPaths owned;
     const auto targets = operation_support::changed_targets(ours, merged.work, owned);

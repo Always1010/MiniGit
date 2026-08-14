@@ -44,9 +44,7 @@ std::optional<std::filesystem::file_status> node_status(const std::filesystem::p
     return value;
 }
 void validate_path(std::string_view path) {
-    if (path.size() > max_path) throw Error("事务路径超过 4096 字节限制");
-    validate_repo_path(path);
-    if (static_cast<std::size_t>(std::count(path.begin(), path.end(), '/')) + 1 > 128) throw Error("事务路径超过 128 层限制");
+    validate_repo_path_limits(path);
 }
 void validate_metadata_path(std::string_view path) {
     validate_path(path);

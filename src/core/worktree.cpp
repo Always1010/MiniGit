@@ -96,7 +96,7 @@ bool tracked_below(const std::set<std::string>& tracked, const std::string& dire
 }
 template<class Visitor>
 void walk(const Repository& repo, const std::string& directory, const std::vector<IgnoreRule>& rules,
-          const std::set<std::string>& tracked, Visitor& visitor, checkout_support::BoundedPaths* budget = nullptr) {
+          const std::set<std::string>& tracked, Visitor& visitor, checkout_support::BoundedPaths& budget) {
     std::error_code error;
     std::filesystem::directory_iterator children(repo.root() / directory, error);
     if (error) throw Error("遍历工作区目录失败: " + error.message());
@@ -104,8 +104,7 @@ void walk(const Repository& repo, const std::string& directory, const std::vecto
         const auto name = child.path().filename().string();
         if (name == ".git" || name == ".minigit") continue;
         const auto path = directory.empty() ? name : directory + "/" + name;
-        if (budget) budget->add(path);
-        else validate_repo_path(path);
+        budget.add(path);
         const auto status = child.symlink_status(error);
         if (error) throw Error("检查工作区文件失败: " + error.message());
         if (std::filesystem::is_symlink(status)) throw Error("工作区禁止软链接: " + path);
@@ -145,7 +144,7 @@ std::string resolve_input(const Repository& repo, const std::filesystem::path& i
     if (relative.empty() || relative.is_absolute()) throw Error("路径不在仓库内");
     if (relative == ".") return {};
     const auto path = relative.generic_string();
-    validate_repo_path(path);
+    validate_repo_path_limits(path);
     return path;
 }
 }
@@ -171,7 +170,7 @@ Snapshot scan_worktree(const Repository& repo) {
         const auto file = read_working_file(repo, path, status);
         result.emplace(path, FileState{file.mode, hash_object(ObjectType::Blob, file.data.bytes)});
     };
-    walk(repo, "", rules, tracked, visitor, &visited);
+    walk(repo, "", rules, tracked, visitor, visited);
     return result;
 }
 void add_paths(const Repository& repo, const std::vector<std::filesystem::path>& input, bool all) {
@@ -187,6 +186,7 @@ void add_paths(const Repository& repo, const std::vector<std::filesystem::path>&
     for (const auto& argument : input) selected.insert(resolve_input(repo, argument));
     ObjectStore store(repo.metadata() / "objects");
     Snapshot files;
+    checkout_support::BoundedPaths visited;
     auto visitor = [&](const std::string& path, const std::filesystem::file_status& status) {
         if (files.contains(path)) return;
         // Keep only IDs after each file is stored, rather than retaining all payloads.
@@ -202,8 +202,11 @@ void add_paths(const Repository& repo, const std::vector<std::filesystem::path>&
         const bool directory = std::filesystem::is_directory(*status);
         if (!path.empty() && ignored(path, directory, rules) && !tracked.contains(path) && (!directory || !tracked_below(tracked, path)))
             throw Error("指定路径被 .minigitignore 忽略: " + path);
-        if (directory) walk(repo, path, rules, tracked, visitor);
-        else visitor(path, *status);
+        if (directory) walk(repo, path, rules, tracked, visitor, visited);
+        else {
+            visited.add(path);
+            visitor(path, *status);
+        }
     }
     // Remove selected old entries, including deletions and every conflict stage.
     std::erase_if(index, [&](const IndexEntry& entry) {

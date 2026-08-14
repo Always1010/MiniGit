@@ -80,7 +80,7 @@ void remove_paths(const Repository& repo, const std::vector<std::filesystem::pat
     Index after;
     after.reserve(index.size());
     for (const auto& entry : index) if (!selected.contains(entry.path)) after.push_back(entry);
-    checkout_support::validate_index_budget(after);
+    validate_index_budget(after);
     (void)encode_index(after);
     std::map<std::string, NodeImage> observed;
     if (!options.force) {

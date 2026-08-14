@@ -18,7 +18,7 @@ std::optional<FileState> state_at(const Snapshot& snapshot, const std::string& p
 Snapshot commit_snapshot(const Repository& repo, const std::optional<ObjectId>& id) {
     return id ? read_snapshot(repo, read_commit(repo, *id).tree) : Snapshot{};
 }
-void validate_index_budget(const Index& index) {
+void validate_switch_snapshot_budget(const Index& index) {
     if (index.size() > 100000) throw Error("切换分支索引条目超过快照限制");
     std::size_t path_bytes = 0;
     for (const auto& entry : index) {
@@ -28,6 +28,7 @@ void validate_index_budget(const Index& index) {
     }
 }
 Snapshot checked_index(const Repository& repo, const Index& index) {
+    validate_switch_snapshot_budget(index);
     validate_index_budget(index);
     const ObjectStore store(repo.metadata() / "objects");
     std::set<ObjectId> checked;
@@ -102,6 +103,7 @@ Head switch_worktree(const Repository& repo, const SwitchOptions& options) {
     after_index.reserve(next_index.size());
     for (const auto& [path, state] : next_index) after_index.push_back({path, state.mode, state.id});
     // Validate the combined index before any planner can capture backup objects.
+    validate_switch_snapshot_budget(after_index);
     validate_index_budget(after_index);
     (void)encode_index(after_index);
     // Delay worktree reads until the combined index passes all schema budgets.

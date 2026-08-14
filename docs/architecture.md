@@ -64,7 +64,9 @@ MGIX／MGRL／MGST／MGOP／MGTR 使用版本、长度与计数检查，并附 S
 
 ## 暂存与提交
 
-`add` 逐文件读取并保存 Blob，保留路径／模式／ID，全部选择成功后一次发布 Index。失败可遗留不可达对象，旧 Index 保留。
+路径语法与新写入的 4096 字节／128 分量边界由 `repo_path` 集中定义，Index 发布预算由索引模块检查。解码允许旧版本格式合法的越界索引，以便清理工作文件后用 `add -A` 重建；新写入始终符合边界。
+
+`add` 在遍历时检查路径预算，逐文件读取并保存 Blob，保留路径／模式／ID，全部选择成功后一次发布 Index。失败可遗留不可达对象，旧 Index 保留。
 
 `commit` 从 Index 构造分层 Tree 和 Commit，再规划引用与 reflog，最后用短事务发布。存储工厂 `store_commit_snapshot` 只保存不可变对象，不读取当前 Index／Work，也不移动 HEAD。内容已保存与历史已发布是两个步骤。
 

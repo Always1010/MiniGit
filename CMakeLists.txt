@@ -42,6 +42,7 @@ add_library(minigit_core
     src/core/remove.cpp
     src/core/move.cpp
     src/core/checkout_support.cpp
+    src/core/repo_path.cpp
     src/core/index.cpp
     src/core/worktree.cpp
     src/core/worktree_update.cpp

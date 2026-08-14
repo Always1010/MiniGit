@@ -37,7 +37,7 @@ Index snapshot_index(const Snapshot& snapshot) {
     Index index;
     index.reserve(snapshot.size());
     for (const auto& [path, file] : snapshot) index.push_back({path, file.mode, file.id});
-    checkout_support::validate_index_budget(index);
+    validate_index_budget(index);
     (void)encode_index(index);
     return index;
 }
