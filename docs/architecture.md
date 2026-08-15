@@ -132,6 +132,7 @@ GC 拒绝 pending Transaction，允许 active Operation。根包含 Index 所有
 | 范围 | 上限 |
 | --- | --- |
 | 普通文件／对象完整封装、主要输出 | 64 MiB；对象 payload 需扣除头部 |
+| 对象压缩容器 | zlib `compressBound(64 MiB)`；解压后仍受上述封装限制 |
 | 规范工作路径 | 4096 字节、128 分量 |
 | Tree 展开 | 128 层、100000 entries（含目录）、64 MiB 展开数据 |
 | Index | 100000 不同路径、300000 stage 记录、64 MiB 编码 |

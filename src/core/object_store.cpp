@@ -5,6 +5,11 @@
 #include <array>
 #include <charconv>
 namespace minigit {
+namespace {
+std::size_t compressed_object_limit() {
+    return static_cast<std::size_t>(::compressBound(static_cast<uLong>(max_file_size)));
+}
+}
 ObjectStore::ObjectStore(std::filesystem::path objects_directory) : objects_directory_(std::move(objects_directory)) {
     detail::require_directory(objects_directory_);
 }
@@ -38,12 +43,12 @@ ObjectId ObjectStore::write(ObjectType type, std::span<const std::uint8_t> paylo
     if (::compress2(compressed.data(), &length, framed.data(), static_cast<uLong>(framed.size()), Z_DEFAULT_COMPRESSION) != Z_OK)
         throw Error("压缩对象失败");
     compressed.resize(static_cast<std::size_t>(length));
-    atomic_write(path, compressed);
+    atomic_write(path, compressed, compressed_object_limit());
     detail::sync_directory(objects_directory_);
     return id;
 }
 Object ObjectStore::read(const ObjectId& id) const {
-    auto compressed = read_file(object_path(id));
+    auto compressed = read_file(object_path(id), compressed_object_limit());
     if (compressed.empty()) throw Error("压缩对象为空");
     z_stream stream{};
     stream.next_in = compressed.data();

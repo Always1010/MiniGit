@@ -129,3 +129,26 @@ TEST_CASE("Object size budget includes the framing header", "[objects]") {
     Bytes too_large(max_file_size, 0);
     REQUIRE_THROWS_AS(hash_object(ObjectType::Blob, too_large), Error);
 }
+
+TEST_CASE("Maximum framed blob survives compression expansion without relaxing ordinary file limits", "[objects]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    RepoLock lock(repo.metadata());
+    ObjectStore store(repo.metadata() / "objects");
+    Bytes payload(max_file_size - 14); // "blob 67108850" plus NUL fills 64 MiB.
+    std::uint32_t random = 1;
+    for (auto& byte : payload) {
+        random ^= random << 13U;
+        random ^= random >> 17U;
+        random ^= random << 5U;
+        byte = static_cast<std::uint8_t>(random);
+    }
+    const auto expected = hash_object(ObjectType::Blob, payload);
+    REQUIRE(store.write(ObjectType::Blob, payload) == expected);
+    REQUIRE(std::filesystem::file_size(store.object_path(expected)) > max_file_size);
+    REQUIRE_THROWS_AS(read_file(store.object_path(expected)), Error);
+    REQUIRE(store.read(expected).payload == payload);
+    REQUIRE(store.write(ObjectType::Blob, payload) == expected);
+    payload.push_back(0);
+    REQUIRE_THROWS_AS(store.write(ObjectType::Blob, payload), Error);
+}

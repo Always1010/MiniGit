@@ -9,10 +9,13 @@ struct FileData {
 };
 // Reads one opened regular-file inode. Before/after metadata must agree; this
 // does not compare-and-swap the path, which may be replaced independently.
-FileData read_file_data(const std::filesystem::path& path);
-Bytes read_file(const std::filesystem::path& path);
+// Ordinary files use 64 MiB. ObjectStore supplies a bounded compressed-container
+// limit; its uncompressed object framing remains limited to 64 MiB.
+FileData read_file_data(const std::filesystem::path& path, std::size_t size_limit = max_file_size);
+Bytes read_file(const std::filesystem::path& path, std::size_t size_limit = max_file_size);
 // Default creation permissions remain 0644 subject to the process umask.
-void atomic_write(const std::filesystem::path& path, std::span<const std::uint8_t> bytes);
+void atomic_write(const std::filesystem::path& path, std::span<const std::uint8_t> bytes,
+                  std::size_t size_limit = max_file_size);
 // Exact permissions (0..07777) are applied and verified on the temporary inode.
 void atomic_write_with_permissions(const std::filesystem::path& path,
                                    std::span<const std::uint8_t> bytes, std::uint32_t permissions);

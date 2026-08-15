@@ -187,15 +187,15 @@ void rename_staged(const std::filesystem::path& source, const std::filesystem::p
     if (::fsync(source_parent.value) != 0) fail("同步事务源父目录失败");
 }
 }
-FileData read_file_data(const std::filesystem::path& path) {
+FileData read_file_data(const std::filesystem::path& path, std::size_t size_limit) {
     Fd parent(open_directory(path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path()));
     Fd fd(::openat(parent.value, path.filename().c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK));
     if (fd.value < 0) fail("读取文件失败（禁止软链接）");
     require_regular(fd.value);
     struct stat state{};
     if (::fstat(fd.value, &state) != 0) fail("检查文件失败");
-    if (state.st_size < 0 || static_cast<std::uintmax_t>(state.st_size) > max_file_size)
-        throw Error("文件超过 64 MiB 限制");
+    if (state.st_size < 0 || static_cast<std::uintmax_t>(state.st_size) > size_limit)
+        throw Error(size_limit == max_file_size ? "文件超过 64 MiB 限制" : "文件超过指定大小限制");
     Bytes result;
     result.reserve(static_cast<std::size_t>(state.st_size));
     std::array<std::uint8_t, 16384> buffer{};
@@ -204,7 +204,7 @@ FileData read_file_data(const std::filesystem::path& path) {
         if (n < 0) { if (errno == EINTR) continue; fail("读取文件失败"); }
         if (n == 0) break;
         const auto count = static_cast<std::size_t>(n);
-        if (count > max_file_size - result.size()) throw Error("文件超过 64 MiB 限制");
+        if (count > size_limit - result.size()) throw Error(size_limit == max_file_size ? "文件超过 64 MiB 限制" : "文件超过指定大小限制");
         result.insert(result.end(), buffer.begin(), buffer.begin() + n);
     }
     struct stat after{};
@@ -217,15 +217,15 @@ FileData read_file_data(const std::filesystem::path& path) {
         throw Error("读取期间文件内容或权限发生变化");
     return {std::move(result), static_cast<std::uint32_t>(state.st_mode & 07777)};
 }
-Bytes read_file(const std::filesystem::path& path) {
-    auto data = read_file_data(path);
+Bytes read_file(const std::filesystem::path& path, std::size_t size_limit) {
+    auto data = read_file_data(path, size_limit);
     return std::move(data.bytes);
 }
 namespace {
 void atomic_write_impl(const std::filesystem::path& path, std::span<const std::uint8_t> bytes,
-                       std::optional<std::uint32_t> permissions) {
+                       std::optional<std::uint32_t> permissions, std::size_t size_limit) {
     if (permissions && *permissions > 07777) throw Error("文件权限超过 07777 范围");
-    if (bytes.size() > max_file_size) throw Error("文件超过 64 MiB 限制");
+    if (bytes.size() > size_limit) throw Error(size_limit == max_file_size ? "文件超过 64 MiB 限制" : "文件超过指定大小限制");
     Fd parent(open_directory(path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path()));
     const auto name = path.filename();
     if (name.empty() || name == "." || name == "..") throw Error("非法文件名");
@@ -269,12 +269,12 @@ void atomic_write_impl(const std::filesystem::path& path, std::span<const std::u
     }
 }
 }
-void atomic_write(const std::filesystem::path& path, std::span<const std::uint8_t> bytes) {
-    atomic_write_impl(path, bytes, std::nullopt);
+void atomic_write(const std::filesystem::path& path, std::span<const std::uint8_t> bytes, std::size_t size_limit) {
+    atomic_write_impl(path, bytes, std::nullopt, size_limit);
 }
 void atomic_write_with_permissions(const std::filesystem::path& path, std::span<const std::uint8_t> bytes,
                                    std::uint32_t permissions) {
-    atomic_write_impl(path, bytes, permissions);
+    atomic_write_impl(path, bytes, permissions, max_file_size);
 }
 RepoLock::RepoLock(const std::filesystem::path& metadata_directory) {
     Fd parent(open_directory(metadata_directory));
