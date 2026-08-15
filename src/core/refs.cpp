@@ -158,6 +158,9 @@ std::map<std::string, ObjectId> list_refs(const Repository& repo, std::string_vi
 }
 void update_ref(const Repository& repo, std::string_view name, std::optional<ObjectId> expected, std::optional<ObjectId> desired) {
     validate_ref_name(name);
+    // Reading and deleting legacy refs remain possible; new values must be
+    // reachable by every bounded metadata traversal, including GC.
+    if (desired) validate_repo_path_limits(name);
     const auto actual = read_ref(repo, name);
     if (actual != expected) throw Error("引用已变化，更新被拒绝");
     if (desired) validate_published_commit(repo, *desired);
@@ -183,6 +186,7 @@ void update_ref(const Repository& repo, std::string_view name, std::optional<Obj
 void set_head(const Repository& repo, std::string_view target) {
     if (target.starts_with("refs/")) {
         validate_ref_name(target);
+        validate_repo_path_limits(target);
         if (!target.starts_with("refs/heads/")) throw Error("HEAD 必须指向分支");
         if (const auto id = read_ref(repo, target)) validate_published_commit(repo, *id);
         atomic_write(repo.metadata() / "HEAD", to_bytes("ref: " + std::string(target) + "\n"));

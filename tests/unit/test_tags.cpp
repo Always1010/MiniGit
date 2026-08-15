@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "minigit/tags.hpp"
+#include "minigit/gc.hpp"
+#include "minigit/branches.hpp"
 #include "minigit/error.hpp"
 #include "minigit/history.hpp"
 #include "minigit/object_store.hpp"
@@ -160,4 +162,30 @@ TEST_CASE("Tag rejects corrupt incomplete or ambiguous targets and accepts expli
         REQUIRE(list_tags(repo).at("branch-copy") == first);
         REQUIRE(list_tags(repo).at("tag-copy") == second);
     }
+}
+
+TEST_CASE("Tag publication obeys metadata path limits and legacy deep tags can be deleted", "[tags]") {
+    test::TempDirectory temp;
+    const auto repo = Repository::init(temp.path());
+    const auto target = tag_fixture_commit(repo, "target");
+    std::string name = "tag";
+    for (std::size_t count = 1; count < 126; ++count) name += "/x";
+    create_tag(repo, name, target.hex()); // refs/tags plus 126 components.
+    REQUIRE(list_tags(repo).at(name) == target);
+    REQUIRE_NOTHROW(list_branches(repo));
+    REQUIRE_NOTHROW(collect_garbage(repo, {true}));
+    const auto before = tag_metadata_contents(repo);
+    REQUIRE_THROWS_AS(create_tag(repo, name + "/x", target.hex()), Error);
+    REQUIRE_THROWS_AS(create_tag(repo, std::string(4090, 'x'), target.hex()), Error);
+    REQUIRE(tag_metadata_contents(repo) == before);
+
+    delete_tag(repo, name);
+    const auto legacy = name + "/x/x";
+    const auto legacy_path = repo.metadata() / "refs/tags" / legacy;
+    detail::ensure_directory(legacy_path.parent_path());
+    atomic_write(legacy_path, to_bytes(target.hex() + "\n"));
+    delete_tag(repo, legacy);
+    REQUIRE(list_tags(repo).empty());
+    REQUIRE_NOTHROW(list_branches(repo));
+    REQUIRE_NOTHROW(collect_garbage(repo, {true}));
 }

@@ -32,6 +32,7 @@ void create_tag(const Repository& repo, std::string_view name, std::string_view 
     RepoLock lock(repo.metadata());
     require_no_transaction(repo);
     const auto ref = tag_ref(name);
+    validate_repo_path_limits(ref);
     const auto existing = read_ref(repo, ref);
     if (existing && !force) throw Error("标签已存在，使用 -f 覆盖");
     const auto target = resolve_commit(repo, revision);
