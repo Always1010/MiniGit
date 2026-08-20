@@ -55,7 +55,7 @@ examples/experiments/  临时仓库学习实验
 1. [merge_text.cpp](../src/core/merge_text.cpp)：base 坐标中的编辑交互、marker 和预算。
 2. [merge_snapshot.cpp](../src/core/merge_snapshot.cpp)：模式、二进制、D/F 布局与原始 stages；只保存不可变对象。
 3. [dag.cpp](../src/core/dag.cpp) 的 `find_merge_base`：先校验完整父图，再选择唯一 lowest。
-4. [operation.cpp](../src/core/operation.cpp)：codec、typed roots、expected State 与受约束更新。
+4. [operation.cpp](../src/core/operation.cpp)：先读 `validate_operation_context`、`validate_operation_work`、`operation_encoded_size`，分别理解状态规则、Work 拓扑和编码预算，再看 codec、typed roots 与受约束更新；kind／phase／专属上下文规则列在 [operation.hpp](../include/minigit/operation.hpp)。
 5. [operation_support.cpp](../src/core/operation_support.cpp)：真实冲突区域备份与共同 abort 规划。
 
 | 业务源码 | 重点 |

@@ -53,7 +53,7 @@ void validate_image(const NodeImage& image) {
     default: throw Error("operation 节点类型非法");
     }
 }
-std::size_t validate_state(const OperationState& state) {
+void validate_operation_context(const OperationState& state) {
     if (!known_kind(state.kind) || !known_phase(state.kind, state.phase))
         throw Error("operation kind 或 phase 非法");
     if ((state.kind == OperationKind::StashApply) != state.stash.has_value())
@@ -96,22 +96,10 @@ std::size_t validate_state(const OperationState& state) {
     if (message.empty() || message.size() > max_file_size || message.find('\0') != std::string::npos ||
         std::all_of(message.begin(), message.end(), [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f'; }))
         throw Error("operation 提交消息必须包含非空白内容且禁止 NUL");
+}
+
+void validate_operation_work(const OperationState& state) {
     if (state.work.size() > max_work) throw Error("operation Work 超过 100000 条目限制");
-    // Header, source ID, length/count fields, optional Index marker and checksum.
-    std::size_t encoded = 10 + 32 + 4 + 4 + 4 + 1 + 32;
-    for (const auto* head : {&state.original_head, &state.current_head}) {
-        add_size(encoded, 34); // Symbolic and ID presence, fixed-size ID.
-        if (head->symbolic) { add_size(encoded, 4); add_size(encoded, head->symbolic->size()); }
-    }
-    add_size(encoded, state.original_head_bytes.size());
-    if (state.original_index_blob) add_size(encoded, 32);
-    add_size(encoded, message.size());
-    if (state.stash) add_size(encoded, 1 + 1 + 4 + 32 + 4 + 65);
-    if (state.rebase) {
-        add_size(encoded, 1 + 32 + 4 + 4 + 1);
-        add_size(encoded, state.rebase->queue.size() * 32);
-        if (state.rebase->original_branch_ref) add_size(encoded, 4 + 65);
-    }
     std::size_t paths = 0;
     std::string_view previous;
     for (const auto& change : state.work) {
@@ -119,12 +107,8 @@ std::size_t validate_state(const OperationState& state) {
         if (!previous.empty() && previous >= change.path) throw Error("operation Work 路径必须排序且唯一");
         previous = change.path;
         add_size(paths, change.path.size());
-        add_size(encoded, 4);
-        add_size(encoded, change.path.size());
         for (const auto* image : {&change.before, &change.after}) {
             validate_image(*image);
-            add_size(encoded, 5);
-            if (image->blob) add_size(encoded, 32);
         }
     }
     const auto find = [&](std::string_view path) {
@@ -148,7 +132,39 @@ std::size_t validate_state(const OperationState& state) {
                 throw Error("operation 节点两侧存在文件与目录冲突");
         }
     }
+}
+
+std::size_t operation_encoded_size(const OperationState& state) {
+    // Header, source ID, length/count fields, optional Index marker and checksum.
+    std::size_t encoded = 10 + 32 + 4 + 4 + 4 + 1 + 32;
+    for (const auto* head : {&state.original_head, &state.current_head}) {
+        add_size(encoded, 34); // Symbolic and ID presence, fixed-size ID.
+        if (head->symbolic) { add_size(encoded, 4); add_size(encoded, head->symbolic->size()); }
+    }
+    add_size(encoded, state.original_head_bytes.size());
+    if (state.original_index_blob) add_size(encoded, 32);
+    add_size(encoded, state.message.size());
+    if (state.stash) add_size(encoded, 1 + 1 + 4 + 32 + 4 + 65);
+    if (state.rebase) {
+        add_size(encoded, 1 + 32 + 4 + 4 + 1);
+        add_size(encoded, state.rebase->queue.size() * 32);
+        if (state.rebase->original_branch_ref) add_size(encoded, 4 + 65);
+    }
+    for (const auto& change : state.work) {
+        add_size(encoded, 4);
+        add_size(encoded, change.path.size());
+        for (const auto* image : {&change.before, &change.after}) {
+            add_size(encoded, 5);
+            if (image->blob) add_size(encoded, 32);
+        }
+    }
     return encoded;
+}
+
+std::size_t validate_state(const OperationState& state) {
+    validate_operation_context(state);
+    validate_operation_work(state);
+    return operation_encoded_size(state);
 }
 void u32(Bytes& bytes, std::uint32_t value) {
     for (int shift = 24; shift >= 0; shift -= 8) bytes.push_back(static_cast<std::uint8_t>(value >> shift));
