@@ -11,6 +11,13 @@
 namespace minigit {
 enum class OperationKind : std::uint8_t { Merge = 1, CherryPick = 2, Revert = 3, StashApply = 4, Rebase = 5 };
 enum class OperationPhase : std::uint8_t { Conflicted = 1, Ready = 2 };
+// State rules (validated before encoding and after decoding):
+// Kind                    Phase              Exclusive context
+// Merge/CherryPick/Revert  Conflicted         none; original/current HEAD equal
+// StashApply               Conflicted         stash; original/current HEAD equal
+// Rebase                   Ready/Conflicted  rebase; current HEAD detached
+// Ready means the current source has not been replayed; Conflicted means the
+// source awaits a resolved Index. Every state retains its original HEAD image.
 struct StashOperation {
     bool pop = false;
     std::uint32_t position = 0;
