@@ -35,7 +35,8 @@ void pin_branch(const Repository& repo, TransactionPlan& plan, const OperationSt
         throw Error("rebase 原始分支已经被其他计划修改");
     auto next = plan;
     next.metadata.push_back({*state.original_head.symbolic, state.rebase->original_branch_ref, state.rebase->original_branch_ref});
-    validate_transaction_budget(next); plan = std::move(next);
+    validate_transaction_budget(next);
+    plan = std::move(next);
 }
 // State's before is the first affected image, not this step's current baseline.
 // A saved original File/Absent ancestor proves that a newly affected descendant
@@ -48,14 +49,23 @@ std::vector<WorkChange> accumulate_work(const Repository& repo, const std::vecto
         keys.add(path);
         if (keys.paths.size() > 100000) throw Error("rebase 累计受影响路径超过 100000 条目限制");
     };
-    for (const auto& change : prior) { add(change.path); changes.emplace(change.path, change); }
+    for (const auto& change : prior) {
+        add(change.path);
+        changes.emplace(change.path, change);
+    }
     for (const auto& change : fresh) {
         add(change.path);
-        if (const auto old = changes.find(change.path); old != changes.end()) { old->second.after = change.after; continue; }
+        if (const auto old = changes.find(change.path); old != changes.end()) {
+            old->second.after = change.after;
+            continue;
+        }
         auto first = change.before;
         for (auto slash = change.path.find('/'); slash != std::string::npos; slash = change.path.find('/', slash + 1)) {
             const auto ancestor = changes.find(change.path.substr(0, slash));
-            if (ancestor != changes.end() && ancestor->second.before.kind != NodeKind::Directory) { first = {}; break; }
+            if (ancestor != changes.end() && ancestor->second.before.kind != NodeKind::Directory) {
+                first = {};
+                break;
+            }
         }
         changes.emplace(change.path, WorkChange{change.path, first, change.after});
     }
@@ -66,7 +76,8 @@ std::vector<WorkChange> accumulate_work(const Repository& repo, const std::vecto
     for (const auto& change : fresh) {
         if (change.after.kind == NodeKind::Absent) continue;
         for (auto slash = change.path.find('/'); slash != std::string::npos; slash = change.path.find('/', slash + 1)) {
-            const auto path = change.path.substr(0, slash); const auto ancestor = changes.find(path);
+            const auto path = change.path.substr(0, slash);
+            const auto ancestor = changes.find(path);
             if (ancestor == changes.end() || !refreshed.insert(path).second) continue;
             const auto planned = std::lower_bound(fresh.begin(), fresh.end(), path,
                 [](const auto& entry, const auto& key) { return entry.path < key; });
@@ -82,15 +93,23 @@ std::vector<WorkChange> accumulate_work(const Repository& repo, const std::vecto
     for (auto& [path, change] : changes)
         for (auto slash = path.find('/'); slash != std::string::npos; slash = path.find('/', slash + 1)) {
             const auto ancestor = changes.find(path.substr(0, slash));
-            if (ancestor != changes.end() && ancestor->second.after.kind != NodeKind::Directory) { change.after = {}; break; }
+            if (ancestor != changes.end() && ancestor->second.after.kind != NodeKind::Directory) {
+                change.after = {};
+                break;
+            }
         }
-    std::vector<WorkChange> result; result.reserve(changes.size());
-    for (auto& [path, change] : changes) { (void)path; result.push_back(std::move(change)); }
+    std::vector<WorkChange> result;
+    result.reserve(changes.size());
+    for (auto& [path, change] : changes) {
+        (void)path;
+        result.push_back(std::move(change));
+    }
     return result;
 }
 void plan_checkout(const Repository& repo, TransactionPlan& plan, const Snapshot& ours, const SnapshotMergeResult& merged,
                    const Index& index, const operation_support::WorkObservations& observed) {
-    validate_index_budget(merged.index); (void)encode_index(merged.index);
+    validate_index_budget(merged.index);
+    (void)encode_index(merged.index);
     checkout_support::BoundedPaths owned;
     const auto targets = operation_support::changed_targets(ours, merged.work, owned);
     if (merged.index != index) plan_index_update(repo, plan, merged.index);
@@ -123,7 +142,9 @@ RebaseResult run_steps(const Repository& repo, OperationState state, const Trans
         TransactionPlan plan;
         Snapshot result;
         auto next = state;
-        if (state.phase == OperationPhase::Ready) {
+        // Ready replays the source; Conflicted commits the resolved Index.
+        switch (state.phase) {
+        case OperationPhase::Ready: {
             const auto ours = own_snapshot(repo, *state.current_head.id);
             if (snapshot != ours) throw Error("rebase Ready 需要 Index 与当前 HEAD 一致");
             const auto observed = operation_support::clean_work(repo, ours);
@@ -133,22 +154,39 @@ RebaseResult run_steps(const Repository& repo, OperationState state, const Trans
             if (!merged.conflicts.empty()) {
                 next.phase = OperationPhase::Conflicted;
                 next.work = accumulate_work(repo, state.work, operation_support::conflict_work(repo, plan, merged, observed));
-                plan_operation_update(repo, plan, state, next); pin_branch(repo, plan, state);
+                plan_operation_update(repo, plan, state, next);
+                pin_branch(repo, plan, state);
                 operation_support::check_original_metadata(repo, state.current_head, raw_head, raw_index);
                 execute_transaction(repo, std::move(plan), hook);
                 return {RebaseOutcome::Conflicted, state.current_head, std::move(merged.conflicts)};
             }
             next.work = accumulate_work(repo, state.work, plan.work);
             result = std::move(merged.work);
-        } else result = snapshot; // Conflicted resolution must never read Work.
+            break;
+        }
+        case OperationPhase::Conflicted:
+            // Resolution must never read Work.
+            result = snapshot;
+            break;
+        default:
+            throw Error("非法 rebase 阶段");
+        }
+
+        // Publish this source as a commit, retaining its author and message.
         const auto commit = store_commit_snapshot(repo, result, {*state.current_head.id}, source.message, source.author);
         const bool last = state.rebase->cursor + 1 == state.rebase->queue.size();
-        if (last) finish(repo, plan, state, commit);
-        else {
-            next.phase = OperationPhase::Ready; next.current_head = {std::nullopt, commit};
-            ++next.rebase->cursor; next.source_commit = next.rebase->queue[next.rebase->cursor];
+        if (last) {
+            // Finish restores the original branch attachment and removes state.
+            finish(repo, plan, state, commit);
+        } else {
+            // Advance records the next Ready source before another iteration.
+            next.phase = OperationPhase::Ready;
+            next.current_head = {std::nullopt, commit};
+            ++next.rebase->cursor;
+            next.source_commit = next.rebase->queue[next.rebase->cursor];
             plan_move_head(repo, plan, state.current_head, next.current_head, "rebase:step");
-            plan_operation_update(repo, plan, state, next); pin_branch(repo, plan, state);
+            plan_operation_update(repo, plan, state, next);
+            pin_branch(repo, plan, state);
         }
         operation_support::check_original_metadata(repo, state.current_head, raw_head, raw_index);
         execute_transaction(repo, std::move(plan), hook);
@@ -176,10 +214,13 @@ RebaseResult start(const Repository& repo, const RebaseOptions& options, const T
         SnapshotMergeResult merged;
         merged.work = theirs;
         for (const auto& [path, file] : theirs) merged.index.push_back({path, file.mode, file.id});
-        TransactionPlan plan; plan_checkout(repo, plan, ours, merged, index, observed);
-        const Head desired{head.symbolic, onto}; plan_move_head(repo, plan, head, desired, "rebase:fast-forward");
+        TransactionPlan plan;
+        plan_checkout(repo, plan, ours, merged, index, observed);
+        const Head desired{head.symbolic, onto};
+        plan_move_head(repo, plan, head, desired, "rebase:fast-forward");
         operation_support::check_original_metadata(repo, head, raw_head, raw_index);
-        execute_transaction(repo, std::move(plan), hook); return {RebaseOutcome::Applied, desired, {}};
+        execute_transaction(repo, std::move(plan), hook);
+        return {RebaseOutcome::Applied, desired, {}};
     }
     std::vector<ObjectId> queue;
     for (auto source = *head.id; source != *base;) {
@@ -188,13 +229,19 @@ RebaseResult start(const Repository& repo, const RebaseOptions& options, const T
         if (commit.parents.size() != 1) throw Error("rebase 来源必须沿单父 first-parent 链到达共同祖先");
         operation_support::validate_message(commit.message);
         (void)read_snapshot(repo, commit.tree);
-        queue.push_back(source); source = commit.parents.front();
+        queue.push_back(source);
+        source = commit.parents.front();
     }
-    (void)own_snapshot(repo, *base); std::reverse(queue.begin(), queue.end());
+    (void)own_snapshot(repo, *base);
+    std::reverse(queue.begin(), queue.end());
     OperationState state;
-    state.kind = OperationKind::Rebase; state.phase = OperationPhase::Ready;
-    state.original_head = head; state.current_head = {std::nullopt, onto};
-    state.original_head_bytes = *raw_head; state.source_commit = queue.front(); state.message = "rebase";
+    state.kind = OperationKind::Rebase;
+    state.phase = OperationPhase::Ready;
+    state.original_head = head;
+    state.current_head = {std::nullopt, onto};
+    state.original_head_bytes = *raw_head;
+    state.source_commit = queue.front();
+    state.message = "rebase";
     std::optional<Bytes> raw_branch;
     if (head.symbolic) {
         raw_branch = operation_support::raw_metadata(repo, *head.symbolic);
@@ -203,28 +250,36 @@ RebaseResult start(const Repository& repo, const RebaseOptions& options, const T
             throw Error("rebase 原始分支引用不一致");
     }
     state.rebase = RebaseOperation{onto, std::move(queue), 0, std::move(raw_branch)};
-    SnapshotMergeResult checkout; checkout.work = theirs;
+    SnapshotMergeResult checkout;
+    checkout.work = theirs;
     for (const auto& [path, file] : theirs) checkout.index.push_back({path, file.mode, file.id});
-    TransactionPlan plan; plan_checkout(repo, plan, ours, checkout, index, observed);
+    TransactionPlan plan;
+    plan_checkout(repo, plan, ours, checkout, index, observed);
     state.work = accumulate_work(repo, {}, plan.work);
     (void)encode_operation(state);
     if (raw_index) state.original_index_blob = ObjectStore(repo.metadata() / "objects").write(ObjectType::Blob, *raw_index);
     plan_move_head(repo, plan, head, state.current_head, "rebase:start");
-    plan_operation_update(repo, plan, std::nullopt, state); pin_branch(repo, plan, state);
+    plan_operation_update(repo, plan, std::nullopt, state);
+    pin_branch(repo, plan, state);
     operation_support::check_original_metadata(repo, head, raw_head, raw_index);
     execute_transaction(repo, std::move(plan), hook);
     return run_steps(repo, std::move(state), hook);
 }
 }
 RebaseResult rebase_repository(const Repository& repo, const RebaseOptions& options, const TransactionHook& hook) {
-    validate_options(options); RepoLock lock(repo.metadata()); require_no_transaction(repo);
+    validate_options(options);
+    RepoLock lock(repo.metadata());
+    require_no_transaction(repo);
     switch (options.action) {
     case RebaseAction::Start: return start(repo, options, hook);
     case RebaseAction::Continue: return run_steps(repo, operation_support::active_operation(repo, OperationKind::Rebase), hook);
     case RebaseAction::Abort: {
-        const auto state = operation_support::active_operation(repo, OperationKind::Rebase); check_branch(repo, state);
-        auto plan = operation_support::plan_abort_operation(repo, state); pin_branch(repo, plan, state);
-        execute_transaction(repo, std::move(plan), hook); return {RebaseOutcome::Aborted, state.original_head, {}};
+        const auto state = operation_support::active_operation(repo, OperationKind::Rebase);
+        check_branch(repo, state);
+        auto plan = operation_support::plan_abort_operation(repo, state);
+        pin_branch(repo, plan, state);
+        execute_transaction(repo, std::move(plan), hook);
+        return {RebaseOutcome::Aborted, state.original_head, {}};
     }
     default: throw Error("非法 rebase 动作");
     }
