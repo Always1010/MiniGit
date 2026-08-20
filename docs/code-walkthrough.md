@@ -38,6 +38,8 @@ examples/experiments/  临时仓库学习实验
 
 先看[worktree_update.hpp](../include/minigit/worktree_update.hpp) 的目标与授权，再看 [worktree_update.cpp](../src/core/worktree_update.cpp)、[transaction.cpp](../src/core/transaction.cpp)。前者规划实际节点，后者发布或恢复 before／after。
 
+`plan_worktree_update` 的步骤是展开目标、观察并授权目录、构造改动、校验拓扑与组合预算、捕获真实备份。私有 `WorktreePlanner::inventory` 单独负责递归清点与未知子项保护。所有预算检查先于备份写入；最后才替换调用者的计划。
+
 | 业务入口 | 重点 |
 | --- | --- |
 | [branches.cpp](../src/core/branches.cpp)、[tags.cpp](../src/core/tags.cpp) | 引用管理与安全删除，不改 Work |
