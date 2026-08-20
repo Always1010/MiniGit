@@ -64,7 +64,7 @@ examples/experiments/  临时仓库学习实验
 | [replay.cpp](../src/core/replay.cpp) | CherryPick／Revert 的基线方向、作者与空结果 |
 | [stash_stack.cpp](../src/core/stash_stack.cpp)、[stash.cpp](../src/core/stash.cpp) | 全栈 roots、H/I/W/U、exact 栈字节 |
 | [stash_restore.cpp](../src/core/stash_restore.cpp) | RW／RI 两次合并、栈绑定、完整成功后 pop |
-| [rebase.cpp](../src/core/rebase.cpp) | 队列、Ready／Conflicted、首次 before 累计与末步 attach |
+| [rebase.cpp](../src/core/rebase.cpp) | `run_steps` 的 Ready／Conflicted 分派，随后提交本步、推进队列或 `finish`；`accumulate_work` 保留首次 before |
 
 特别检查 Ready 的重试是否真的执行当前来源，以及文件变目录后累计备份是否仍可恢复原文件。
 
