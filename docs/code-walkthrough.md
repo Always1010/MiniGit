@@ -15,6 +15,18 @@ examples/experiments/  临时仓库学习实验
 
 [main.cpp](../src/cli/main.cpp) 的 `main`／`run` 分派命令，统一处理输出与错误。[CMakeLists.txt](../CMakeLists.txt) 将核心库与 CLI 分开，[CMakePresets.json](../CMakePresets.json) 定义 Debug 和 sanitized。
 
+命令参数解析与输出按用途归组，每个命令有独立的 `run_<command>` 函数：
+
+| CLI 文件 | 命令 |
+| --- | --- |
+| [basic_commands.cpp](../src/cli/basic_commands.cpp) | help、version、init、hash-object、cat-file、add、config、commit、status |
+| [inspection_commands.cpp](../src/cli/inspection_commands.cpp) | diff、show、log、reflog |
+| [checkout_commands.cpp](../src/cli/checkout_commands.cpp) | switch、mv、rm、reset、restore、branch、tag |
+| [history_commands.cpp](../src/cli/history_commands.cpp) | merge、rebase、cherry-pick／revert、gc、recover |
+| [stash_commands.cpp](../src/cli/stash_commands.cpp) | stash 子命令与输出 |
+
+[command_support.cpp](../src/cli/command_support.cpp) 只共享数量解析、历史操作参数和冲突输出。各命令保留自己的选项规则，入口使用直接分派，便于从命令名跳到实现。
+
 ## 按数据流阅读
 
 | 主题 | 源码入口 | 重点 |
