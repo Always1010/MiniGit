@@ -24,6 +24,8 @@ add_library(minigit_core
     src/core/object_store.cpp
     src/core/repository.cpp
     src/core/transaction.cpp
+    src/core/transaction_journal.cpp
+    src/core/transaction_metadata.cpp
     src/core/operation.cpp
     src/core/merge.cpp
     src/core/operation_support.cpp
