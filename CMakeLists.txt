@@ -63,7 +63,14 @@ target_include_directories(minigit_core PUBLIC include)
 target_link_libraries(minigit_core PUBLIC minigit_options PRIVATE OpenSSL::Crypto ZLIB::ZLIB)
 set_target_properties(minigit_core PROPERTIES CXX_EXTENSIONS OFF)
 
-add_executable(minigit src/cli/main.cpp)
+add_executable(minigit
+    src/cli/main.cpp
+    src/cli/command_support.cpp
+    src/cli/basic_commands.cpp
+    src/cli/inspection_commands.cpp
+    src/cli/checkout_commands.cpp
+    src/cli/history_commands.cpp
+    src/cli/stash_commands.cpp)
 target_link_libraries(minigit PRIVATE minigit_core)
 set_target_properties(minigit PROPERTIES CXX_EXTENSIONS OFF)
 
