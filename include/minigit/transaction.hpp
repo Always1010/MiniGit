@@ -1,6 +1,6 @@
 #pragma once
 #include "minigit/fs.hpp"
-#include "minigit/object_id.hpp"
+#include "minigit/worktree_image.hpp"
 #include "minigit/repository.hpp"
 #include <functional>
 #include <optional>
@@ -8,18 +8,6 @@
 #include <string>
 #include <vector>
 namespace minigit {
-enum class NodeKind { Absent, File, Directory };
-struct NodeImage {
-    NodeKind kind = NodeKind::Absent;
-    std::optional<ObjectId> blob;
-    std::uint32_t permissions = 0;
-    bool operator==(const NodeImage&) const = default;
-};
-struct WorkChange {
-    std::string path;
-    NodeImage before;
-    NodeImage after;
-};
 struct MetadataChange {
     std::string path; // Relative to .minigit; only explicit metadata names allowed.
     std::optional<Bytes> before;

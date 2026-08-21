@@ -50,6 +50,8 @@ examples/experiments/  临时仓库学习实验
 
 检查 `TransactionPlan` 时区分 File、Directory 和 Absent；元数据 before 是精确原字节。Prepared 回真实现场，不能以旧 HEAD 快照代替它。
 
+共享的节点镜像在 [worktree_image.hpp](../include/minigit/worktree_image.hpp)。事务实现按职责阅读：[transaction_journal.cpp](../src/core/transaction_journal.cpp) 只编解码 MGTR 字节与备份 ID；[transaction_metadata.cpp](../src/core/transaction_metadata.cpp) 检查白名单、载荷格式和 Stash 栈／引用配对；[transaction.cpp](../src/core/transaction.cpp) 加载备份、验证现场、准备 staging，再按 Prepared／Committed 发布或恢复。
+
 ## 合并、Stash 与 Rebase
 
 按“纯算法 → 对象适配 → 历史策略 → 状态发布”阅读：

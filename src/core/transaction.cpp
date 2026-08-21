@@ -1,12 +1,9 @@
 #include "minigit/transaction.hpp"
+#include "transaction_journal.hpp"
+#include "transaction_metadata.hpp"
 #include "minigit/error.hpp"
-#include "minigit/index.hpp"
+#include "minigit/repo_path.hpp"
 #include "minigit/object_store.hpp"
-#include "minigit/operation.hpp"
-#include "minigit/refs.hpp"
-#include "minigit/reflog.hpp"
-#include "minigit/snapshot.hpp"
-#include "minigit/stash_stack.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <fcntl.h>
@@ -17,17 +14,12 @@
 namespace minigit {
 namespace {
 constexpr std::size_t max_changes = 100000;
-constexpr std::size_t max_path = 4096;
-enum class State : std::uint8_t { Prepared = 0, Committed = 1 };
-struct StoredMetadata {
-    std::string path;
-    std::optional<ObjectId> before, after;
-};
-struct Journal {
-    State state = State::Prepared;
-    TransactionPlan plan;
-    std::vector<StoredMetadata> metadata;
-};
+using transaction_detail::State;
+using transaction_detail::StoredMetadata;
+using transaction_detail::Journal;
+using transaction_detail::validate_metadata_path;
+using transaction_detail::validate_metadata_bytes;
+using transaction_detail::validate_stash_pair;
 struct Steps {
     const TransactionHook& hook;
     std::size_t count = 0;
@@ -45,13 +37,6 @@ std::optional<std::filesystem::file_status> node_status(const std::filesystem::p
 }
 void validate_path(std::string_view path) {
     validate_repo_path_limits(path);
-}
-void validate_metadata_path(std::string_view path) {
-    validate_path(path);
-    if (path == "index" || path == "HEAD" || path == "refs/stash" || path == "logs/HEAD" || path == "operation" || path == "stashstack") return;
-    if (path.starts_with("refs/heads/") || path.starts_with("refs/tags/")) { validate_ref_name(path); return; }
-    if (path.starts_with("logs/refs/heads/")) { validate_ref_name(path.substr(5)); return; }
-    throw Error("事务元数据路径不在白名单中");
 }
 NodeImage inspect_node(const std::filesystem::path& root, std::string_view path, bool hash_file = true) {
     std::filesystem::path current = root;
@@ -99,82 +84,6 @@ void validate_image(const NodeImage& image, const ObjectStore& store, std::set<O
 void add_budget(std::size_t& used, std::size_t count) {
     if (count > max_file_size - used) throw Error("事务数据超过 64 MiB 限制");
     used += count;
-}
-void validate_metadata_bytes(const Repository& repo, const MetadataChange& change, const Bytes& bytes,
-                             std::set<ObjectId>* roots = nullptr) {
-    if (change.path == "operation") {
-        const auto semantic = state_roots(repo, decode_operation(bytes));
-        if (roots) roots->insert(semantic.begin(), semantic.end());
-        return;
-    }
-    if (change.path == "stashstack") {
-        const auto semantic = stash_roots(repo, decode_stash_stack(bytes));
-        if (roots) roots->insert(semantic.begin(), semantic.end());
-        return;
-    }
-    const ObjectStore store(repo.metadata() / "objects");
-    auto keep = [&](const ObjectId& id, ObjectType type) {
-        const auto object = store.read(id);
-        if (object.type != type) throw Error("事务元数据引用的对象类型非法");
-        if (type == ObjectType::Commit) (void)read_snapshot(repo, decode_commit(object.payload).tree);
-        if (roots) roots->insert(id);
-    };
-    if (change.path == "index") {
-        for (const auto& entry : decode_index(bytes)) keep(entry.id, ObjectType::Blob);
-        return;
-    }
-    if (change.path.starts_with("logs/")) {
-        std::set<ObjectId> checked;
-        for (const auto& entry : decode_reflog(bytes)) {
-            for (const auto* id : {&entry.old_id, &entry.new_id}) if (*id && checked.insert(**id).second) {
-                const auto object = store.read(**id);
-                if (object.type != ObjectType::Commit) throw Error("reflog 必须引用 Commit");
-                (void)decode_commit(object.payload);
-                if (roots) roots->insert(**id);
-            }
-        }
-        return;
-    }
-    const auto text = to_string(bytes);
-    if (change.path == "HEAD" && text.starts_with("ref: ")) {
-        if (text.empty() || text.back() != '\n') throw Error("事务 HEAD 格式非法");
-        const auto ref = std::string_view(text).substr(5, text.size() - 6);
-        validate_ref_name(ref);
-        if (!ref.starts_with("refs/heads/")) throw Error("事务 HEAD 必须指向分支");
-        if (const auto id = read_ref(repo, ref)) keep(*id, ObjectType::Commit);
-        return;
-    }
-    if (text.size() != 65 || text.back() != '\n') throw Error("事务引用格式非法");
-    const auto id = ObjectId::from_hex(std::string_view(text).substr(0, 64));
-    if (change.path == "refs/stash") {
-        const auto semantic = stash_roots(repo, {id});
-        if (roots) roots->insert(semantic.begin(), semantic.end());
-    }
-    keep(id, ObjectType::Commit);
-}
-void validate_stash_pair(const TransactionPlan& plan) {
-    const MetadataChange* stack = nullptr;
-    const MetadataChange* ref = nullptr;
-    for (const auto& change : plan.metadata) {
-        if (change.path == "stashstack") stack = &change;
-        if (change.path == "refs/stash") ref = &change;
-    }
-    if (!stack) return; // Preserve the existing independent ref primitive.
-    if (!ref) throw Error("stashstack 事务必须同时记录 refs/stash");
-    for (const bool after : {false, true}) {
-        const auto& stack_bytes = after ? stack->after : stack->before;
-        const auto& ref_bytes = after ? ref->after : ref->before;
-        const auto entries = stack_bytes ? decode_stash_stack(*stack_bytes) : StashStack{};
-        if (entries.empty()) {
-            if (ref_bytes) throw Error("事务空 stash 栈不能带引用");
-        } else {
-            if (!ref_bytes) throw Error("事务 stash 栈缺少栈顶引用");
-            const auto text = to_string(*ref_bytes);
-            if (text.size() != 65 || text.back() != '\n' ||
-                ObjectId::from_hex(std::string_view(text).substr(0, 64)) != entries.front())
-                throw Error("事务 stash 栈顶与引用不一致");
-        }
-    }
 }
 void validate_plan(const Repository& repo, const TransactionPlan& plan) {
     validate_transaction_budget(plan);
@@ -229,74 +138,24 @@ void validate_plan(const Repository& repo, const TransactionPlan& plan) {
         if (child != metadata.end() && child->starts_with(prefix)) throw Error("事务元数据文件路径不能互为祖先");
     }
 }
-void append_bytes(Bytes& output, std::span<const std::uint8_t> bytes) {
-    if (bytes.size() > max_file_size - output.size()) throw Error("事务 journal 超过 64 MiB 限制");
-    output.insert(output.end(), bytes.begin(), bytes.end());
-}
-void u32(Bytes& output, std::uint32_t value) {
-    Bytes bytes;
-    for (int shift = 24; shift >= 0; shift -= 8) bytes.push_back(static_cast<std::uint8_t>(value >> shift));
-    append_bytes(output, bytes);
-}
-void byte(Bytes& output, std::uint8_t value) { append_bytes(output, std::span<const std::uint8_t>(&value, 1)); }
-void string(Bytes& output, std::string_view value) { u32(output, static_cast<std::uint32_t>(value.size())); append_bytes(output, to_bytes(value)); }
-void optional_id(Bytes& output, const std::optional<ObjectId>& id) { byte(output, id ? 1 : 0); if (id) append_bytes(output, id->bytes()); }
-void image(Bytes& output, const NodeImage& value) { byte(output, static_cast<std::uint8_t>(value.kind)); u32(output, value.permissions); optional_id(output, value.blob); }
-Bytes encode(const Journal& journal) {
-    Bytes output = to_bytes("MGTR");
-    u32(output, 1);
-    byte(output, static_cast<std::uint8_t>(journal.state));
-    u32(output, static_cast<std::uint32_t>(journal.plan.work.size()));
-    u32(output, static_cast<std::uint32_t>(journal.metadata.size()));
-    for (const auto& change : journal.plan.work) { string(output, change.path); image(output, change.before); image(output, change.after); }
-    for (const auto& change : journal.metadata) { string(output, change.path); optional_id(output, change.before); optional_id(output, change.after); }
-    const auto checksum = sha256(output);
-    append_bytes(output, checksum.bytes());
-    return output;
-}
-class Reader {
-public:
-    explicit Reader(std::span<const std::uint8_t> bytes) : bytes_(bytes) {}
-    std::span<const std::uint8_t> take(std::size_t count) {
-        if (count > bytes_.size() - position_) throw Error("事务 journal 被截断");
-        const auto result = bytes_.subspan(position_, count); position_ += count; return result;
-    }
-    std::uint8_t byte() { return take(1)[0]; }
-    std::uint32_t u32() { std::uint32_t result = 0; for (auto value : take(4)) result = (result << 8) | value; return result; }
-    std::string string() { const auto count = u32(); if (count > max_path) throw Error("事务 journal 路径过长"); return to_string(take(count)); }
-    std::optional<ObjectId> id() { const auto flag = byte(); if (flag > 1) throw Error("事务对象存在标志非法"); return flag ? std::optional(ObjectId::from_bytes(take(32))) : std::nullopt; }
-    NodeImage image() { const auto kind = byte(); if (kind > 2) throw Error("事务节点类型非法"); const auto permissions = u32(); return {static_cast<NodeKind>(kind), id(), permissions}; }
-    bool done() const { return position_ == bytes_.size(); }
-private:
-    std::span<const std::uint8_t> bytes_;
-    std::size_t position_ = 0;
-};
-Journal decode(const Repository& repo) {
-    const auto bytes = read_file(journal_path(repo));
-    if (bytes.size() < 49) throw Error("事务 journal 被截断");
-    const auto body = std::span<const std::uint8_t>(bytes).first(bytes.size() - 32);
-    if (sha256(body) != ObjectId::from_bytes(std::span<const std::uint8_t>(bytes).last(32))) throw Error("事务 journal 校验和错误");
-    Reader reader(body);
-    if (to_string(reader.take(4)) != "MGTR" || reader.u32() != 1) throw Error("事务 journal 版本非法");
-    const auto state = reader.byte();
-    if (state > 1) throw Error("事务 journal 状态非法");
-    Journal result;
-    result.state = static_cast<State>(state);
-    const auto work_count = reader.u32(), metadata_count = reader.u32();
-    if (work_count > max_changes || metadata_count > max_changes - work_count) throw Error("事务 journal 改动数量非法");
-    for (std::uint32_t i = 0; i < work_count; ++i) { auto path = reader.string(); auto before = reader.image(); auto after = reader.image(); result.plan.work.push_back({std::move(path), before, after}); }
+Journal read_journal(const Repository& repo) {
+    auto journal = transaction_detail::decode_journal(read_file(journal_path(repo)));
     const ObjectStore store(repo.metadata() / "objects");
     std::size_t metadata_bytes = 0;
-    for (std::uint32_t i = 0; i < metadata_count; ++i) {
-        auto path = reader.string(); const auto before = reader.id(), after = reader.id();
-        MetadataChange change{path, std::nullopt, std::nullopt};
-        if (before) { change.before = blob(store, *before); add_budget(metadata_bytes, change.before->size()); }
-        if (after) { change.after = blob(store, *after); add_budget(metadata_bytes, change.after->size()); }
-        result.metadata.push_back({path, before, after}); result.plan.metadata.push_back(std::move(change));
+    for (const auto& stored : journal.metadata) {
+        MetadataChange change{stored.path, std::nullopt, std::nullopt};
+        if (stored.before) {
+            change.before = blob(store, *stored.before);
+            add_budget(metadata_bytes, change.before->size());
+        }
+        if (stored.after) {
+            change.after = blob(store, *stored.after);
+            add_budget(metadata_bytes, change.after->size());
+        }
+        journal.plan.metadata.push_back(std::move(change));
     }
-    if (!reader.done()) throw Error("事务 journal 包含多余数据");
-    validate_plan(repo, result.plan);
-    return result;
+    validate_plan(repo, journal.plan);
+    return journal;
 }
 std::optional<Bytes> metadata_current(const Repository& repo, const std::string& path) {
     const auto node = inspect_node(repo.metadata(), path, false);
@@ -602,6 +461,7 @@ void execute_transaction(const Repository& repo, TransactionPlan plan, const Tra
     require_no_transaction(repo);
     std::sort(plan.work.begin(), plan.work.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
     std::sort(plan.metadata.begin(), plan.metadata.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+    // Authenticate the complete plan and current before images.
     validate_plan(repo, plan);
     preflight(repo, plan, false);
     Journal journal;
@@ -613,24 +473,35 @@ void execute_transaction(const Repository& repo, TransactionPlan plan, const Tra
         if (change.after) stored.after = store.write(ObjectType::Blob, *change.after);
         journal.metadata.push_back(std::move(stored));
     }
-    const auto prepared = encode(journal);
-    auto committed = journal; committed.state = State::Committed;
-    const auto committed_bytes = encode(committed);
+    // Encode both durable states before staging or changing live paths.
+    const auto prepared = transaction_detail::encode_journal(journal);
+    auto committed = journal;
+    committed.state = State::Committed;
+    const auto committed_bytes = transaction_detail::encode_journal(committed);
     const auto images = stage_images(journal);
     Steps steps{hook};
     prepare_staging(repo, images, steps);
     (void)staging_inventory(repo, &images);
     preflight(repo, journal.plan, false);
-    atomic_write(journal_path(repo), prepared); steps.notify("journal.prepared");
+    // Prepared is the rollback point: recovery restores the actual before.
+    atomic_write(journal_path(repo), prepared);
+    steps.notify("journal.prepared");
     apply(repo, journal, true, steps);
-    atomic_write(journal_path(repo), committed_bytes); steps.notify("journal.committed");
+    // Committed is the roll-forward point: recovery republishes after.
+    atomic_write(journal_path(repo), committed_bytes);
+    steps.notify("journal.committed");
     cleanup(repo, &images, steps);
     detail::remove_regular(journal_path(repo)); steps.notify("cleanup.journal");
 }
 void recover_transaction(const Repository& repo, const TransactionHook& hook) {
     Steps steps{hook};
-    if (!node_status(journal_path(repo))) { cleanup(repo, nullptr, steps); return; }
-    const auto journal = decode(repo);
+    if (!node_status(journal_path(repo))) {
+        cleanup(repo, nullptr, steps);
+        return;
+    }
+    // Re-authenticate the journal, immutable payloads and current paths before
+    // rebuilding staging. The durable state chooses the recovery direction.
+    const auto journal = read_journal(repo);
     const auto images = stage_images(journal);
     (void)staging_inventory(repo, &images);
     preflight(repo, journal.plan, true);
@@ -643,7 +514,7 @@ void recover_transaction(const Repository& repo, const TransactionHook& hook) {
 }
 std::set<ObjectId> transaction_roots(const Repository& repo) {
     if (!node_status(journal_path(repo))) { require_no_transaction(repo); return {}; }
-    const auto journal = decode(repo);
+    const auto journal = read_journal(repo);
     std::set<ObjectId> roots;
     for (const auto& change : journal.plan.work)
         for (const auto* value : {&change.before, &change.after}) if (value->blob) roots.insert(*value->blob);
