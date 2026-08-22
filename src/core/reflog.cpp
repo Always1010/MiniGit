@@ -1,4 +1,5 @@
 #include "minigit/reflog.hpp"
+#include "binary_codec.hpp"
 #include "minigit/error.hpp"
 #include "minigit/snapshot.hpp"
 #include <algorithm>
@@ -9,29 +10,9 @@ constexpr std::size_t max_entries = 100000;
 constexpr std::size_t max_log_size = 8U * 1024U * 1024U;
 void validate_reason(std::string_view text) {
     if (text.empty() || text.size() > 4096) throw Error("reflog 原因为空或超过 4096 字节");
-    std::size_t i = 0;
-    while (i < text.size()) {
-        const auto lead = static_cast<unsigned char>(text[i++]);
-        if (lead < 32 || lead == 127) throw Error("reflog 原因禁止控制字符");
-        if (lead < 128) continue;
-        unsigned count;
-        std::uint32_t value, minimum;
-        if (lead >= 0xc2U && lead <= 0xdfU) { count = 1; value = lead & 0x1fU; minimum = 0x80U; }
-        else if (lead >= 0xe0U && lead <= 0xefU) { count = 2; value = lead & 0x0fU; minimum = 0x800U; }
-        else if (lead >= 0xf0U && lead <= 0xf4U) { count = 3; value = lead & 7U; minimum = 0x10000U; }
-        else throw Error("reflog 原因不是有效 UTF-8");
-        if (count > text.size() - i) throw Error("reflog 原因 UTF-8 被截断");
-        for (unsigned j = 0; j < count; ++j) {
-            const auto next = static_cast<unsigned char>(text[i++]);
-            if ((next & 0xc0U) != 0x80U) throw Error("reflog 原因不是有效 UTF-8");
-            value = (value << 6U) | (next & 0x3fU);
-        }
-        if (value < minimum || value > 0x10ffffU || (value >= 0xd800U && value <= 0xdfffU))
-            throw Error("reflog 原因不是有效 UTF-8");
-    }
-}
-void u32(Bytes& bytes, std::uint32_t value) {
-    for (int shift = 24; shift >= 0; shift -= 8) bytes.push_back(static_cast<std::uint8_t>(value >> shift));
+    for (const unsigned char byte : text)
+        if (byte < 32 || byte == 127) throw Error("reflog 原因禁止控制字符");
+    if (!valid_utf8(text)) throw Error("reflog 原因不是有效 UTF-8");
 }
 void optional_id(Bytes& bytes, const std::optional<ObjectId>& id) {
     bytes.push_back(id ? 1 : 0);
@@ -39,27 +20,17 @@ void optional_id(Bytes& bytes, const std::optional<ObjectId>& id) {
 }
 class Reader {
 public:
-    explicit Reader(std::span<const std::uint8_t> data) : data_(data) {}
-    std::span<const std::uint8_t> take(std::size_t size) {
-        if (size > data_.size() - position_) throw Error("reflog 被截断");
-        const auto part = data_.subspan(position_, size);
-        position_ += size;
-        return part;
-    }
-    std::uint32_t number() {
-        std::uint32_t value = 0;
-        for (const auto byte : take(4)) value = (value << 8U) | byte;
-        return value;
-    }
+    explicit Reader(std::span<const std::uint8_t> data) : data_(data, "reflog 被截断") {}
+    std::span<const std::uint8_t> take(std::size_t count) { return data_.take(count); }
+    std::uint32_t number() { return data_.u32(); }
     std::optional<ObjectId> id() {
-        const auto marker = take(1)[0];
+        const auto marker = data_.byte();
         if (marker > 1) throw Error("reflog 对象存在标志非法");
         return marker ? std::optional(ObjectId::from_bytes(take(32))) : std::nullopt;
     }
-    std::size_t remaining() const { return data_.size() - position_; }
+    std::size_t remaining() const { return data_.remaining(); }
 private:
-    std::span<const std::uint8_t> data_;
-    std::size_t position_ = 0;
+    detail::ByteReader data_;
 };
 void validate_branch(std::string_view ref) {
     validate_ref_name(ref);
@@ -123,12 +94,12 @@ Bytes encode_reflog(const Reflog& entries) {
     }
     auto bytes = to_bytes("MGRL");
     bytes.reserve(size);
-    u32(bytes, 1);
-    u32(bytes, static_cast<std::uint32_t>(entries.size()));
+    detail::append_u32(bytes, 1);
+    detail::append_u32(bytes, static_cast<std::uint32_t>(entries.size()));
     for (const auto& entry : entries) {
         optional_id(bytes, entry.old_id);
         optional_id(bytes, entry.new_id);
-        u32(bytes, static_cast<std::uint32_t>(entry.reason.size()));
+        detail::append_u32(bytes, static_cast<std::uint32_t>(entry.reason.size()));
         bytes.insert(bytes.end(), entry.reason.begin(), entry.reason.end());
     }
     const auto checksum = sha256(bytes);

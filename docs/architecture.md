@@ -47,6 +47,8 @@ CLI 只负责入口，`minigit_core` 提供可直接调用的 C++ 业务。Repos
 
 MGIX／MGRL／MGST／MGOP／MGTR 使用版本、长度与计数检查，并附 SHA-256 校验。MGOP v1 用于 Merge／CherryPick／Revert，v2 用于 StashApply 与 Rebase 的专用上下文。
 
+这些格式只共享字节游标与大端整数读写，字段顺序和格式校验仍写在各自 codec 中。路径、Tree 名称和 reflog 原因使用同一 UTF-8 校验；控制字符和路径分量规则由各自模型检查。
+
 ## 数据不变量
 
 | 数据 | 核心约束 |

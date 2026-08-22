@@ -1,4 +1,5 @@
 #include "minigit/gc.hpp"
+#include "binary_codec.hpp"
 #include "minigit/error.hpp"
 #include "minigit/index.hpp"
 #include "minigit/object_store.hpp"
@@ -220,8 +221,8 @@ void log_roots(const Repository& repo, Roots& roots) {
 void other_roots(const Repository& repo, Roots& roots, const std::map<std::string, ObjectId>& refs) {
     if (const auto raw = roots.raw("index")) {
         if (raw->size() >= 12) {
-            std::uint32_t count = 0;
-            for (const auto byte : std::span(*raw).subspan(8, 4)) count = (count << 8U) | byte;
+            detail::ByteReader count_field{std::span(*raw).subspan(8, 4), "索引计数被截断"};
+            const auto count = count_field.u32();
             if (count > 300000) throw Error("GC Index 超过 300000 stage 条目限制");
         }
         const auto index = decode_index(*raw); validate_index_budget(index);

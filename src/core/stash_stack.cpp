@@ -1,4 +1,5 @@
 #include "minigit/stash_stack.hpp"
+#include "binary_codec.hpp"
 #include "minigit/error.hpp"
 #include "minigit/object_store.hpp"
 #include "minigit/objects.hpp"
@@ -12,14 +13,6 @@ std::size_t encoded_size(const StashStack& stack) {
     if (stack.size() > max_entries || stack.size() > (max_file_size - 44) / 32)
         throw Error("stash 栈超过数量或 64 MiB 限制");
     return 44 + 32 * stack.size();
-}
-void number(Bytes& bytes, std::uint32_t value) {
-    for (int shift = 24; shift >= 0; shift -= 8) bytes.push_back(static_cast<std::uint8_t>(value >> shift));
-}
-std::uint32_t number(std::span<const std::uint8_t> bytes) {
-    std::uint32_t value = 0;
-    for (const auto byte : bytes) value = (value << 8U) | byte;
-    return value;
 }
 class Entries {
 public:
@@ -75,8 +68,8 @@ Bytes encode_stash_stack(const StashStack& stack) {
     const auto size = encoded_size(stack);
     auto bytes = to_bytes("MGST");
     bytes.reserve(size);
-    number(bytes, 1);
-    number(bytes, static_cast<std::uint32_t>(stack.size()));
+    detail::append_u32(bytes, 1);
+    detail::append_u32(bytes, static_cast<std::uint32_t>(stack.size()));
     for (const auto& id : stack) bytes.insert(bytes.end(), id.bytes().begin(), id.bytes().end());
     const auto checksum = sha256(bytes);
     bytes.insert(bytes.end(), checksum.bytes().begin(), checksum.bytes().end());
@@ -86,14 +79,15 @@ StashStack decode_stash_stack(std::span<const std::uint8_t> bytes) {
     if (bytes.size() < 44 || bytes.size() > max_file_size) throw Error("stash 栈数据大小非法");
     const auto body = bytes.first(bytes.size() - 32);
     if (sha256(body) != ObjectId::from_bytes(bytes.last(32))) throw Error("stash 栈校验和不匹配");
-    if (to_string(body.first(4)) != "MGST" || number(body.subspan(4, 4)) != 1)
+    detail::ByteReader reader(body, "stash 栈条目被截断");
+    if (to_string(reader.take(4)) != "MGST" || reader.u32() != 1)
         throw Error("未知 stash 栈格式或版本");
-    const auto count = number(body.subspan(8, 4));
-    if (count > max_entries || body.size() - 12 != static_cast<std::size_t>(count) * 32)
+    const auto count = reader.u32();
+    if (count > max_entries || reader.remaining() != static_cast<std::size_t>(count) * 32)
         throw Error("stash 栈条目数量或长度非法");
     StashStack stack;
     stack.reserve(count);
-    for (std::size_t i = 0; i < count; ++i) stack.push_back(ObjectId::from_bytes(body.subspan(12 + 32 * i, 32)));
+    for (std::size_t i = 0; i < count; ++i) stack.push_back(ObjectId::from_bytes(reader.take(32)));
     return stack;
 }
 StashEntry read_stash_entry(const Repository& repo, ObjectId work) { return Entries(repo).entry(work); }

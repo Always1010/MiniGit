@@ -1,4 +1,5 @@
 #include "operation_support.hpp"
+#include "binary_codec.hpp"
 #include "minigit/error.hpp"
 #include "minigit/object_store.hpp"
 #include "minigit/reflog.hpp"
@@ -42,8 +43,8 @@ Index checked_index(const Repository& repo, const std::optional<Bytes>& raw) {
     if (!raw) return {};
     // Bound the codec's count-driven allocation before decoding all stages.
     if (raw->size() >= 12) {
-        std::uint32_t count = 0;
-        for (std::size_t i = 8; i < 12; ++i) count = (count << 8U) | (*raw)[i];
+        detail::ByteReader count_field{std::span(*raw).subspan(8, 4), "索引计数被截断"};
+        const auto count = count_field.u32();
         if (count > 300000) throw Error("操作索引超过 300000 stage 条目限制");
     }
     auto index = decode_index(*raw);

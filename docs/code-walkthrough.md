@@ -31,6 +31,7 @@ examples/experiments/  临时仓库学习实验
 
 | 主题 | 源码入口 | 重点 |
 | --- | --- | --- |
+| 字节与格式基础 | [bytes.cpp](../src/core/bytes.cpp)、[binary_codec.hpp](../src/core/binary_codec.hpp) | UTF-8 校验、受界限保护的字节游标与大端整数；各格式保留字段、版本、计数与总预算校验 |
 | 摘要与封装 | [object_id.cpp](../src/core/object_id.cpp)、[objects.cpp](../src/core/objects.cpp) | 原始摘要与文本 ID；类型／长度／NUL 头 |
 | 文件与仓库 | [fs.cpp](../src/core/fs.cpp)、[repository.cpp](../src/core/repository.cpp) | 路径检查、RepoLock、稳定读取与初始化 |
 | 对象存储 | [object_store.cpp](../src/core/object_store.cpp) | zlib 保存、复用、读取校验 |
