@@ -1,4 +1,5 @@
 #include "minigit/index.hpp"
+#include "binary_codec.hpp"
 #include "minigit/error.hpp"
 #include "minigit/fs.hpp"
 #include <algorithm>
@@ -35,9 +36,6 @@ void validate_index(const Index& entries) {
         }
     }
 }
-void append_u32(Bytes& bytes, std::uint32_t value) {
-    for (int shift = 24; shift >= 0; shift -= 8) bytes.push_back(static_cast<std::uint8_t>(value >> shift));
-}
 }
 void validate_index_budget(const Index& index) {
     if (index.size() > 300000) throw Error("索引阶段条目超过 300000 限制");
@@ -66,35 +64,24 @@ Index decode_index(std::span<const std::uint8_t> bytes) {
     const std::span<const std::uint8_t> body(bytes.data(), bytes.size() - 32);
     if (sha256(body) != ObjectId::from_bytes(std::span<const std::uint8_t>(bytes).last(32)))
         throw Error("索引校验和不匹配");
-    std::size_t position = 0;
-    auto take = [&](std::size_t size) {
-        if (size > body.size() - position) throw Error("索引条目被截断");
-        const auto part = body.subspan(position, size);
-        position += size;
-        return part;
-    };
-    auto u32 = [&]() {
-        std::uint32_t value = 0;
-        for (const auto byte : take(4)) value = (value << 8U) | byte;
-        return value;
-    };
-    if (to_string(take(4)) != "MGIX" || u32() != 1) throw Error("未知索引格式或版本");
-    const auto count = u32();
-    if (count > (body.size() - position) / 42) throw Error("索引条目数量非法");
+    detail::ByteReader reader(body, "索引条目被截断");
+    if (to_string(reader.take(4)) != "MGIX" || reader.u32() != 1) throw Error("未知索引格式或版本");
+    const auto count = reader.u32();
+    if (count > reader.remaining() / 42) throw Error("索引条目数量非法");
     Index entries;
     entries.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) {
-        const auto length = u32();
-        const auto name = to_string(take(length));
-        const auto mode = u32();
+        const auto length = reader.u32();
+        const auto name = to_string(reader.take(length));
+        const auto mode = reader.u32();
         if (mode != 0100644U && mode != 0100755U) throw Error("非法索引文件模式");
-        const auto stage = take(1)[0];
-        const auto id = ObjectId::from_bytes(take(32));
+        const auto stage = reader.byte();
+        const auto id = ObjectId::from_bytes(reader.take(32));
         IndexEntry entry{name, mode == 0100644U ? "100644" : "100755", id, stage};
         if (!entries.empty() && !entry_less(entries.back(), entry)) throw Error("索引条目未排序或重复");
         entries.push_back(std::move(entry));
     }
-    if (position != body.size()) throw Error("索引包含多余数据");
+    if (reader.remaining()) throw Error("索引包含多余数据");
     validate_index(entries);
     return entries;
 }
@@ -111,12 +98,12 @@ Bytes encode_index(Index entries) {
     }
     Bytes bytes = to_bytes("MGIX");
     bytes.reserve(size);
-    append_u32(bytes, 1);
-    append_u32(bytes, static_cast<std::uint32_t>(entries.size()));
+    detail::append_u32(bytes, 1);
+    detail::append_u32(bytes, static_cast<std::uint32_t>(entries.size()));
     for (const auto& entry : entries) {
-        append_u32(bytes, static_cast<std::uint32_t>(entry.path.size()));
+        detail::append_u32(bytes, static_cast<std::uint32_t>(entry.path.size()));
         bytes.insert(bytes.end(), entry.path.begin(), entry.path.end());
-        append_u32(bytes, entry.mode == "100644" ? 0100644U : 0100755U);
+        detail::append_u32(bytes, entry.mode == "100644" ? 0100644U : 0100755U);
         bytes.push_back(entry.stage);
         bytes.insert(bytes.end(), entry.id.bytes().begin(), entry.id.bytes().end());
     }

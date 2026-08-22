@@ -1,4 +1,5 @@
 #include "minigit/operation.hpp"
+#include "binary_codec.hpp"
 #include "minigit/error.hpp"
 #include "minigit/history.hpp"
 #include "minigit/index.hpp"
@@ -166,16 +167,13 @@ std::size_t validate_state(const OperationState& state) {
     validate_operation_work(state);
     return operation_encoded_size(state);
 }
-void u32(Bytes& bytes, std::uint32_t value) {
-    for (int shift = 24; shift >= 0; shift -= 8) bytes.push_back(static_cast<std::uint8_t>(value >> shift));
-}
 void id(Bytes& bytes, const ObjectId& value) { bytes.insert(bytes.end(), value.bytes().begin(), value.bytes().end()); }
 void optional_id(Bytes& bytes, const std::optional<ObjectId>& value) {
     bytes.push_back(value ? 1 : 0);
     if (value) id(bytes, *value);
 }
 void text(Bytes& bytes, std::string_view value) {
-    u32(bytes, static_cast<std::uint32_t>(value.size()));
+    detail::append_u32(bytes, static_cast<std::uint32_t>(value.size()));
     bytes.insert(bytes.end(), value.begin(), value.end());
 }
 void head(Bytes& bytes, const Head& value) {
@@ -185,29 +183,20 @@ void head(Bytes& bytes, const Head& value) {
 }
 void image(Bytes& bytes, const NodeImage& value) {
     bytes.push_back(static_cast<std::uint8_t>(value.kind));
-    u32(bytes, value.permissions);
+    detail::append_u32(bytes, value.permissions);
     if (value.blob) id(bytes, *value.blob);
 }
 class Reader {
 public:
-    explicit Reader(std::span<const std::uint8_t> bytes) : bytes_(bytes) {}
-    std::span<const std::uint8_t> take(std::size_t size) {
-        if (size > remaining()) throw Error("operation 数据被截断");
-        const auto value = bytes_.subspan(position_, size);
-        position_ += size;
-        return value;
-    }
-    std::uint8_t byte() { return take(1)[0]; }
+    explicit Reader(std::span<const std::uint8_t> bytes) : bytes_(bytes, "operation 数据被截断") {}
+    std::span<const std::uint8_t> take(std::size_t count) { return bytes_.take(count); }
+    std::uint8_t byte() { return bytes_.byte(); }
     bool presence() {
         const auto value = byte();
         if (value > 1) throw Error("operation 存在标志非法");
         return value != 0;
     }
-    std::uint32_t number() {
-        std::uint32_t value = 0;
-        for (const auto byte : take(4)) value = (value << 8U) | byte;
-        return value;
-    }
+    std::uint32_t number() { return bytes_.u32(); }
     std::string text(std::size_t limit) {
         const auto length = number();
         if (length > limit) throw Error("operation 字段长度超过限制");
@@ -228,10 +217,9 @@ public:
         validate_image(result);
         return result;
     }
-    std::size_t remaining() const { return bytes_.size() - position_; }
+    std::size_t remaining() const { return bytes_.remaining(); }
 private:
-    std::span<const std::uint8_t> bytes_;
-    std::size_t position_ = 0;
+    detail::ByteReader bytes_;
 };
 std::optional<Bytes> raw_operation(const Repository& repo) {
     const auto path = repo.metadata() / "operation";
@@ -271,35 +259,35 @@ Bytes encode_operation(const OperationState& state) {
     const auto size = validate_state(state);
     auto bytes = to_bytes("MGOP");
     bytes.reserve(size);
-    u32(bytes, uses_v2(state.kind) ? 2 : 1);
+    detail::append_u32(bytes, uses_v2(state.kind) ? 2 : 1);
     bytes.push_back(static_cast<std::uint8_t>(state.kind));
     bytes.push_back(static_cast<std::uint8_t>(state.phase));
     head(bytes, state.original_head);
     head(bytes, state.current_head);
-    u32(bytes, static_cast<std::uint32_t>(state.original_head_bytes.size()));
+    detail::append_u32(bytes, static_cast<std::uint32_t>(state.original_head_bytes.size()));
     bytes.insert(bytes.end(), state.original_head_bytes.begin(), state.original_head_bytes.end());
     optional_id(bytes, state.original_index_blob);
     id(bytes, state.source_commit);
     text(bytes, state.message);
-    u32(bytes, static_cast<std::uint32_t>(state.work.size()));
+    detail::append_u32(bytes, static_cast<std::uint32_t>(state.work.size()));
     for (const auto& change : state.work) { text(bytes, change.path); image(bytes, change.before); image(bytes, change.after); }
     if (state.stash) {
         bytes.push_back(1);
         bytes.push_back(state.stash->pop ? 1 : 0);
-        u32(bytes, state.stash->position);
+        detail::append_u32(bytes, state.stash->position);
         id(bytes, state.stash->stack_blob);
-        u32(bytes, static_cast<std::uint32_t>(state.stash->raw_ref.size()));
+        detail::append_u32(bytes, static_cast<std::uint32_t>(state.stash->raw_ref.size()));
         bytes.insert(bytes.end(), state.stash->raw_ref.begin(), state.stash->raw_ref.end());
     }
     if (state.rebase) {
         bytes.push_back(1);
         id(bytes, state.rebase->onto);
-        u32(bytes, static_cast<std::uint32_t>(state.rebase->queue.size()));
+        detail::append_u32(bytes, static_cast<std::uint32_t>(state.rebase->queue.size()));
         for (const auto& source : state.rebase->queue) id(bytes, source);
-        u32(bytes, state.rebase->cursor);
+        detail::append_u32(bytes, state.rebase->cursor);
         bytes.push_back(state.rebase->original_branch_ref ? 1 : 0);
         if (state.rebase->original_branch_ref) {
-            u32(bytes, static_cast<std::uint32_t>(state.rebase->original_branch_ref->size()));
+            detail::append_u32(bytes, static_cast<std::uint32_t>(state.rebase->original_branch_ref->size()));
             bytes.insert(bytes.end(), state.rebase->original_branch_ref->begin(), state.rebase->original_branch_ref->end());
         }
     }
@@ -409,8 +397,8 @@ std::set<ObjectId> state_roots(const Repository& repo, const OperationState& sta
         // decode_index's count is otherwise only bounded by encoded byte size.
         // Check the stricter stage limit before its reserve/count-driven loop.
         if (object.payload.size() >= 12) {
-            std::uint32_t count = 0;
-            for (const auto byte : std::span(object.payload).subspan(8, 4)) count = (count << 8U) | byte;
+            detail::ByteReader count_field{std::span(object.payload).subspan(8, 4), "索引计数被截断"};
+            const auto count = count_field.u32();
             if (count > 300000) throw Error("operation 原始索引超过 300000 阶段条目限制");
         }
         const auto index = decode_index(object.payload);

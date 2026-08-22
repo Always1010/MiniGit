@@ -1,4 +1,5 @@
 #include "transaction_journal.hpp"
+#include "binary_codec.hpp"
 #include "minigit/error.hpp"
 #include <utility>
 namespace minigit::transaction_detail {
@@ -11,7 +12,7 @@ void append_bytes(Bytes& output, std::span<const std::uint8_t> bytes) {
 }
 void u32(Bytes& output, std::uint32_t value) {
     Bytes bytes;
-    for (int shift = 24; shift >= 0; shift -= 8) bytes.push_back(static_cast<std::uint8_t>(value >> shift));
+    detail::append_u32(bytes, value);
     append_bytes(output, bytes);
 }
 void byte(Bytes& output, std::uint8_t value) { append_bytes(output, std::span<const std::uint8_t>(&value, 1)); }
@@ -52,19 +53,10 @@ Bytes encode_journal(const Journal& journal) {
 namespace {
 class Reader {
 public:
-    explicit Reader(std::span<const std::uint8_t> bytes) : bytes_(bytes) {}
-    std::span<const std::uint8_t> take(std::size_t count) {
-        if (count > bytes_.size() - position_) throw Error("事务 journal 被截断");
-        const auto result = bytes_.subspan(position_, count);
-        position_ += count;
-        return result;
-    }
-    std::uint8_t byte() { return take(1)[0]; }
-    std::uint32_t u32() {
-        std::uint32_t result = 0;
-        for (auto value : take(4)) result = (result << 8) | value;
-        return result;
-    }
+    explicit Reader(std::span<const std::uint8_t> bytes) : bytes_(bytes, "事务 journal 被截断") {}
+    std::span<const std::uint8_t> take(std::size_t count) { return bytes_.take(count); }
+    std::uint8_t byte() { return bytes_.byte(); }
+    std::uint32_t u32() { return bytes_.u32(); }
     std::string string() {
         const auto count = u32();
         if (count > max_path) throw Error("事务 journal 路径过长");
@@ -81,10 +73,9 @@ public:
         const auto permissions = u32();
         return {static_cast<NodeKind>(kind), id(), permissions};
     }
-    bool done() const { return position_ == bytes_.size(); }
+    bool done() const { return bytes_.remaining() == 0; }
 private:
-    std::span<const std::uint8_t> bytes_;
-    std::size_t position_ = 0;
+    detail::ByteReader bytes_;
 };
 } // namespace
 Journal decode_journal(std::span<const std::uint8_t> bytes) {
